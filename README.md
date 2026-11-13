@@ -17,11 +17,11 @@ It plays a user-supplied **Startup** WAV clip when the camera finishes Canon's i
 | Target Model / Firmware | Status | Notes |
 | --- | --- | --- |
 | **Canon EOS R5 (original), Firmware `2.2.1`** | **Experimental Source Preview** | Baseline `build36` user-confirmed for Startup + mechanical single-shot Shutter playback on `16 GB` SDHC FAT32; returned logs from `build36` are uninspected. |
-| Canon EOS R5, other firmware versions | **Unsupported** | Requires separate firmware-specific ROM dump, immutable code fingerprints, and verified bindings. **Never downgrade** or cross-flash. |
-| Canon EOS R5 C / EOS R5 Mark II | **Unsupported** | Different hardware/firmware; never run EOS R5 `2.2.1` binaries on these bodies. |
-| Canon EOS R6 / R6 Mark II / R6 Mark III | **Unsupported** | Requires a separate target-specific port and read-only recon; never cross-flash R5 binaries. |
+| Canon EOS R5, other firmware versions | **Porting / testing pending** | Requires separate firmware-specific ROM dump, immutable code fingerprints, and verified bindings. **Never downgrade** or cross-flash. |
+| Canon EOS R5 C / EOS R5 Mark II | **Porting / testing pending** | Different hardware/firmware; never run EOS R5 `2.2.1` binaries on these bodies. |
+| Canon EOS R6 / R6 Mark II / R6 Mark III | **Porting / testing pending** | Requires a separate target-specific port and read-only recon; never cross-flash R5 binaries. |
 
-See [docs/porting.md](docs/porting.md) for what an independent port requires.
+Community ports and firmware-specific validation are welcome. See [docs/porting.md](docs/porting.md) for what each port requires before on-camera testing.
 
 ---
 
