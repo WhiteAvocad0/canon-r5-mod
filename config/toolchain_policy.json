@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "required_target": "arm-none-eabi",
+  "required_gcc_version": "15.2.1",
+  "required_executables": [
+    "arm-none-eabi-gcc",
+    "arm-none-eabi-ld",
+    "arm-none-eabi-nm",
+    "arm-none-eabi-readelf",
+    "arm-none-eabi-objcopy",
+    "arm-none-eabi-objdump"
+  ],
+  "notes": "Portable toolchain contract: validates target triple and GCC version across host OSes without pinning host-OS-specific binary SHA-256 digests; actual executable digests and versions are recorded per build."
+}

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "target": "Canon EOS R5 firmware 2.2.1",
+  "admission_mode": "immutable_code_fingerprints",
+  "unsupported_note": "Strict R5 2.2.1 immutable code fingerprints only. Other R5 firmware versions and other models (R6, R6 Mark II, R6 Mark III, R8) are unsupported and rejected. Admission accepts per-device flash differences outside fingerprinted code regions without claiming all units are certified.",
+  "rom_layout": {
+    "dump_bytes": 67108864,
+    "rom_base": 3758096384,
+    "main_start": 3759144960,
+    "signature_words": 65536,
+    "signature": 583614611,
+    "startup_bytes": 4096
+  },
+  "code_fingerprints": [
+    {
+      "name": "main_signature_window",
+      "address": 3759144960,
+      "bytes": 262144,
+      "sha256": "5f0ccc3c2b313f29c98f9bae8d28b20670752ed3c7620989f7dc9623b01ebd80",
+      "binding": "main_start..main_start+0x40000"
+    },
+    {
+      "name": "startup_4k",
+      "address": 3759144960,
+      "bytes": 4096,
+      "sha256": "2768bc9087e4911c8c611306106d8fd2b9a638d390476fe512910ae9e458fc53",
+      "binding": "main_start..main_start+startup_bytes"
+    },
+    {
+      "name": "camif_fixup",
+      "address": 3758119800,
+      "bytes": 64,
+      "sha256": "dadc436ddee88961c88a9c164e12d0aaa075e8176082161924bfe09d95d63e32",
+      "binding": "camif_fixup"
+    },
+    {
+      "name": "camif_status",
+      "address": 3758149750,
+      "bytes": 28,
+      "sha256": "a244579bd48dfee44e4f74ccf7707f3767354b15e8bc8356aa0ebc7ca00f3a48",
+      "binding": "camif_status"
+    },
+    {
+      "name": "init_factory",
+      "address": 3760708728,
+      "bytes": 64,
+      "sha256": "d26a3bf811b823a7b4536fe260b311db3037889df6a92218b9c2552b4be3d201",
+      "binding": "init_factory"
+    },
+    {
+      "name": "canon_init",
+      "address": 3759145502,
+      "bytes": 64,
+      "sha256": "8fe6dd50c8e8b9270bb77f0873297b70efe88baeac02caba973efd6d3e604e65",
+      "binding": "canon_init"
+    },
+    {
+      "name": "cache_clean",
+      "address": 3766521408,
+      "bytes": 40,
+      "sha256": "a4d2d9e2137a09964265172120567f1c18fb6796d9c1be21e14e0bfac00d605a",
+      "binding": "cache_clean"
+    },
+    {
+      "name": "cache_invalidate",
+      "address": 3766521620,
+      "bytes": 44,
+      "sha256": "fa189b8383785d10dbab64e2d175fa84b9e2c80a64180da7cf80b57ef280fd93",
+      "binding": "cache_invalidate"
+    },
+    {
+      "name": "bzero",
+      "address": 3766530284,
+      "bytes": 78,
+      "sha256": "a80dedbaf7c5a73d59c71b771e348e7607e5b7fca998cf9dcf153421a2eaceb9",
+      "binding": "bzero"
+    },
+    {
+      "name": "witness_create",
+      "address": 3766361866,
+      "bytes": 64,
+      "sha256": "02a7100706bfcd36ee6fbde3c5985093d075ebbb99f469b8ed32dc9049850329",
+      "binding": "witness.bindings.create"
+    },
+    {
+      "name": "witness_write",
+      "address": 3766363640,
+      "bytes": 64,
+      "sha256": "f6f0e4fe10a5358ba0647ebeed83988e0bc50e725369f05d7ee6108210b3b4c2",
+      "binding": "witness.bindings.write"
+    },
+    {
+      "name": "witness_close",
+      "address": 3766365550,
+      "bytes": 64,
+      "sha256": "356dde417dcccb2be209c4cbf3996acf5d50022046f9d181b876b3f60f0826a1",
+      "binding": "witness.bindings.close"
+    },
+    {
+      "name": "witness_flush",
+      "address": 3766370542,
+      "bytes": 64,
+      "sha256": "900d5b241ff771fbff4feef14accbcca749fe12592c377e4a35150b0f0ecff77",
+      "binding": "witness.bindings.flush"
+    },
+    {
+      "name": "witness_mount_check",
+      "address": 3766372448,
+      "bytes": 64,
+      "sha256": "1580f11599a0557b38cd1d77793d1c044cbaeb43924e636ddc23415bea4a6033",
+      "binding": "witness.bindings.mount_check"
+    },
+    {
+      "name": "witness_sleep",
+      "address": 3766425346,
+      "bytes": 62,
+      "sha256": "a05f04c9809d233d3e4a211f8bf58a848e4ec6a7a96518526b5687b370cc74d7",
+      "binding": "witness.bindings.sleep"
+    },
+    {
+      "name": "witness_to_uncached",
+      "address": 3763216352,
+      "bytes": 52,
+      "sha256": "ef24b3b09577315db4288511ab2fffb57192abfc59a74ccae85bf28afb4a7d4c",
+      "binding": "witness.bindings.to_uncached"
+    },
+    {
+      "name": "audio_state_query",
+      "address": 3766424794,
+      "bytes": 20,
+      "sha256": "7f4948c3a5a3771fd2e46a87f7b73fa4455e220fbe05b805fc7e943b28fbdc61",
+      "binding": "audio.state_query"
+    },
+    {
+      "name": "audio_beep_start",
+      "address": 3767212400,
+      "bytes": 64,
+      "sha256": "b79fef6ca744e85f4ad572daeb73df4e98c02fa4635ee6afc25683ac9cf6fef9",
+      "binding": "audio.beep_start"
+    },
+    {
+      "name": "observer_register_slave",
+      "address": 3766427594,
+      "bytes": 64,
+      "sha256": "f72cfd3e49330e57db78010a429e31ceaad38001aa913aaa0a6b06148ed8b94b",
+      "binding": "observer.register_slave"
+    },
+    {
+      "name": "observer_ack",
+      "address": 3766429044,
+      "bytes": 64,
+      "sha256": "e264587f3f3eff37d1ed68f3f869367ba2588676e1e152ac4a3afdeb087504ee",
+      "binding": "observer.ack"
+    },
+    {
+      "name": "observer_debug",
+      "address": 3766526676,
+      "bytes": 64,
+      "sha256": "4ad2660dd8d91f3f82260efc18246631b7694ada4d9c2ca47dacde6951993ad7",
+      "binding": "observer.debug"
+    },
+    {
+      "name": "shutter_create_task",
+      "address": 3762809204,
+      "bytes": 64,
+      "sha256": "c82105c25754bdbd2e140f1f41d69c7b34d9c273039b2ea85c5aacecf30deec4",
+      "binding": "shutter_worker.create_task"
+    },
+    {
+      "name": "shutter_start_task",
+      "address": 3762809502,
+      "bytes": 64,
+      "sha256": "495575cc666d9d239cd4c1218536ae17c8c2d2985af0368a17444b1e70831f44",
+      "binding": "shutter_worker.start_task"
+    },
+    {
+      "name": "shutter_delete_task",
+      "address": 3762809336,
+      "bytes": 46,
+      "sha256": "39bb1f2b86ca2dad03acd492390d994cf68335d404c83c7da12fb5a1078b0a11",
+      "binding": "shutter_worker.delete_task"
+    },
+    {
+      "name": "counter_getter",
+      "address": 3765905782,
+      "bytes": 18,
+      "sha256": "4100aac565b38dfc48375365dbf826d06903cdba4fa55b25e35bd47e1403e30e",
+      "binding": "observer.counter_context_slot+counter_field_offset"
+    }
+  ],
+  "validated_bindings": {
+    "counter_reader": {
+      "getter_thumb": 3765905783,
+      "context_slot": 75164,
+      "counter_offset": 6676
+    },
+    "shutter_worker": {
+      "create_task": 3762809205,
+      "start_task": 3762809503,
+      "delete_task": 3762809337,
+      "sleep_ms": 3766425347,
+      "stack_bytes": 4096,
+      "priority": 19,
+      "options": 0,
+      "readiness_limit": 1,
+      "context_base": 4096
+    },
+    "audio_outsel": {
+      "stock_pcm_outsel": 0,
+      "poll_limit": 500,
+      "sleep_ms": 20,
+      "singleton_slot": 66096,
+      "audioctrl_slot": 66100,
+      "audioctrl_handle_offset": 4,
+      "audio_ic_slot": 66112,
+      "audio_ic_init_offset": 4,
+      "output_context_slot": 102720,
+      "icu_cache_base": 102744,
+      "icu_cache_kind_offset": 0,
+      "icu_cache_init_offset": 4,
+      "icu_kind_vaif": 0,
+      "icu_kind_ak": 1,
+      "ak_param_slot": 167032,
+      "vaif_param_slot": 167044
+    },
+    "observer": {
+      "protocol": "R5O2",
+      "public_slot": 20796,
+      "beep_property": 2147483683,
+      "class": 132,
+      "level": 3,
+      "max_notifications_logged": 64,
+      "max_dumps": 8
+    }
+  }
+}

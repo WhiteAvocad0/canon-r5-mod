@@ -1,0 +1,90 @@
+name: Port Request / Target Recon
+description: Propose or document read-only recon for an unsupported model or firmware version (e.g. other R5 FW, R5 C, R5 II, R6/R6 II/R6 III).
+title: "[Port Request] "
+labels: ["port-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Notice — Unsupported Models & No Compatibility Promise**
+        - Only original **Canon EOS R5 firmware `2.2.1`** is currently supported. EOS R5 C, R5 Mark II, R6, R6 Mark II, R6 Mark III, and other firmware versions are **unsupported**.
+        - Filing a request does **not** promise availability, compatibility, or prebuilt binary releases.
+        - **Read-only recon first**: Never cross-flash an EOS R5 `2.2.1` binary onto another model or firmware version.
+        - **DO NOT upload** Canon ROM dumps, `.FIR` updates, private photos, or private audio clips. Only text digests and sanitized bounds are allowed.
+
+  - type: input
+    id: model_fw
+    attributes:
+      label: Exact Camera Model & Firmware Version
+      placeholder: "e.g., Canon EOS R6 Mark II, Firmware X.Y.Z"
+    validations:
+      required: true
+
+  - type: input
+    id: shutter_mode
+    attributes:
+      label: Target Shutter / Use Case Scope
+      placeholder: "e.g., Electronic / Mechanical Single-Shot feedback"
+    validations:
+      required: true
+
+  - type: input
+    id: card_format
+    attributes:
+      label: Target Card Type & Format Context
+      placeholder: "e.g., SDHC FAT32 / SDXC exFAT (no CID or raw images)"
+    validations:
+      required: true
+
+  - type: input
+    id: source_ref
+    attributes:
+      label: Source Commit / Reference Baseline
+      placeholder: "main @ <commit-sha> (or N/A for initial recon)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: build_hash
+    attributes:
+      label: Text Digests / Sanitized Bounds / Target Binding Evidence
+      description: Share immutable code fingerprint strategy, ROM text digests (no ROM file!), or sanitized pool bounds per docs/porting.md.
+      placeholder: "Write N/A if no recon exists yet, or provide sanitized addresses/text digests only."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actions
+    attributes:
+      label: Planned Recon / Verification Actions
+      description: Describe read-only disassembly, host tests, and bounded verification steps you plan to perform.
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Current Observations / Results
+      description: Summarize any read-only findings or blockers observed so far.
+    validations:
+      required: true
+
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery Plan & Card Backup Readiness
+      description: Describe how card backups, BootDisk state awareness, and power-cycle recovery are handled before any hardware test.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Porting & Upload Rules
+      options:
+        - label: I understand this repository makes no promise that other models or firmware versions are compatible or will receive prebuilt binaries.
+          required: true
+        - label: I will perform read-only recon first and will NOT cross-flash R5 2.2.1 binaries onto another model or firmware.
+          required: true
+        - label: I confirmed no Canon ROM/FIR dumps, private photos, or private audio clips are attached (text digests and sanitized bounds only).
+          required: true

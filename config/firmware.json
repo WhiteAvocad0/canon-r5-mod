@@ -1,0 +1,197 @@
+{
+  "target": "Canon EOS R5 firmware 2.2.1",
+  "dump_bytes": 67108864,
+  "rom_base": 3758096384,
+  "main_start": 3759144960,
+  "signature_words": 65536,
+  "signature": 583614611,
+  "user_start": 1676456,
+  "resident_base": 1676464,
+  "user_length": 1125744,
+  "objects_start": 2802200,
+  "minimum_user_left": 524304,
+  "startup_bytes": 4096,
+  "private_stack_bytes": 4096,
+  "camif_poll_budget": 1000000,
+  "camif_fixup": 3758119801,
+  "camif_status": 3758149751,
+  "init_factory": 3760708729,
+  "canon_init": 3759145503,
+  "secondary_slot": 3757854624,
+  "cache_clean": 3766521409,
+  "cache_invalidate": 3766521621,
+  "bzero": 3766530285,
+  "patches": [
+    {
+      "offset": 88,
+      "expected": "08f3f2f6",
+      "symbol": "cache_clean_wrapper",
+      "link": true
+    },
+    {
+      "offset": 98,
+      "expected": "08f357f7",
+      "symbol": "cache_invalidate_wrapper",
+      "link": true
+    },
+    {
+      "offset": 142,
+      "expected": "08f3d7f6",
+      "symbol": "cache_clean_wrapper",
+      "link": true
+    },
+    {
+      "offset": 152,
+      "expected": "08f33cf7",
+      "symbol": "cache_invalidate_wrapper",
+      "link": true
+    },
+    {
+      "offset": 174,
+      "expected": "0e4840f0",
+      "symbol": "copied_cstart",
+      "link": false
+    },
+    {
+      "offset": 312,
+      "expected": "0af3d8f7",
+      "symbol": "bzero_wrapper",
+      "link": true
+    },
+    {
+      "offset": 410,
+      "expected": "7df16dfd",
+      "symbol": "create_wrapper",
+      "link": true
+    }
+  ],
+  "autoexec_base": 8388608,
+  "cstart_offset": 236,
+  "witness": {
+    "path": "B:/R5BOOT.TXT",
+    "drive": "B:/",
+    "mount_attempt_limit": 100,
+    "sleep_ms": 100,
+    "bindings": {
+      "create": 3766361867,
+      "write": 3766363641,
+      "close": 3766365551,
+      "flush": 3766370543,
+      "mount_check": 3766372449,
+      "sleep": 3766425347,
+      "to_uncached": 3763216353
+    },
+    "state_offsets": {
+      "stage": 0,
+      "attempt_flags": 4,
+      "attempt_count": 8,
+      "mount_return": 12,
+      "create_return": 16,
+      "write_return": 20,
+      "close_return": 24,
+      "flush_return": 28,
+      "fd": 32,
+      "fd_owned": 36,
+      "sleep_return": 40
+    },
+    "stages": {
+      "canon_init_returned": 1,
+      "context_unready": 2,
+      "mount_timeout": 3,
+      "create_invalid": 4,
+      "write_attempted": 5,
+      "close_failed": 6,
+      "flush_failed": 7,
+      "write_short": 8,
+      "calls_complete": 9
+    },
+    "attempt_flags": {
+      "mount": 1,
+      "sleep": 2,
+      "create": 4,
+      "write": 8,
+      "close": 16,
+      "flush": 32
+    },
+    "context_base": 4096
+  },
+  "audio": {
+    "singleton_slot": 66096,
+    "state_query": 3766424795,
+    "beep_start": 3767212401,
+    "poll_limit": 500,
+    "sleep_ms": 20,
+    "audioctrl_slot": 66100,
+    "audioctrl_handle_offset": 4,
+    "audio_ic_slot": 66112,
+    "audio_ic_init_offset": 4,
+    "output_context_slot": 102720,
+    "icu_cache_base": 102744,
+    "icu_cache_kind_offset": 0,
+    "icu_cache_init_offset": 4,
+    "icu_kind_vaif": 0,
+    "icu_kind_ak": 1,
+    "ak_param_slot": 167032,
+    "vaif_param_slot": 167044,
+    "dep_obs_flags": {
+      "audioctrl_ptr_sampled": 1,
+      "audioctrl_handle_sampled": 2,
+      "audioctrl_state_queried": 4,
+      "audio_ic_ptr_sampled": 8,
+      "audio_ic_init_sampled": 16,
+      "output_context_ptr_sampled": 32,
+      "icu_cache_sampled": 64,
+      "param_table_ptr_sampled": 128
+    },
+    "extra_state_fields": [
+      "bound_context",
+      "bound_handle",
+      "backend_return",
+      "last_pcm_ptr",
+      "last_pcm_bytes",
+      "submit_attempted",
+      "last_context",
+      "dep_obs_flags",
+      "dep_audioctrl_ptr",
+      "dep_audioctrl_handle",
+      "dep_audioctrl_state",
+      "dep_audio_ic_ptr",
+      "dep_audio_ic_init",
+      "dep_output_context_ptr",
+      "dep_icu_cache_init",
+      "dep_icu_cache_kind",
+      "dep_param_table_ptr"
+    ]
+  },
+  "observer": {
+    "protocol": "R5O2",
+    "register_slave": 3766427595,
+    "ack": 3766429045,
+    "debug": 3766526677,
+    "public_slot": 20796,
+    "properties": [
+      301989891,
+      301989889,
+      33882113,
+      2147483683
+    ],
+    "beep_property": 2147483683,
+    "class": 132,
+    "level": 3,
+    "max_notifications_logged": 64,
+    "counter_context_slot": 75164,
+    "counter_field_offset": 6676,
+    "max_dumps": 8
+  },
+  "shutter_worker": {
+    "create_task": 3762809205,
+    "start_task": 3762809503,
+    "delete_task": 3762809337,
+    "sleep_ms": 3766425347,
+    "stack_bytes": 4096,
+    "priority": 19,
+    "options": 0,
+    "readiness_limit": 1,
+    "context_base": 4096
+  }
+}

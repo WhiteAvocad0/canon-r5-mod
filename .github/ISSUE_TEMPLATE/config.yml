@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Usage, Card Prep & Recovery Guide
+    url: https://github.com/WhiteAvocad0/canon-r5-sound-mod/blob/main/docs/usage.md
+    about: Read prerequisites, ROM provenance rules, FAT32 card preparation, and recovery notes before testing.
+  - name: Porting & Read-Only Recon Requirements
+    url: https://github.com/WhiteAvocad0/canon-r5-sound-mod/blob/main/docs/porting.md
+    about: Target-specific evidence required for other firmware versions or models (R5 C, R5 Mark II, R6 family). Do NOT upload ROM/FIR dumps or private media.

@@ -1,0 +1,99 @@
+name: R5 2.2.1 Test Report
+description: Report hardware or host-build test results for original Canon EOS R5 firmware 2.2.1.
+title: "[R5 2.2.1 Test] "
+labels: ["test-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **IMPORTANT — Upload & Safety Rules**
+        - **DO NOT upload** Canon ROM dumps, `.FIR` updates, private photos (`.CR3`/`.JPG`), copyrighted/private audio files, or raw SD card images.
+        - **Allowed**: Text SHA-256 digests, sanitized memory reservation bounds from `build.json`, and plain-text observations.
+        - This is an experimental source preview with no warranty and no Canon affiliation.
+
+  - type: input
+    id: model_fw
+    attributes:
+      label: Exact Camera Model & Firmware Version
+      description: Verify in camera Setup Menu -> Firmware Ver. (currently only original EOS R5 2.2.1 is supported).
+      placeholder: "Canon EOS R5 (original), Firmware 2.2.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shutter_mode
+    attributes:
+      label: Shutter / Drive Mode Tested
+      options:
+        - Mechanical Single-Shot
+        - Electronic First-Curtain (EFCS) Single-Shot
+        - Electronic Shutter Single-Shot
+        - Continuous / Burst
+        - Movie Mode
+        - Host Build Only (not run on camera)
+    validations:
+      required: true
+
+  - type: input
+    id: card_format
+    attributes:
+      label: Card Type, Capacity & Format
+      description: Report card class, capacity, filesystem, and marker workflow without serial numbers/CIDs.
+      placeholder: "16 GB SDHC, FAT32, reviewed EOS_DEVELOP/BOOTDISK marker workflow"
+    validations:
+      required: true
+
+  - type: input
+    id: source_ref
+    attributes:
+      label: Source Git Commit / Branch
+      description: Exact git commit SHA or tag used to build.
+      placeholder: "main @ <commit-sha>"
+    validations:
+      required: true
+
+  - type: textarea
+    id: build_hash
+    attributes:
+      label: Build Hashes & Sanitized Bounds (Text Digests Only)
+      description: Paste `autoexec.bin` SHA-256, `source_manifest_sha256`, and `reservation` bytes from `build.json` (no ROM/audio binaries).
+      placeholder: |
+        autoexec.bin sha256: ...
+        source_manifest_sha256: ...
+        bytes_reserved: ... / remaining_user_bytes: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actions
+    attributes:
+      label: Exact Actions Taken
+      description: List cold boot, USB state, battery state, focus/AF beep wait, number of shots, and settings touched.
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Observed Results
+      description: Report Startup sound behavior, Shutter sound behavior, normal UI/CR3 capture, or any hang/ERR code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery Steps & Outcome
+      description: If a hang/assert/error occurred, describe card removal, power cycle, and whether normal camera boot resumed.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Compliance & Evidence Confirmation
+      options:
+        - label: I confirmed no Canon ROM/FIR files, private photos, private audio clips, or raw card images are attached.
+          required: true
+        - label: I understand only text digests and sanitized memory bounds may be shared here, and no prebuilt binaries are released.
+          required: true
