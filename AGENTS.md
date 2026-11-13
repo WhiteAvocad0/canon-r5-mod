@@ -3,7 +3,7 @@
 Public source-preview project for original Canon EOS R5 firmware2.2.1 only. The immutable reference is the user-confirmed originalR5 2.2.1 build36; preserve its target behavior and clearly identify repackaged-source validation separately.
 
 - Shell commands use rtk (rtk proxy for raw commands).
-- Distinguish source facts, host tests and user-reported camera evidence. Public repackaged source has not itself been hardware-tested; private baseline36 was user-confirmed for XP startup and Mambo shutter.
+- Distinguish source facts, host tests and user-reported camera evidence. Public repackaged source has not itself been hardware-tested; private baseline36 was user-confirmed for XP startup, Mambo shutter and normal shooting on 16GB SDHC/FAT32 and full-capacity128GB SDXC/exFAT. SDXC returned files, repeated boots and longer shooting are unverified.
 - Do not commit or upload Canon ROM/FIR/dumps, built images/objects/toolchains, real diagnostic dumps/photos, user audio (XP/Mambo), credentials, build outputs, private lab history or local plans. Users supply their own ROM dump and two WAV clips. Initial publication is source+docs only, no binary release.
 - Preserve native baseline C/ASM/linker behavior. All addresses are originalR5 2.2.1-specific. Other R5 firmware/R6/R6II/R6III are unsupported and need independent ports; no cross-model binary testing.
 - No automatic camera-side bootflag activation, firmware/NVRAM writes, raw-device writes or formatting. Card instructions require backups and correct model/firmware; supplied tools build offline only.

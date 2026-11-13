@@ -10,7 +10,7 @@
 
 1. **Camera & Firmware**:
    - An **original Canon EOS R5** running **firmware `2.2.1`** (verify in the camera's Setup Menu -> Firmware Ver.).
-   - All other models (R5 C, R5 Mark II, R6, R6 Mark II, R6 Mark III) and all other EOS R5 firmware versions are **unsupported**. **Never** downgrade firmware or cross-flash an R5 `2.2.1` binary onto another body.
+   - All other models (R5 C, R5 Mark II, R6, R6 Mark II, R6 Mark III) and all other EOS R5 firmware versions have **porting / testing pending** and require their own verified implementation. **Never** downgrade firmware or cross-flash an R5 `2.2.1` binary onto another body.
 2. **Persistent `BootDisk` Flag Already Enabled**:
    - Your camera must already have its nonvolatile `BootDisk` flag enabled through a separate, model-reviewed workflow (for example, Canon Basic `EnableBootDisk()` verified by ROM readback).
    - **Card markers and copying `autoexec.bin` do NOT enable the camera's internal `BootDisk` flag.**
@@ -23,7 +23,7 @@
    - **GNU Arm Embedded GCC `15.2.1`** (reference toolchain directory containing `arm-none-eabi-gcc`, `arm-none-eabi-ld`, `arm-none-eabi-nm`, `arm-none-eabi-objcopy`, `arm-none-eabi-objdump`, `arm-none-eabi-readelf`, e.g., xPack GNU Arm Embedded GCC `15.2.1-1.1`).
    - **Existing `ffmpeg`** (only if converting source audio clips to the required WAV format).
 5. **Known-Working Card Baseline**:
-   - Start with a **known-working `16 GB` FAT32 SDHC** card. See [docs/sdxc.md](sdxc.md) for the unverified status of `128 GB` SDXC / exFAT cards.
+   - The private baseline has user-reported success on **`16 GB` FAT32 SDHC** and **full-capacity `128 GB` exFAT SDXC**. See [SDXC preparation and test evidence](sdxc.md) for the exFAT route and remaining limits.
 
 ---
 
@@ -84,14 +84,14 @@ python3 tools/image_format.py verify build/r5-sound/autoexec.bin
 
 Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/XOR check detects format corruption; it does not authenticate a downloaded payload or establish model compatibility.
 
-## 5. Card Preparation (`16 GB` FAT32 SDHC Baseline)
+## 5. Card Preparation
 
 > [!WARNING]
 > **The public builder does NOT write cards.**
 > Do **not** blindly run unreviewed raw-device commands or `dd` entire disk/partition images onto an SD card.
 
 1. **Back up the card completely first**: Copy all existing photos, `DCIM`/`MISC` files, and verify hashes before touching boot sectors.
-2. **Use a `16 GB` FAT32 SDHC card first**: The user-confirmed `build36` run used a `16 GB` SDHC card formatted as FAT32.
+2. **Choose the correct filesystem for your card**: The baseline passed on `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC. The FAT32 steps below apply to SDHC; use the separate [exFAT procedure](sdxc.md#3-preparation-route-that-passed-the-first-trial) for SDXC. Do not shrink SDXC to `32 GB` as a workaround.
 3. **Keep native `BOOTDISK` markers distinct from Canon Basic `SCRIPT`**:
    - Canon Basic uses `SCRIPT` at offset `496` (`0x1F0`) plus `script.req`/`extend.m` — that is a **different** loader path.
    - Native `autoexec.bin` booting on FAT32 requires **both** ASCII markers in the **primary FAT32 boot sector** (and matching geometry):
@@ -111,7 +111,7 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
 1. **Before powering on**:
    - Disconnect any USB cable.
    - Ensure the battery is well charged.
-   - Insert the prepared `16 GB` FAT32 SDHC card (with camera powered off).
+   - Insert the prepared SD card (with camera powered off). For a controlled SDXC test, remove CFexpress so saved photos exercise the SD card.
 2. **Startup**:
    - Power on the camera normally and listen for your **Startup** clip through the built-in speaker.
 3. **Single-shot Shutter Feedback**:
@@ -131,7 +131,7 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
 
 ## 7. Disclaimer, Known Limits, and Recovery
 
-- **Experimental software**: Only limited functional single-shot testing on an original EOS R5 `2.2.1` with a `16 GB` FAT32 SDHC card has been reported (`build36`, user-confirmed XP startup + Mambo shutter; returned logs from that `build36` run have not been inspected; prior `build29` logs verified release counter `113072 -> 113073 -> 113074` across two new CR3 frames). The public source-repackaged rebuild has not itself been hardware-tested.
+- **Experimental software**: Limited functional photo testing on an original EOS R5 `2.2.1` with `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC cards has been reported (`build36`, user-confirmed XP startup + Mambo shutter; returned logs from that `build36` run have not been inspected; prior `build29` logs verified release counter `113072 -> 113073 -> 113074` across two new CR3 frames). The public source-repackaged rebuild has not itself been hardware-tested.
 - **Risks**: Running resident firmware code may cause camera hangs, Canon assertions (`ERR70` or similar), lost or corrupted card data, or require recovery.
 - **No warranty / no Canon affiliation**: Provided under `GPL-2.0-or-later` with zero warranty and no affiliation with or endorsement by Canon Inc.
 - **Persistent flag & no uninstaller**: `BootDisk` remains set in camera NVRAM across card formats and card removal. This repository provides no flash/NVRAM writer and no guaranteed safe installer or uninstaller.

@@ -8,7 +8,7 @@ It plays a user-supplied **Startup** WAV clip when the camera finishes Canon's i
 > **Source / Developer Preview — Not a Turnkey Installer or Full Magic Lantern Port**
 > - This repository contains **source code and documentation only** — no prebuilt binaries, no Canon ROM/FIR files, and no copyrighted or private audio assets are distributed.
 > - You must supply your own `64 MiB` EOS R5 `2.2.1` ROM dump, your own converted `48 kHz` mono 16-bit PCM WAV files, and a camera that already has its persistent `BootDisk` flag enabled.
-> - **The public repackaged source build has not itself been hardware-tested.** Its native C/ASM/linker implementation is copied from a private lab baseline (`build36`, `562,144` bytes, SHA-256 `3579cecf0ab9349035b4d4320ceb6e7fe34719f15f00bc80e0d34bbdf3b312c2`) that was user-confirmed on an original EOS R5 `2.2.1` in mechanical single-shot mode on a `16 GB` SDHC FAT32 card.
+> - **The public repackaged source build has not itself been hardware-tested.** Its native C/ASM/linker implementation is copied from a private lab baseline (`build36`, `562,144` bytes, SHA-256 `3579cecf0ab9349035b4d4320ceb6e7fe34719f15f00bc80e0d34bbdf3b312c2`) that was user-confirmed on an original EOS R5 `2.2.1` on both a `16 GB` SDHC FAT32 card and a full-capacity `128 GB` SDXC exFAT card (startup sound, Mambo shutter sound and normal photo capture).
 
 ---
 
@@ -16,7 +16,7 @@ It plays a user-supplied **Startup** WAV clip when the camera finishes Canon's i
 
 | Target Model / Firmware | Status | Notes |
 | --- | --- | --- |
-| **Canon EOS R5 (original), Firmware `2.2.1`** | **Experimental Source Preview** | Baseline `build36` user-confirmed for Startup + mechanical single-shot Shutter playback on `16 GB` SDHC FAT32; returned logs from `build36` are uninspected. |
+| **Canon EOS R5 (original), Firmware `2.2.1`** | **Experimental Source Preview** | Baseline `build36` user-confirmed for Startup + Shutter playback and normal photos on `16 GB` SDHC FAT32 and full-capacity `128 GB` SDXC exFAT; returned SDXC photos/logs are uninspected. |
 | Canon EOS R5, other firmware versions | **Porting / testing pending** | Requires separate firmware-specific ROM dump, immutable code fingerprints, and verified bindings. **Never downgrade** or cross-flash. |
 | Canon EOS R5 C / EOS R5 Mark II | **Porting / testing pending** | Different hardware/firmware; never run EOS R5 `2.2.1` binaries on these bodies. |
 | Canon EOS R6 / R6 Mark II / R6 Mark III | **Porting / testing pending** | Requires a separate target-specific port and read-only recon; never cross-flash R5 binaries. |
@@ -132,9 +132,9 @@ For R6 / R6 Mark II / R6 Mark III, start with a [port request](https://github.co
 
 ## Documentation Index
 
-- **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM dump provenance, audio conversion, card preparation (`16 GB` SDHC FAT32 baseline), camera usage, diagnostics, and recovery.
+- **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM dump provenance, audio conversion, card preparation (`16 GB` SDHC FAT32 and tested `128 GB` SDXC exFAT route), camera usage, diagnostics, and recovery.
 - **[docs/addresses.md](docs/addresses.md)** — Complete typed address reference for EOS R5 `2.2.1` (ROM Thumb entries, RAM slots, field offsets, property IDs, and `build36` example resident symbols).
-- **[docs/sdxc.md](docs/sdxc.md)** — `128 GB` SDXC / exFAT migration status, bootloader `fs_type == 4` facts, known upstream checksum defect, and remaining hardware unknowns.
+- **[docs/sdxc.md](docs/sdxc.md)** — Successful first `128 GB` SDXC / exFAT trial, earlier limitations, native-marker/checksum resolution and remaining validation.
 - **[docs/porting.md](docs/porting.md)** — Technical requirements for porting to other firmware versions or models (R5 C, R5 Mark II, R6 family).
 - **[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)** — Structured templates for R5 `2.2.1` test reports and independent port requests.
 
@@ -146,4 +146,4 @@ For R6 / R6 Mark II / R6 Mark III, start with a [port request](https://github.co
 - **No warranty & no Canon affiliation**: Provided under `GPL-2.0-or-later` (see [LICENSE](LICENSE)) without warranty of any kind. Not affiliated with, endorsed by, or supported by Canon Inc.
 - **Persistent BootDisk flag**: The camera's internal `BootDisk` flag persists across card formatting and card removal. This repository provides **no** guaranteed safe installer, uninstaller, or flash/NVRAM writer.
 - **Recovery scope**: On the reference R5 `2.2.1` camera, removing the experimental card and power-cycling without it restored normal camera startup (user-confirmed), but that observation is **not** a brick-proof guarantee for every failure mode.
-- **Unverified modes & behaviors**: Only mechanical single-shot capture on a `16 GB` FAT32 SDHC card has user-reported functional success (`build36`; returned card logs uninspected; prior `build29` logs verified release counter `113072 -> 113073 -> 113074` across two new CR3 frames). **Burst shooting, movie recording, blocked shots, card errors, measured physical audio latency, shutdown margin, and an immediate mute control are unverified.** Do not interpret the `20 ms` worker polling interval as measured physical sound latency. Current playback finishes naturally; overlapping/busy triggers drop rather than interrupting or queueing.
+- **Unverified modes & behaviors**: Limited photo capture has user-reported functional success on both `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC (`build36`; mechanical single-shot was the established test context; SDXC shutter mode was not separately reconfirmed). Returned `build36` photos/logs are uninspected; prior `build29` logs verified release counter `113072 -> 113073 -> 113074` across two new CR3 frames. **Burst shooting, movie recording, blocked shots, card errors, measured physical audio latency, shutdown margin, and an immediate mute control are unverified.** Do not interpret the `20 ms` worker polling interval as measured physical sound latency. Current playback finishes naturally; overlapping/busy triggers drop rather than interrupting or queueing.
