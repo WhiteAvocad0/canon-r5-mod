@@ -135,6 +135,7 @@ For R6 / R6 Mark II / R6 Mark III, start with a [port request](https://github.co
 - **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM dump provenance, audio conversion, card preparation (`16 GB` SDHC FAT32 and tested `128 GB` SDXC exFAT route), camera usage, diagnostics, and recovery.
 - **[docs/addresses.md](docs/addresses.md)** — Complete typed address reference for EOS R5 `2.2.1` (ROM Thumb entries, RAM slots, field offsets, property IDs, and `build36` example resident symbols).
 - **[docs/sdxc.md](docs/sdxc.md)** — Successful first `128 GB` SDXC / exFAT trial, earlier limitations, native-marker/checksum resolution and remaining validation.
+- **[docs/research.md](docs/research.md)** — Open feature questions: XPan crop mode, colour banks, natural-colour calibration, sound controls and other R5 extensions.
 - **[docs/porting.md](docs/porting.md)** — Technical requirements for porting to other firmware versions or models (R5 C, R5 Mark II, R6 family).
 - **[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)** — Structured templates for R5 `2.2.1` test reports and independent port requests.
 
