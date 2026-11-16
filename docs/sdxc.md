@@ -6,7 +6,7 @@ On the reference original EOS R5 running firmware `2.2.1`, the unchanged private
 
 > Amazing, i just tested, it play startup sounds, play shutter release mambo sound, and shoots normally
 
-The card kept its existing full-capacity MBR/exFAT partition. No formatting, repartitioning, capacity reduction or new camera firmware/NVRAM write was needed. This resolves the suspected SDHC-only limit for this camera, firmware, card and payload. It does not certify every SDXC card or shooting mode. See [resolved issue #2](https://github.com/WhiteAvocad0/canon-r5-sound-mod/issues/2).
+The card kept its existing full-capacity MBR/exFAT partition. No formatting, repartitioning, capacity reduction or new camera firmware/NVRAM write was needed. This resolves the suspected SDHC-only limit for this camera, firmware, card and payload. It does not certify every SDXC card or shooting mode. See [resolved issue #2](https://github.com/WhiteAvocad0/canon-r5-mod/issues/2).
 
 ## 1. Earlier Limitations and Their Resolution
 
@@ -56,6 +56,6 @@ The first trial reused `build36`, `562,144` bytes, SHA-256 `3579cecf0ab9349035b4
 - **User-reported on camera:** startup sound, Mambo shutter sound and normal shooting on the prepared `128 GB` card.
 - **Not inspected:** returned SDXC photos or diagnostic logs. Shutter mode and absence of a second storage card were not separately reconfirmed in the final report.
 - **Still unverified:** repeated cold boots, longer shooting sessions, full-capacity fill/read validation, other SDXC cards, burst/video, blocked shots, card-error paths, measured latency, shutdown margin and immediate mute.
-- **Public build distinction:** this trial used the private baseline. The public source-repackaged build has matching native implementation but has not itself been hardware-tested.
+- **Public build distinction:** this trial used the private baseline (`build36`). An earlier `128 GB` silent XPan trial (`1b7bfcfa`) also ran before the latest `4838eb81` portrait/EVF playback extension. Neither public source-repackaged build (`shutter-feedback` or `xpan-crop`) has itself been hardware-tested.
 
 Canon Basic exFAT `SCRIPT` lookup remains a separate deferred research question. Other camera models still require their own firmware-specific ports.

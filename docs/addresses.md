@@ -123,3 +123,24 @@ The default `shutter-feedback` profile branches directly to `witness_done` (`b w
 | `sound_boot_state` | `0x002226CC` | Boot/startup/context-check diagnostic state (`build36` example). |
 | `sound_worker_state` | `0x00222C34` | Worker task handle, counters, and fault state in `.bss` (`build36` example). |
 | `_reserved_end` / `_private_stack_top` | `0x00223CD0` (`2,243,792`) | End of resident reservation (`567,336` B reserved, leaving `558,408` B free `>= 524,304` B floor in `build36`). |
+
+---
+
+## 8. Experimental XPan (`--profile xpan-crop`) Addresses & Slots
+
+All addresses below belong exclusively to Canon EOS R5 `2.2.1` for `--profile xpan-crop` (see [docs/xpan.md](xpan.md) for the full pipeline diagram):
+
+| Name | Address / Value | Type | Role |
+| --- | --- | --- | --- |
+| `PROP_IMAGE_ASPECT_RATIO` | `0x80040054` | Property ID | Aspect ratio property (`7` = `16:9` replaced by `XPan`, `512:189`). |
+| Aggregate Zico vector root | `0xE3500000` | ROM base (even) | Stock vector resource aggregate root (`0xE38F614C` = `0x40000206` aspect icon `968`B). |
+| Menu image getter | `0xE026AF47` / `0xE026AED3` | ROM Thumb entries | Stock vector table getter and 11-arg callback registrar. |
+| `QL_GETTER_VA` (`q_label_entry`) | `0xE0B5D22C` | ROM hook site | Quick Control (`Q`) aspect label hook (`item 52`, `string 271` -> `"XPan"`). |
+| Framing row table | `0xE20CFC64` | ROM rodata table | `70` x `12`-word display framing table (`3,360` B; RAM `0x0002648C`). |
+| Live framing hooks (`frame_native`) | `0xE07C3DAA`..`0xE07C42DE`, `0xE07F671E`, `0xE0392184` | ROM hook sites | Live LCD (`display=1`) and EVF (`display=0x10`) bar projection. |
+| Saved crop / JPEG / ROI hooks | `0xE07D030C`, `0xE0CD98DA`, `0xE0CD986C`, `0xE017B61C`, `0xE098FB2C` | ROM hook sites | Saved `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0,1220,8192,3024)`. |
+| Playback Main / tags / cache | `0xE0334E4C`, `0xE03141E4`, `0xE0318FD0`, `0xE07732BE` | ROM hook sites | File-tag capture, `O+0x34==0` image-ready check, cache publication. |
+| Typed IFD high pool | `[0x44F86000, 0x45003000)` | RAM domain | Admitted typed IFD span (`44`-byte object, L1 descriptors `0x44054402`/`0x45054402`). |
+| `fit` (`playback_mask_fit_entry`) | `0xE0710D04` (caller `0xE07110FD`) | ROM hook site | Playback crop-ROI fit (`drawOneImage` `0xE071106E` -> `GRAPHICS_DrawOneImageForTrimImage` `0xE078DE84`). |
+| `guide` (`playback_mask_guide_entry`) | `0xE06CBFD6` (caller `0xE075B2DF`) | ROM hook site | Hides stock `16:9` outline (`0xE073FBC0`) by branching to `PM_GUIDE_BAIL` (`0xE06CC061`). |
+| View RAM slots (`PM_*`) | `0x00008EDC`, `0x00016E78`, `0x00017674`, `0x00140580` | Fixed RAM slots | Display device word (`0`/`1`), orientation (`0`/`2`), category, and clear color. |

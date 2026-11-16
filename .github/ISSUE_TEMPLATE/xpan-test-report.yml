@@ -1,0 +1,136 @@
+name: XPan Crop Test Report (R5 2.2.1)
+description: Report host-build or on-camera test results for the experimental silent --profile xpan-crop preview on EOS R5 2.2.1.
+title: "[XPan Test] "
+labels: ["test-report", "xpan"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **IMPORTANT — Upload & Safety Rules**
+        - **DO NOT upload** Canon ROM dumps, `.FIR` updates, `.CR3`/`.JPG` photos, copyrighted/private audio files, or raw SD card images.
+        - **Allowed**: Text SHA-256 digests (`autoexec.bin`, `source_manifest_sha256`), sanitized memory reservation bounds from `build.json`, and plain-text observations.
+        - `--profile xpan-crop` is **silent (no audio)** and experimental for **original EOS R5 firmware `2.2.1` only**.
+
+  - type: input
+    id: model_fw
+    attributes:
+      label: Exact Camera Model & Firmware Version
+      description: Verify in camera Setup Menu -> Firmware Ver. (only original EOS R5 2.2.1 is supported).
+      placeholder: "Canon EOS R5 (original), Firmware 2.2.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: quality_mode
+    attributes:
+      label: Image Quality & Shooting Mode Tested
+      options:
+        - RAW + Large JPEG (8192x5464 / 8192x3024)
+        - Large JPEG only
+        - RAW only
+        - CRAW / Other JPEG quality (M/S)
+        - Continuous / Burst
+        - Host Build Only (not run on camera)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: display_path
+    attributes:
+      label: Display Path Tested
+      options:
+        - Rear LCD only
+        - EVF only
+        - Both Rear LCD and EVF (including switching)
+        - Host Build Only
+    validations:
+      required: true
+
+  - type: dropdown
+    id: orientation_mode
+    attributes:
+      label: Orientation & Auto-Rotate Setting
+      options:
+        - Landscape (orientation 0)
+        - Portrait (orientation 2, Auto-Rotate Off or Computer-Only / effective r7=0)
+        - Both Landscape and Portrait (Auto-Rotate Off or Computer-Only)
+        - Portrait with Auto-Rotate On (camera display rotation active)
+        - Host Build Only
+    validations:
+      required: true
+
+  - type: dropdown
+    id: first_open_behavior
+    attributes:
+      label: First-Open Playback Behavior (Cold Boot -> Playback)
+      options:
+        - Immediate 2.71:1 black bars on first open (no 16:9 outline)
+        - Stock 16:9 white outline on first open; black bars only after away/back
+        - Stock 16:9 white outline even after away/back
+        - Not tested / Host Build Only
+    validations:
+      required: true
+
+  - type: input
+    id: card_format
+    attributes:
+      label: Card Type, Capacity & Format
+      description: Report card class, capacity, filesystem, and marker workflow without serial numbers/CIDs.
+      placeholder: "16 GB SDHC, FAT32, reviewed EOS_DEVELOP/BOOTDISK marker workflow"
+    validations:
+      required: true
+
+  - type: input
+    id: source_ref
+    attributes:
+      label: Source Git Commit / Tag & Profile
+      placeholder: "release/xpan-source-preview @ <commit-sha> (--profile xpan-crop)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: build_hash
+    attributes:
+      label: Source & Build Hashes (Text Digests Only)
+      description: Paste `autoexec.bin` SHA-256, `source_manifest_sha256` (`source_id`), and `reservation` bytes from `build.json`.
+      placeholder: |
+        autoexec.bin sha256: ...
+        source_manifest_sha256: ...
+        source_id: ...
+        bytes_reserved: ... / remaining_user_bytes: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro_steps
+    attributes:
+      label: Exact Reproduction Steps
+      description: List cold boot timing, lens/shutter mode, Q label check, live view bars, photo capture, and first playback sequence.
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Observed Results
+      description: Report Q label ("XPan"), live framing bars, first-open vs away/back playback bars, image dimensions reported in metadata/viewer, or any hang/ERR code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: recovery
+    attributes:
+      label: Recovery Steps & Outcome
+      description: If a hang/assert/error occurred, describe card removal, power cycle, and whether normal camera boot resumed.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Compliance & Evidence Confirmation
+      options:
+        - label: I confirmed no Canon ROM/FIR files, `.CR3`/`.JPG` photos, private audio clips, or raw card images are attached.
+          required: true
+        - label: I understand only text digests and sanitized memory bounds may be shared here, and no prebuilt binaries are released.
+          required: true

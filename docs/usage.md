@@ -33,6 +33,7 @@
 
 - Verifies exact `64 MiB` (`67,108,864`-byte) dump length.
 - Verifies the `256 KiB` (`65,536` `u32` words) additive checksum at `0xE0100000` equals `0x22C94093` and checks exact startup instruction bytes before patching.
+- For `--profile xpan-crop`, additionally verifies all `128` XPan 4 KiB code/table pages, `3` boot MMU table slices, `31` hook windows, the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`) before deriving any build-time headers or vectors into `--output`.
 - Allows per-camera settings variance outside immutable target code while **recording your actual full ROM SHA-256** as per-camera provenance inside `build.json` / `source-manifest.json`.
 - **There is no `--force` or skip-check flag.** Never bypass a ROM mismatch, never edit target checks to force another firmware version, and never copy another camera model's binary.
 
@@ -57,7 +58,7 @@ ffmpeg -i shutter-input.mp3 -map 0:a:0 -ac 1 -ar 48000 -c:a pcm_s16le shutter-48
 
 ## 4. Build Offline
 
-Run the portable offline builder (`shutter-feedback` is the baseline profile):
+Run the portable offline builder (`shutter-feedback` is the default profile):
 
 ```sh
 python3 tools/build.py \
@@ -68,11 +69,21 @@ python3 tools/build.py \
   --output build/r5-sound
 ```
 
+Or build the silent experimental XPan crop profile (`--profile xpan-crop`; **no WAV files** — `--startup-wav` and `--shutter-wav` are forbidden):
+
+```sh
+python3 tools/build.py \
+  --profile xpan-crop \
+  --rom /path/to/eos-r5-221-rom.bin \
+  --toolchain /path/to/arm-none-eabi-15.2.1/bin \
+  --output build/r5-xpan
+```
+
 The builder reads the input files you select and writes only to your selected output directory. It does not format cards, modify raw boot sectors, activate camera flags, or contact a camera. Verify the output directory contains:
 
 - `autoexec.bin` — finalized ML-formatted image (`0xE12FFF13` footer + zero 32-bit LE XOR).
-- `build.json` — ROM/audio/toolchain provenance, reservation footprint, and SHA-256 digests.
-- `symbols.json` and linker `.map` — exact resident addresses for your specific WAV sizes.
+- `build.json` — ROM/toolchain (and audio for `shutter-feedback`) provenance, reservation footprint, and SHA-256 digests.
+- `symbols.json` and linker `.map` — exact resident symbol addresses for your build.
 
 ---
 
@@ -125,7 +136,12 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
    - The default `shutter-feedback` feature profile intentionally **skips** writing `B:/R5AUD001.TXT` on boot to avoid duplicate FAT directory entries on repeated reboots.
    - Changing Canon's **Beep** menu setting (`0x80000023`) triggers an `R5O2` diagnostic snapshot in RAM (`DebugMsg`); it is a **diagnostic dump trigger, NOT an immediate mute control**.
    - Capture callbacks never play audio, wait, or perform file I/O.
-   - Optional developer debugging (`DbgRA*.bin` RAM export via Canon Basic) is not required for normal audio playback.
+   - Optional developer debugging (`DbgRA*.bin` RAM export via Canon Basic) is not required for normal playback.
+6. **Additional Notes for `--profile xpan-crop`**:
+   - `--profile xpan-crop` is **silent** (no startup or shutter sound).
+   - Select **`XPan`** (replacing the stock **`16:9`** aspect option) in Canon's Shooting Menu / Quick Control (`Q`) screen, with **`RAW + Large JPEG`** quality on rear LCD or EVF.
+   - Note that the public repackaged build is **hardware-untested**; portrait rear LCD `(0,2,0)` and EVF playback `(1,0,0)` / `(1,2,0)` are software-only in the `4838eb81` reference, active auto-rotation (`r7 != 0`) and opposite portrait orientations (`1`, `3`) are declined, and other qualities/modes (FHD/CRAW/burst/movie) remain unverified.
+   - When submitting a test report, include only text hashes/observations — **never upload ROM dumps, `.CR3`/`.JPG` files, or raw card images**.
 
 ---
 

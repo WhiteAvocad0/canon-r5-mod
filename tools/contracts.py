@@ -8,9 +8,11 @@ import struct
 ROOT = Path(__file__).resolve().parents[1]
 FIRMWARE_PATH = ROOT / "config" / "firmware.json"
 TARGET_CONTRACT_PATH = ROOT / "config" / "target_contract.json"
+XPAN_TARGET_CONTRACT_PATH = ROOT / "config" / "xpan_target_contract.json"
 
 MANIFEST = json.loads(FIRMWARE_PATH.read_text())
 TARGET_CONTRACT = json.loads(TARGET_CONTRACT_PATH.read_text())
+XPAN_TARGET_CONTRACT = json.loads(XPAN_TARGET_CONTRACT_PATH.read_text())
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -179,6 +181,108 @@ def validate_target_contract_consistency(
             raise ValueError(f"bound API {api_name} ({hex(api_addr)}) is not covered by code_fingerprints")
 
 
+def _verify_fingerprint_entries(
+    data: bytes,
+    entries: list[dict],
+    *,
+    rom_base: int,
+) -> list[dict]:
+    verified = []
+    for region in entries:
+        r_name = region["name"]
+        r_addr = region["address"]
+        r_len = region["bytes"]
+        r_off = r_addr - rom_base
+        actual_region_sha = hashlib.sha256(data[r_off : r_off + r_len]).hexdigest()
+        if actual_region_sha != region["sha256"]:
+            raise ValueError(
+                f"ROM code fingerprint mismatch at {r_name} (0x{r_addr:08x}+{r_len}): "
+                f"expected {region['sha256']}, got {actual_region_sha}"
+            )
+        verified.append(
+            {
+                "name": r_name,
+                "address": hex(r_addr),
+                "bytes": r_len,
+                "sha256": actual_region_sha,
+            }
+        )
+    return verified
+
+
+def _validate_fingerprint_list(entries: object, *, label: str, rom_base: int, dump_bytes: int, seen_names: set[str]) -> list[tuple[int, int]]:
+    if type(entries) is not list or not entries:
+        raise ValueError(f"missing {label}")
+    ranges = []
+    for entry in entries:
+        if type(entry) is not dict:
+            raise ValueError(f"invalid {label} entry")
+        name = entry.get("name")
+        addr = entry.get("address")
+        length = entry.get("bytes")
+        sha = entry.get("sha256")
+        if not isinstance(name, str) or not name or name in seen_names:
+            raise ValueError(f"invalid or duplicate fingerprint name in {label}: {name!r}")
+        seen_names.add(name)
+        if type(addr) is not int or type(length) is not int or length <= 0:
+            raise ValueError(f"invalid address/length for {label} {name}")
+        off = addr - rom_base
+        if off < 0 or off + length > dump_bytes:
+            raise ValueError(f"{label} {name} outside 64 MiB ROM range")
+        if not isinstance(sha, str) or not _SHA256_RE.match(sha):
+            raise ValueError(f"invalid sha256 for {label} {name}")
+        ranges.append((addr, addr + length))
+    return ranges
+
+
+def validate_xpan_target_contract_consistency(
+    manifest: dict = MANIFEST,
+    contract: dict = TARGET_CONTRACT,
+    xpan_contract: dict = XPAN_TARGET_CONTRACT,
+    hooks: list[dict] | None = None,
+) -> None:
+    """Validate base R5 2.2.1 contract plus XPan extra pages, tables, and resources (no full dump lock)."""
+    validate_target_contract_consistency(manifest, contract)
+    if "dump_sha256" in xpan_contract or "rom_sha256" in xpan_contract:
+        raise ValueError("public XPan target profile must not enforce a single-device full dump_sha256")
+    if xpan_contract.get("admission_mode") != "immutable_code_fingerprints":
+        raise ValueError("unsupported admission_mode in xpan_target_contract.json")
+    if xpan_contract.get("rom_layout") != contract.get("rom_layout"):
+        raise ValueError("xpan_target_contract.rom_layout disagrees with target_contract.json")
+
+    rom_base = manifest["rom_base"]
+    dump_bytes = manifest["dump_bytes"]
+    seen_names: set[str] = set()
+    _validate_fingerprint_list(
+        [xpan_contract.get("framing_table"), xpan_contract.get("menu_vector_resource")],
+        label="xpan_resource",
+        rom_base=rom_base,
+        dump_bytes=dump_bytes,
+        seen_names=seen_names,
+    )
+    _validate_fingerprint_list(
+        xpan_contract.get("boot_tables"),
+        label="boot_tables",
+        rom_base=rom_base,
+        dump_bytes=dump_bytes,
+        seen_names=seen_names,
+    )
+    page_ranges = _validate_fingerprint_list(
+        xpan_contract.get("extra_code_fingerprints"),
+        label="extra_code_fingerprints",
+        rom_base=rom_base,
+        dump_bytes=dump_bytes,
+        seen_names=seen_names,
+    )
+    if hooks is not None:
+        for h in hooks:
+            va = int(h["va"], 16) if isinstance(h["va"], str) else int(h["va"])
+            length = int(h["length"])
+            page = va & ~4095
+            if not any(start <= page and va + length <= end for start, end in page_ranges):
+                raise ValueError(f"XPan hook at {hex(va)} is not covered by extra_code_fingerprints")
+
+
 def admit_rom_with_provenance(
     data: bytes,
     *,
@@ -205,26 +309,7 @@ def admit_rom_with_provenance(
             f"firmware signature mismatch: expected 0x{manifest['signature']:08x}, got 0x{word_sum:08x}"
         )
 
-    verified_regions = []
-    for region in contract["code_fingerprints"]:
-        r_name = region["name"]
-        r_addr = region["address"]
-        r_len = region["bytes"]
-        r_off = r_addr - rom_base
-        actual_region_sha = hashlib.sha256(data[r_off : r_off + r_len]).hexdigest()
-        if actual_region_sha != region["sha256"]:
-            raise ValueError(
-                f"ROM code fingerprint mismatch at {r_name} (0x{r_addr:08x}+{r_len}): "
-                f"expected {region['sha256']}, got {actual_region_sha}"
-            )
-        verified_regions.append(
-            {
-                "name": r_name,
-                "address": hex(r_addr),
-                "bytes": r_len,
-                "sha256": actual_region_sha,
-            }
-        )
+    verified_regions = _verify_fingerprint_entries(data, contract["code_fingerprints"], rom_base=rom_base)
 
     startup = bytes(data[off : off + manifest["startup_bytes"]])
     for patch in manifest["patches"]:
@@ -244,6 +329,37 @@ def admit_rom_with_provenance(
         "verified_code_regions": len(verified_regions),
         "code_fingerprints": verified_regions,
     }
+    return startup, provenance
+
+
+def admit_xpan_rom_with_provenance(
+    data: bytes,
+    *,
+    manifest: dict = MANIFEST,
+    contract: dict = TARGET_CONTRACT,
+    xpan_contract: dict = XPAN_TARGET_CONTRACT,
+    hooks: list[dict] | None = None,
+) -> tuple[bytes, dict]:
+    """Admit an R5 2.2.1 ROM for experimental XPan build using base + XPan immutable fingerprints."""
+    validate_xpan_target_contract_consistency(manifest, contract, xpan_contract, hooks=hooks)
+    startup, provenance = admit_rom_with_provenance(data, manifest=manifest, contract=contract)
+    rom_base = manifest["rom_base"]
+    extra_entries = [
+        xpan_contract["framing_table"],
+        xpan_contract["menu_vector_resource"],
+        *xpan_contract["boot_tables"],
+        *xpan_contract["extra_code_fingerprints"],
+    ]
+    extra_verified = _verify_fingerprint_entries(data, extra_entries, rom_base=rom_base)
+    if hooks is not None:
+        for h in hooks:
+            va = int(h["va"], 16) if isinstance(h["va"], str) else int(h["va"])
+            expected_bytes = bytes.fromhex(h["original_hex"])
+            h_off = va - rom_base
+            if data[h_off : h_off + len(expected_bytes)] != expected_bytes:
+                raise ValueError(f"XPan hook original bytes mismatch at {hex(va)}")
+    provenance["verified_xpan_regions"] = len(extra_verified)
+    provenance["xpan_fingerprints"] = extra_verified
     return startup, provenance
 
 

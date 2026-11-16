@@ -18,6 +18,7 @@ import sys
 TOOLS_DIR = Path(__file__).resolve().parent
 ROOT = TOOLS_DIR.parent
 SRC_DIR = ROOT / "src" / "r5_221"
+XPAN_TOOLS_DIR = ROOT / "src" / "experimental" / "xpan" / "tools"
 CONFIG_DIR = ROOT / "config"
 
 if str(TOOLS_DIR) not in sys.path:
@@ -34,6 +35,7 @@ from audio_profile import (
 from contracts import (
     MANIFEST as M,
     TARGET_CONTRACT,
+    XPAN_TARGET_CONTRACT,
     admit_rom_with_provenance,
     deployment,
     patch_startup,
@@ -190,15 +192,45 @@ def _validate_output_dir(output_dir: Path) -> Path:
 def build_image(
     *,
     rom_path: Path,
-    startup_wav: Path,
-    shutter_wav: Path,
+    startup_wav: Path | None = None,
+    shutter_wav: Path | None = None,
     toolchain_dir: Path,
     output_dir: Path,
+    profile: str = "shutter-feedback",
     manifest: dict = M,
     target_contract: dict = TARGET_CONTRACT,
+    xpan_contract: dict = XPAN_TARGET_CONTRACT,
+    xpan_hooks: list[dict] | None = None,
     policy_path: Path = POLICY_PATH,
     schema: dict = AUDIO_LOG_SCHEMA,
 ) -> dict:
+    """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
+    if profile == "xpan-crop":
+        if startup_wav is not None or shutter_wav is not None:
+            raise ValueError("--profile xpan-crop forbids --startup-wav and --shutter-wav")
+        if str(XPAN_TOOLS_DIR) not in sys.path:
+            sys.path.insert(0, str(XPAN_TOOLS_DIR))
+        from xpan_build import build_xpan_image
+
+        return build_xpan_image(
+            rom_path=rom_path,
+            toolchain_dir=toolchain_dir,
+            output_dir=output_dir,
+            validate_output_dir=_validate_output_dir,
+            manifest_input_key=manifest_input_key,
+            observer_source_header=observer_source_header,
+            shutter_worker_source_header=shutter_worker_source_header,
+            manifest=manifest,
+            target_contract=target_contract,
+            xpan_contract=xpan_contract,
+            xpan_hooks=xpan_hooks,
+            policy_path=policy_path,
+        )
+    if profile != "shutter-feedback":
+        raise ValueError(f"Unsupported build profile: {profile!r}")
+    if startup_wav is None or shutter_wav is None:
+        raise ValueError("shutter-feedback profile requires --startup-wav and --shutter-wav")
+
     """Execute the full offline shutter-feedback build into a fresh output directory."""
     env = controlled_environment()
     validate_target_contract_consistency(manifest, target_contract)
@@ -746,16 +778,34 @@ def build_image(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=(
-            "Offline builder for Canon EOS R5 (firmware 2.2.1) custom startup and shutter-feedback sound mod. "
-            "Accepts only 48 kHz mono 16-bit PCM WAVE files (no built-in MP3/codec conversion)."
+            "Offline builder for Canon EOS R5 (firmware 2.2.1) shutter-feedback sound mod (default) "
+            "or silent experimental XPan crop-only preview (--profile xpan-crop)."
         )
     )
+    ap.add_argument(
+        "--profile",
+        choices=("shutter-feedback", "xpan-crop"),
+        default="shutter-feedback",
+        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (silent, no WAVs)",
+    )
     ap.add_argument("--rom", type=Path, required=True, help="Path to user's 64 MiB Canon EOS R5 2.2.1 ROM dump")
-    ap.add_argument("--startup-wav", type=Path, required=True, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
-    ap.add_argument("--shutter-wav", type=Path, required=True, help="Path to 48 kHz mono 16-bit PCM WAVE shutter clip")
+    ap.add_argument("--startup-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
+    ap.add_argument("--shutter-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE shutter clip")
     ap.add_argument("--toolchain", type=Path, required=True, help="Directory containing arm-none-eabi GCC 15.2.1 binaries")
     ap.add_argument("--output", type=Path, required=True, help="New output directory for autoexec.bin and build artifacts")
     args = ap.parse_args(argv)
+
+    if args.profile == "xpan-crop":
+        if args.startup_wav is not None or args.shutter_wav is not None:
+            ap.error("--profile xpan-crop is silent and forbids --startup-wav / --shutter-wav")
+    else:
+        missing = [
+            flag
+            for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
+            if val is None
+        ]
+        if missing:
+            ap.error(f"the following arguments are required for --profile shutter-feedback: {', '.join(missing)}")
 
     record = build_image(
         rom_path=args.rom,
@@ -763,6 +813,7 @@ def main(argv: list[str] | None = None) -> int:
         shutter_wav=args.shutter_wav,
         toolchain_dir=args.toolchain,
         output_dir=args.output,
+        profile=args.profile,
     )
     print(
         json.dumps(

@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "hooks": [
+    {
+      "va": 3761458764,
+      "length": 10,
+      "original_bytes": "2de9f04f8a46adf5297d",
+      "destination_symbol": "playback_native_main_entry",
+      "resume_thumb": 3761458775
+    },
+    {
+      "va": 3761324516,
+      "length": 10,
+      "original_bytes": "20b1a4f86260c4f89862",
+      "destination_symbol": "playback_native_tag_primary_entry",
+      "resume_thumb": 3761324527
+    },
+    {
+      "va": 3761344464,
+      "length": 10,
+      "original_bytes": "60b1a4f86260c4f89862",
+      "destination_symbol": "playback_native_tag_alternate_entry",
+      "resume_thumb": 3761344475
+    },
+    {
+      "va": 3765503510,
+      "length": 10,
+      "original_bytes": "faf02ced024801694161",
+      "destination_symbol": "playback_native_backup1_entry",
+      "resume_thumb": 3765503521
+    },
+    {
+      "va": 3765504312,
+      "length": 8,
+      "original_bytes": "faf09aebfc480169",
+      "destination_symbol": "playback_native_backup2_entry",
+      "resume_thumb": 3765504321
+    },
+    {
+      "va": 3765504340,
+      "length": 8,
+      "original_bytes": "faf08cebbde81040",
+      "destination_symbol": "playback_native_restore1_entry",
+      "resume_thumb": 3765504349
+    },
+    {
+      "va": 3765504370,
+      "length": 10,
+      "original_bytes": "faf07eebbde81040ec48",
+      "destination_symbol": "playback_native_restore2_entry",
+      "resume_thumb": 3765504381
+    },
+    {
+      "va": 3765908158,
+      "length": 10,
+      "original_bytes": "2de9f843044600880321",
+      "destination_symbol": "playback_native_cache_entry",
+      "resume_thumb": 3765908169
+    }
+  ]
+}

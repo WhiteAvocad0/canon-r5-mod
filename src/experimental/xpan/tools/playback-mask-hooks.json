@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "camera_eligible": false,
+  "hooks": [
+    {
+      "role": "fit",
+      "va": 3765505284,
+      "length": 8,
+      "original_bytes": "f0b5012a87b01646",
+      "original_sha256": "fdc879ba4f91ee52819555027b66cdcfd84fbc9d5f40630ad49ce140fc68e39d",
+      "destination_symbol": "playback_mask_fit_entry",
+      "resume_thumb": 3765505293
+    },
+    {
+      "role": "guide",
+      "va": 3765223382,
+      "length": 10,
+      "original_bytes": "2869002841d068690028",
+      "original_sha256": "0bc3787f5ce4dddf1803badbe45e681e3ed6520d63837c843cbbcca1bbff615e",
+      "destination_symbol": "playback_mask_guide_entry",
+      "resume_thumb": 3765223393
+    }
+  ]
+}

@@ -1,67 +1,60 @@
-# Canon R5 Sound Mod
+# Canon R5 Mod
 
-**Source-preview resident audio modification for the original Canon EOS R5 on firmware `2.2.1` only.**
+**Source-preview resident firmware modifications for the original Canon EOS R5 on firmware `2.2.1` only.**
 
-It plays a user-supplied **Startup** WAV clip when the camera finishes Canon's initialization sequence and a separate user-supplied **Shutter** WAV clip through the camera's built-in speaker when the release counter advances on a single-shot capture.
+This repository provides two separate offline-buildable profiles for `BOOTDISK`-enabled EOS R5 `2.2.1` cameras:
+
+1. **`shutter-feedback` (default)** — Plays a user-supplied **Startup** WAV clip after Canon initialization and a separate user-supplied **Shutter** WAV clip through the built-in speaker when the release counter advances on single-shot capture.
+2. **`xpan-crop` (experimental, silent — NO audio)** — Replaces the `16:9` aspect option with a **`2.71:1` (`512:189` ~ `2.709:1`) XPan** crop mode (`8192x3024` Large JPEG, `8192x5464` CR3 RAW with crop `(0, 1220, 8192, 3024)`), live LCD/EVF framing bars, Quick Control (`Q`) `"XPan"` label, and playback masking. Added startup/shutter audio is disabled (`0` WAVs, `0` mod audio/PCM code linked); Canon's own Beep setting is unchanged.
 
 > [!WARNING]
 > **Source / Developer Preview — Not a Turnkey Installer or Full Magic Lantern Port**
-> - This repository contains **source code and documentation only** — no prebuilt binaries, no Canon ROM/FIR files, and no copyrighted or private audio assets are distributed.
-> - You must supply your own `64 MiB` EOS R5 `2.2.1` ROM dump, your own converted `48 kHz` mono 16-bit PCM WAV files, and a camera that already has its persistent `BootDisk` flag enabled.
-> - **The public repackaged source build has not itself been hardware-tested.** Its native C/ASM/linker implementation is copied from a private lab baseline (`build36`, `562,144` bytes, SHA-256 `3579cecf0ab9349035b4d4320ceb6e7fe34719f15f00bc80e0d34bbdf3b312c2`) that was user-confirmed on an original EOS R5 `2.2.1` on both a `16 GB` SDHC FAT32 card and a full-capacity `128 GB` SDXC exFAT card (startup sound, Mambo shutter sound and normal photo capture).
+> - This repository distributes **source code and documentation only** — no prebuilt binaries, no Canon ROM/FIR files, and no copyrighted audio/font/photo assets.
+> - You must supply your own `64 MiB` EOS R5 `2.2.1` ROM dump and a camera whose persistent `BootDisk` flag is already enabled.
+> - **Both public repackaged source builds (`shutter-feedback` and `xpan-crop`) are hardware-UNTESTED.** Earlier hardware milestones were observed on private lab builds only (see the Proof Matrix below).
 
 ---
 
-## Support Matrix
+## Support & Proof Matrix
 
-| Target Model / Firmware | Status | Notes |
-| --- | --- | --- |
-| **Canon EOS R5 (original), Firmware `2.2.1`** | **Experimental Source Preview** | Baseline `build36` user-confirmed for Startup + Shutter playback and normal photos on `16 GB` SDHC FAT32 and full-capacity `128 GB` SDXC exFAT; returned SDXC photos/logs are uninspected. |
-| Canon EOS R5, other firmware versions | **Porting / testing pending** | Requires separate firmware-specific ROM dump, immutable code fingerprints, and verified bindings. **Never downgrade** or cross-flash. |
-| Canon EOS R5 C / EOS R5 Mark II | **Porting / testing pending** | Different hardware/firmware; never run EOS R5 `2.2.1` binaries on these bodies. |
-| Canon EOS R6 / R6 Mark II / R6 Mark III | **Porting / testing pending** | Requires a separate target-specific port and read-only recon; never cross-flash R5 binaries. |
+| Target Model / Firmware | Profile | Status | Verified Evidence & Boundaries |
+| --- | --- | --- | --- |
+| **Canon EOS R5 (original), Firmware `2.2.1`** | `shutter-feedback` (default) | **Experimental Source Preview** | Private `build36` (`562,144` B, `3579cecf...`) user-confirmed for Startup + Shutter audio and normal photo capture on `16 GB` SDHC FAT32 and `128 GB` SDXC exFAT (returned SDXC photos/logs uninspected). **Public repackaged build: hardware-untested.** |
+| **Canon EOS R5 (original), Firmware `2.2.1`** | `xpan-crop` (silent, no audio) | **Experimental Source Preview** | Private prior `466ca8fe` (`c9f06053`) user-confirmed immediate rear LCD landscape first-open bars (`DbgRA127`), live LCD/EVF framing, Q `"XPan"` label, `8192x3024` Large JPEG + RAW crop `(0,1220,8192,3024)`, normal photos. Earlier `128 GB` silent XPan trial (`1b7bfcfa`) + CFexpress coexistence also confirmed (not latest candidate). Latest reference `4838eb81` (`427bb28d`) adds portrait LCD `(0,2,0)` & EVF `(1,0,0)` / `(1,2,0)` playback support — **software/ROM/ABI-verified only (private research suite: `289` tests and independent reviews), hardware-untested.** **Public repackaged build: hardware-untested.** |
+| Canon EOS R5, other firmware versions | Any | **Porting / testing pending** | **Binary-incompatible.** Requires separate firmware-specific ROM dump, immutable code fingerprints, and verified bindings. **Never downgrade** or cross-flash. |
+| Canon EOS R5 C / EOS R5 Mark II | Any | **Porting / testing pending** | **Binary-incompatible.** Different hardware/firmware; never run EOS R5 `2.2.1` binaries on these bodies. |
+| Canon EOS R6 / R6 Mark II / R6 Mark III | Any | **Porting / testing pending** | **Binary-incompatible.** Requires target-specific port and read-only recon; never cross-flash R5 binaries. |
 
-Community ports and firmware-specific validation are welcome. See [docs/porting.md](docs/porting.md) for what each port requires before on-camera testing.
+Community ports and firmware-specific validation are welcome. See [docs/porting.md](docs/porting.md) before any on-camera testing.
 
 ---
 
 ## Quickstart
 
-Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**.
+Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**. For deep XPan internals, see **[docs/xpan.md](docs/xpan.md)**.
 
-### Clone the Source
+### Clone and Run Host Tests (No ROM or ARM Toolchain Needed)
 
 ```sh
-git clone https://github.com/WhiteAvocad0/canon-r5-sound-mod.git
-cd canon-r5-sound-mod
+git clone https://github.com/WhiteAvocad0/canon-r5-mod.git
+cd canon-r5-mod
 python3 -m unittest discover -s tests -v
 ```
 
-The standalone tests use synthetic inputs; the C behavior tests also require an existing host C compiler such as Clang or GCC. No camera or ROM dump is needed to run those unit tests.
+Host tests use synthetic ROM/audio/KUWA fixtures and compile the actual C policy/worker code using an existing host C11 compiler (`cc`, `gcc`, or `clang`). No camera, ROM dump, or ARM toolchain is required for the default test suite.
 
-### 1. Prerequisites
+### Prerequisites for Offline Target Builds
 
 - **Python**: `>= 3.11` (standard library only; no automatic package downloads).
 - **Toolchain**: Explicit GNU Arm `15.2.1` reference toolchain directory containing `arm-none-eabi-{gcc,ld,nm,objcopy,objdump,readelf}` (e.g., xPack GNU Arm Embedded GCC `15.2.1-1.1`).
-- **Audio converter** (optional, for converting source clips): existing host `ffmpeg`.
-- **User-supplied inputs**:
-  - Your own `64 MiB` EOS R5 `2.2.1` ROM dump (`0xE0000000..0xE4000000`).
-  - Two separate `48 kHz`, mono, 16-bit signed little-endian PCM WAV files: one for **Startup** and one for **Shutter**.
+- **User-supplied ROM**: Your own `64 MiB` (`67,108,864`-byte) EOS R5 `2.2.1` ROM dump (`0xE0000000..0xE4000000`).
+- **For `shutter-feedback` (default) only**: Two separate `48 kHz`, mono, 16-bit signed little-endian PCM WAV files (`--startup-wav`, `--shutter-wav`), optionally converted with `ffmpeg`:
+  ```sh
+  ffmpeg -i startup-source.mp3 -map 0:a:0 -ac 1 -ar 48000 -c:a pcm_s16le startup-48k-mono.wav
+  ffmpeg -i shutter-source.mp3 -map 0:a:0 -ac 1 -ar 48000 -c:a pcm_s16le shutter-48k-mono.wav
+  ```
 
-### 2. Prepare Your Audio Clips
-
-The repository includes **no** bundled recordings (no Windows XP or Mambo clips) and applies **no** normalization or trimming. Convert your own audio separately with `ffmpeg`:
-
-```sh
-ffmpeg -i startup-source.mp3 -map 0:a:0 -ac 1 -ar 48000 -c:a pcm_s16le startup-48k-mono.wav
-ffmpeg -i shutter-source.mp3 -map 0:a:0 -ac 1 -ar 48000 -c:a pcm_s16le shutter-48k-mono.wav
-```
-
-The builder embeds each clip in its own immutable 32-byte-aligned buffer (zero-padding only the tail up to a 32-byte DMA boundary). **Maximum clip length is enforced by the actual reserved memory guard, not an arbitrary seconds limit:** resident code, BSS, `4,096`-byte private stack, descriptors, and both padded PCM buffers combined must stay below `FW_OBJECTS_START` (`0x002AC218`) while leaving at least `524,304` bytes (`0x80010`) of Canon user memory free out of the `1,125,744`-byte pool starting at `0x001994A8`. Exceeding that budget fails the build's memory guard.
-
-### 3. Build Offline
-
-Run the portable offline builder (it never contacts a camera or writes removable media):
+### Build Option A: Default `shutter-feedback` (Audio Mod)
 
 ```sh
 python3 tools/build.py \
@@ -72,30 +65,79 @@ python3 tools/build.py \
   --output build/my-r5-sound
 ```
 
-This selects the baseline `shutter-feedback` feature profile and produces:
+### Build Option B: Experimental `xpan-crop` (Silent XPan, No Audio / No WAVs)
 
-- `autoexec.bin` — ML-formatted boot payload for a pre-prepared `BOOTDISK` card.
-- `build.json` — provenance, SHA-256 digests, memory reservation bounds, and input fingerprints.
-- `symbols.json` & linker `.map` — exact resident symbol addresses for this specific build.
+```sh
+python3 tools/build.py \
+  --profile xpan-crop \
+  --rom /path/to/eos-r5-221-rom.bin \
+  --toolchain /path/to/arm-none-eabi-15.2.1/bin \
+  --output build/my-r5-xpan
+```
 
-Next, follow **[docs/usage.md](docs/usage.md)** for card backup, native `EOS_DEVELOP`/`BOOTDISK` marker preparation (using a reviewed workflow, not blind `dd`), copying `autoexec.bin`, and camera testing.
+> [!NOTE]
+> `--profile xpan-crop` is **silent (no audio)** and rejects `--startup-wav` / `--shutter-wav`. It derives `target-page.bin`, `frame_row_constants.h`, `menu-vector.bin`, and `feature-targets.h` into `--output` **only after** strict verification of R5 `2.2.1` immutable code, table, and vector resource fingerprints (`tools/contracts.py`), while admitting per-camera settings variance outside immutable code and recording your actual ROM SHA-256 as provenance.
+
+Both commands never contact a camera or write removable media and produce `autoexec.bin`, `build.json`, `source-manifest.json`, `symbols.json`, and `handoff.map` inside `--output`. Next, follow **[docs/usage.md](docs/usage.md)** for card backup, existing `BootDisk` prerequisite checks, native `EOS_DEVELOP`/`BOOTDISK` card metadata, and recovery limits (no turnkey bootflag activator or raw disk writer is provided).
+
+---
+
+## Let your coding agent guide you
+
+Copy this prompt into an agent that can read this repository and inspect your computer. Replace the goal and any details you know; the agent should inspect what it can and ask only for missing information. The longer [agent-assisted setup guide](docs/agent-setup.md) explains the lessons behind the prompt.
+
+```text
+Help me use https://github.com/WhiteAvocad0/canon-r5-mod.
+My goal is [silent XPan cropping / custom startup and shutter audio].
+My camera model and firmware are [fill in, or ask me to check].
+My computer/OS, card and input files are [fill in what I know].
+
+Read this checkout's AGENTS.md, README.md, docs/usage.md,
+docs/xpan.md and docs/agent-setup.md before proposing camera steps.
+Use the documentation for the exact revision being built.
+
+Confirm the exact model/firmware and the feature's current validation
+scope. Do not run an R5 2.2.1 payload on another model or firmware,
+downgrade the camera, disable target guards, or claim a full ML port.
+Distinguish camera-tested private reference behavior from this public
+repackaged source and any untested portrait/EVF playback paths.
+
+Inspect installed tools and my supplied files. Run the documented
+host checks and build offline with my own ROM and, for audio only,
+my own WAV files. Preserve actual input hashes and build provenance.
+Do not install unrelated software or upload my ROM, media or logs.
+Keep the silent XPan and audio profiles separate.
+
+Inspect the card's actual device identity, capacity, filesystem and
+writability before preparing anything. Preserve existing files and
+honor my backup instructions. This builder does not enable BootDisk
+or prepare boot sectors: do not invent those steps, format media,
+write camera flags, or force an unmount. If a required prerequisite
+is unknown, explain it and continue only the independent offline work.
+Respect authorization I have already given; ask before destructive
+or persistent actions I have not authorized. Never ask me to paste
+an administrator password into chat; wait through a local prompt.
+
+Once a compatible card is prepared, read back the selected payload
+and verify normal safe ejection before telling me to remove it.
+Give me one short, ordered test session with a Full-frame control
+and the documented XPan/audio cases. Record first-open behavior,
+LCD/EVF and orientation explicitly. Never equate successful host
+preparation or sound playback with a successful crop test.
+
+On return, acquire evidence before changing the card. Decode it
+with the exact build's source-bound contract and retain every group;
+physical log order is not chronology. If an error occurs, stop that
+trial, follow the documented power-off/card-removal recovery, and
+check normal operation before proposing another build. Report what
+was observed, what was inferred, and what remains unverified.
+```
 
 ---
 
 ## How It Works
 
-### Address Classification
-
-Every address in this project belongs to a distinct category. Do not mix them:
-
-- **ROM Thumb entry (odd address, bit 0 = 1)**: Fixed Canon EOS R5 `2.2.1` executable entry points in `0xE0000000..0xE3FFFFFF` (e.g., `0xE010021F`, `0xE08B1971`).
-- **ROM region / guard target (even address)**: Firmware base or checksummed code window (e.g., `0xE0100000`).
-- **Fixed RAM slot**: Fixed RAM pointer location in Canon's `2.2.1` memory map (e.g., `0x0001259C` for the release-counter context pointer, `0xDFFC4FA0` for the secondary-core hold slot).
-- **Field offset**: Byte offset added to a dereferenced RAM object pointer (e.g., `+0x1A14` from the counter context pointer).
-- **Property ID**: 32-bit Canon property identifier passed to the property observer (e.g., `0x12000003` release diagnostic, `0x80000023` Beep setting).
-- **Resident private addresses (build-dependent)**: Symbols inside `0x001994B0.._reserved_end` (private code, descriptors, embedded PCM, BSS, and stack) **shift whenever audio clip lengths or code change**. Always read your own build's `symbols.json` and `.map` rather than hardcoding private addresses.
-
-### Boot, Handoff, and Playback Flow
+### `shutter-feedback` Boot, Handoff, and Audio Flow
 
 ```mermaid
 flowchart TD
@@ -115,36 +157,38 @@ flowchart TD
     L -->|"Positive Counter Delta in Same Context"| M["Play Shutter WAV via Same Stock API SE_BeepStart Thumb 0xE08B1971 (Busy/Coalesced Shots Drop)"]
 ```
 
-1. **Image Convention & ROM Guard**: The `0xE12FFF13` footer and whole-image 32-bit LE XOR check are a Magic Lantern image-integrity convention, **not** Canon cryptographic authentication. Before copying anything to resident RAM, `check_image` sums `65,536` 32-bit words (`256 KiB`) starting at `0xE0100000` (`FW_MAIN_START`) and halts in `wfi` if the sum does not equal `0x22C94093`.
-2. **Resident Pool Handoff**: The primary core copies the resident section to `0x001994B0` (`FW_RESIDENT_BASE`), clears BSS and the `4,096`-byte private stack, releases secondary cores waiting on `0xDFFC4FA0` with `0xE0100001`, and runs a RAM copy of Canon's startup block (`0xE0100000..0xE0101000`) with `create_wrapper` hooked in before `FW_INIT_FACTORY` (`0xE027DC79`). `create_wrapper` reserves `0x001994A8.._reserved_end` from Canon's user pool while enforcing at least `524,304` bytes remaining below `0x002AC218`.
-3. **Startup Playback & Observer**: After original Canon init (`0xE010021F`) returns, `init_wrapper` checks that IRQs are enabled and Canon task/lock flags (`0x100C`, `0x102C`) are ready, verifies stock audio-readiness slots, and submits the **Startup** descriptor to `SE_BeepStart` (`0xE08B1971`), polling `0xE07F14DB` every `20 ms` (`0xE07F1703`). The default `shutter-feedback` profile skips writing `B:/R5AUD001.TXT` to avoid duplicate FAT directory entries across reboots, then registers the `R5O2` property observer (`0xE07F1FCB` / `0xE07F2575` / `0xE080A2D5`, where release property `0x12000003` is diagnostic only and Beep `0x80000023` dumps `R5O2` diagnostics).
-4. **Shutter Worker Loop**: `sound_boot_start_worker` spawns `"r5shutter"` (`create_task` `0xE047E975`, `start_task` `0xE047EA9F`, `4096`-byte stack, priority `19`). Every `20 ms` (`0xE07F1703`), the worker reads the guarded release-counter pointer at RAM slot `0x0001259C` plus field offset `+0x1A14`. Initial reads, context changes, or counter resets only re-seed the baseline; a positive advance in the same context invokes the **Shutter** descriptor through the same stock `SE_BeepStart` API (`0xE08B1971`) with an immediate single readiness check (`readiness_limit = 1`). Busy or coalesced shots are dropped cleanly without queued delayed playback.
+### `xpan-crop` Drawing, File, and Playback Pipeline
 
-See [docs/addresses.md](docs/addresses.md) for the complete typed table of fixed addresses, audio readiness slots, and `build36` example resident offsets.
+For `--profile xpan-crop`, the primary/secondary boot handoff places resident code at `0x001994B0` and constructs a build-dependent private MMU `TTBR1` root (`17` 4 KiB pages, `31` code patches, `8` L2 tables, `120` witness pages) and routes aspect `7` (`16:9` -> `XPan`, `512:189`) across property `0x80040054`, menu vector `0xE38F614C`, Q label `0xE0B5D22C`, live framing `0xE20CFC64`, JPEG/RAW crop (`0xE0CD98DA`, `0xE017B61C`, `0xE098FB2C`), playback Main/tags/cache (`0xE0334E4C`, `0xE03141E4`, `0xE07732BE`, `O+0x34==0`), `fit` (`0xE0710D04`), native `Trim` (`0xE078DE84`), and `guide` (`0xE06CBFD6` -> bail `0xE06CC061`). See the complete diagram and invariants in **[docs/xpan.md](docs/xpan.md)** and typed table in **[docs/addresses.md](docs/addresses.md)**.
 
 ---
 
 ## Community Testing and Ports
 
-Original EOS R5 `2.2.1` owners who meet the boot-enabled prerequisites can submit an [R5 test report](https://github.com/WhiteAvocad0/canon-r5-sound-mod/issues/new?template=r5-test-report.yml). Include the build hash, shutter mode, card filesystem and observed results.
+Original EOS R5 `2.2.1` owners who meet the boot-enabled prerequisites can submit:
+- **[XPan Test Report](https://github.com/WhiteAvocad0/canon-r5-mod/issues/new?template=xpan-test-report.yml)** — report quality, display (`LCD`/`EVF`), orientation, first-open vs away/back behavior, `source_manifest_sha256`, and exact reproduction steps.
+- **[R5 2.2.1 Test Report](https://github.com/WhiteAvocad0/canon-r5-mod/issues/new?template=r5-test-report.yml)** — report `shutter-feedback` audio or general R5 `2.2.1` host/hardware tests.
+- **[Port Request](https://github.com/WhiteAvocad0/canon-r5-mod/issues/new?template=port-request.yml)** — start read-only recon for other R5 firmware versions or R5 C / R5 II / R6-family bodies per [docs/porting.md](docs/porting.md). Never run R5 `2.2.1` binaries on other cameras.
 
-For R6 / R6 Mark II / R6 Mark III, start with a [port request](https://github.com/WhiteAvocad0/canon-r5-sound-mod/issues/new?template=port-request.yml) and the [porting guide](docs/porting.md). Each needs its own verified firmware bindings before on-camera testing. Do not run the R5 payload on these cameras.
+**Never upload Canon ROM dumps, `.FIR` updates, `.CR3`/`.JPG` photos, copyrighted audio clips, or raw SD card images.**
 
 ## Documentation Index
 
-- **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM dump provenance, audio conversion, card preparation (`16 GB` SDHC FAT32 and tested `128 GB` SDXC exFAT route), camera usage, diagnostics, and recovery.
-- **[docs/addresses.md](docs/addresses.md)** — Complete typed address reference for EOS R5 `2.2.1` (ROM Thumb entries, RAM slots, field offsets, property IDs, and `build36` example resident symbols).
-- **[docs/sdxc.md](docs/sdxc.md)** — Successful first `128 GB` SDXC / exFAT trial, earlier limitations, native-marker/checksum resolution and remaining validation.
-- **[docs/research.md](docs/research.md)** — Open feature questions: XPan crop mode, colour banks, natural-colour calibration, sound controls and other R5 extensions.
-- **[docs/porting.md](docs/porting.md)** — Technical requirements for porting to other firmware versions or models (R5 C, R5 Mark II, R6 family).
-- **[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)** — Structured templates for R5 `2.2.1` test reports and independent port requests.
+- **[docs/agent-setup.md](docs/agent-setup.md)** — Agent-assisted setup, evidence, card handling and testing lessons.
+- **[docs/xpan.md](docs/xpan.md)** — Deep `xpan-crop` architecture, R5 `2.2.1` Mermaid pipeline, supported/declined view matrix, and KUWA diagnostic decoding.
+- **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM provenance rules, audio conversion, offline build (`shutter-feedback` & `xpan-crop`), card preparation, and recovery.
+- **[docs/addresses.md](docs/addresses.md)** — Complete typed R5 `2.2.1` address reference for boot, audio, observer, worker, and experimental XPan hooks/slots.
+- **[docs/sdxc.md](docs/sdxc.md)** — `128 GB` SDXC / exFAT trial evidence, native marker/checksum derivation, and remaining validation.
+- **[docs/research.md](docs/research.md)** — Open feasibility questions (#3 XPan, #4–#10, #11 MFilm, #12 29:59 record limit, #13 Live Photos, #14 movie record button beep).
+- **[docs/porting.md](docs/porting.md)** — Requirements for porting to other firmware versions or Canon models.
+- **[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)** — Structured templates for XPan test reports, R5 `2.2.1` test reports, and port requests.
 
 ---
 
 ## Disclaimer & Evidence Boundaries
 
-- **Experimental software — use at your own risk**: This is an experimental resident firmware modification with limited testing. It may hang, trigger Canon asserts, lose or corrupt card data, or require recovery.
-- **No warranty & no Canon affiliation**: Provided under `GPL-2.0-or-later` (see [LICENSE](LICENSE)) without warranty of any kind. Not affiliated with, endorsed by, or supported by Canon Inc.
-- **Persistent BootDisk flag**: The camera's internal `BootDisk` flag persists across card formatting and card removal. This repository provides **no** guaranteed safe installer, uninstaller, or flash/NVRAM writer.
-- **Recovery scope**: On the reference R5 `2.2.1` camera, removing the experimental card and power-cycling without it restored normal camera startup (user-confirmed), but that observation is **not** a brick-proof guarantee for every failure mode.
-- **Unverified modes & behaviors**: Limited photo capture has user-reported functional success on both `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC (`build36`; mechanical single-shot was the established test context; SDXC shutter mode was not separately reconfirmed). Returned `build36` photos/logs are uninspected; prior `build29` logs verified release counter `113072 -> 113073 -> 113074` across two new CR3 frames. **Burst shooting, movie recording, blocked shots, card errors, measured physical audio latency, shutdown margin, and an immediate mute control are unverified.** Do not interpret the `20 ms` worker polling interval as measured physical sound latency. Current playback finishes naturally; overlapping/busy triggers drop rather than interrupting or queueing.
+- **Experimental software — use at your own risk**: Resident firmware modifications may hang, trigger Canon asserts (`ERR70` or similar), lose or corrupt card data, or require recovery.
+- **No warranty & no Canon affiliation**: Provided under `GPL-2.0-or-later` (see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) without warranty of any kind. Not affiliated with, endorsed by, or supported by Canon Inc.
+- **Persistent `BootDisk` flag**: The camera's internal `BootDisk` flag persists across card formatting and card removal. This repository provides **no** turnkey bootflag activator, uninstaller, or flash/NVRAM writer.
+- **Recovery scope**: On the reference R5 `2.2.1` body, removing the experimental card and power-cycling without it restored normal camera startup (user-confirmed), but that observation is **not** a brick-proof guarantee for every failure mode.
+- **Unverified areas**: Public repackaged builds (`shutter-feedback` and `xpan-crop`) are hardware-untested. For `shutter-feedback`: burst, movie, blocked shots, card errors, physical latency, shutdown margin, and immediate mute are unverified. For `xpan-crop`: latest `4838eb81` portrait LCD / EVF playback, other qualities/modes (M/S/C-RAW/burst/movie), active auto-rotation (`r7 != 0`), and cached orientation values outside `{0, 2}` are hardware-unverified or declined.

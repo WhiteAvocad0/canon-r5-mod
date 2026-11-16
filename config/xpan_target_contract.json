@@ -1,0 +1,816 @@
+{
+  "schema_version": 1,
+  "target": "Canon EOS R5 firmware 2.2.1",
+  "admission_mode": "immutable_code_fingerprints",
+  "unsupported_note": "Strict R5 2.2.1 immutable code, table, and resource fingerprints for the experimental xpan-crop profile. Other R5 firmware versions and other models (R5 C, R5 Mark II, R6, R6 Mark II, R6 Mark III) are unsupported and rejected. Admission accepts per-device flash differences outside fingerprinted regions without pinning a private full-dump digest.",
+  "rom_layout": {
+    "dump_bytes": 67108864,
+    "rom_base": 3758096384,
+    "main_start": 3759144960,
+    "signature_words": 65536,
+    "signature": 583614611,
+    "startup_bytes": 4096
+  },
+  "framing_table": {
+    "name": "framing_table",
+    "address": 3792501860,
+    "bytes": 3360,
+    "sha256": "fbd829e896bb75a7d21193cb9b4afc81dcfb5f27a6f759628ea112626d0e2169"
+  },
+  "menu_vector_resource": {
+    "name": "menu_vector_resource",
+    "address": 3817824588,
+    "bytes": 968,
+    "sha256": "4b68993fdc4260574570299af42a5ea588c3787b8e6740e1a4ba80f4eff18cf9"
+  },
+  "boot_tables": [
+    {
+      "name": "boot_table_0080",
+      "address": 3758096512,
+      "bytes": 64,
+      "sha256": "f2f948eea05f9f7c32c255a380baaacc1cad32579ef5c69bedbdbd8e4905fa35"
+    },
+    {
+      "name": "boot_table_3800",
+      "address": 3758110720,
+      "bytes": 256,
+      "sha256": "8a7c16734ea1b33aac919b76de1088f1fbb8b45a5a7a274bdc749ce662c4f1f6"
+    },
+    {
+      "name": "boot_table_4840",
+      "address": 3758114880,
+      "bytes": 64,
+      "sha256": "056da280ff3a28b372ed4042db69d710f56dcaa0bf6d5d110fdc9d88ecc1e8c1"
+    }
+  ],
+  "extra_code_fingerprints": [
+    {
+      "name": "xpan_page_e0001000",
+      "address": 3758100480,
+      "bytes": 4096,
+      "sha256": "12879a4b75512c4927c04d62e850ab49082f3705e1fd8b31bcdc8f396afff4bc"
+    },
+    {
+      "name": "xpan_page_e0100000",
+      "address": 3759144960,
+      "bytes": 4096,
+      "sha256": "2768bc9087e4911c8c611306106d8fd2b9a638d390476fe512910ae9e458fc53"
+    },
+    {
+      "name": "xpan_page_e010a000",
+      "address": 3759185920,
+      "bytes": 4096,
+      "sha256": "5afc383ed13f38e54f841b716c94c41a50217df2764f23f1f07ae1ad21afa80d"
+    },
+    {
+      "name": "xpan_page_e011f000",
+      "address": 3759271936,
+      "bytes": 4096,
+      "sha256": "98f6a0c469dc61e162867d8c13be1b371d75754a0c23d48ad7ef9f8539175fea"
+    },
+    {
+      "name": "xpan_page_e0124000",
+      "address": 3759292416,
+      "bytes": 4096,
+      "sha256": "f646416f010a2b7324bf7e848288a213495fadad9ca04bde610cd4f805dbedbc"
+    },
+    {
+      "name": "xpan_page_e0125000",
+      "address": 3759296512,
+      "bytes": 4096,
+      "sha256": "a47b0db69415b8960d54debc93f612c13796753deb2b3d1f79e0110b53f1d50a"
+    },
+    {
+      "name": "xpan_page_e012a000",
+      "address": 3759316992,
+      "bytes": 4096,
+      "sha256": "d3007ce3b14fe61229c02669b52cbd935e2142d72357e3fa4a7b5223022ca959"
+    },
+    {
+      "name": "xpan_page_e0131000",
+      "address": 3759345664,
+      "bytes": 4096,
+      "sha256": "affd94f35ede57ebd292b44f571a4dca172fd18bf5e8e9d1fd1c7ded4a15f289"
+    },
+    {
+      "name": "xpan_page_e0132000",
+      "address": 3759349760,
+      "bytes": 4096,
+      "sha256": "2fc3cf6fccfd290794f76413d10968b7baf07be293425fc04a72f6d90da1408f"
+    },
+    {
+      "name": "xpan_page_e013c000",
+      "address": 3759390720,
+      "bytes": 4096,
+      "sha256": "47096c7f08b48e6530c925354de59e4d3279245c1f2f0e3370c4c87a886ebf94"
+    },
+    {
+      "name": "xpan_page_e013d000",
+      "address": 3759394816,
+      "bytes": 4096,
+      "sha256": "7c0b8028dcbba77ca03171104c57b7ababab464659e0cbea6233c00976bf90ae"
+    },
+    {
+      "name": "xpan_page_e0140000",
+      "address": 3759407104,
+      "bytes": 4096,
+      "sha256": "7af7af8efdb03aae283f37972b6a961878ed707a8a1e3e4e489977c210fee656"
+    },
+    {
+      "name": "xpan_page_e0146000",
+      "address": 3759431680,
+      "bytes": 4096,
+      "sha256": "0494e76369dd20d7c5bd6d7570c4db7a092ef19a569101aaa7cffd45a7e9f9ab"
+    },
+    {
+      "name": "xpan_page_e0161000",
+      "address": 3759542272,
+      "bytes": 4096,
+      "sha256": "5bf3dba7f17c5be65d53607986032743bd994d87369f02ff15d955407e022eaa"
+    },
+    {
+      "name": "xpan_page_e0172000",
+      "address": 3759611904,
+      "bytes": 4096,
+      "sha256": "cf391a1444c3e5072a2be9dbfdf996ae6791f376cd7cb66254fbe91b5127f794"
+    },
+    {
+      "name": "xpan_page_e017b000",
+      "address": 3759648768,
+      "bytes": 4096,
+      "sha256": "9ff6cab8173dcbaa2aa344b88e68384f2049c9eebbb219092871d6306fa16ef9"
+    },
+    {
+      "name": "xpan_page_e026a000",
+      "address": 3760627712,
+      "bytes": 4096,
+      "sha256": "5c9ae6afec0d802060c0cf4c82c3e86db84d86c88ae81e57ddcf68c96f45b58c"
+    },
+    {
+      "name": "xpan_page_e02a5000",
+      "address": 3760869376,
+      "bytes": 4096,
+      "sha256": "55f3074e24b36584e384627a9a5b0ba013945ba78f678ec32e249823341b3454"
+    },
+    {
+      "name": "xpan_page_e02a7000",
+      "address": 3760877568,
+      "bytes": 4096,
+      "sha256": "24e5e46cf356fff6f38fa27fec6c2e33ddc75287ea9477fe8993d891d2c659d7"
+    },
+    {
+      "name": "xpan_page_e02b4000",
+      "address": 3760930816,
+      "bytes": 4096,
+      "sha256": "f1b6d0b309874c30fed5a69f6c35dafcb3010fcdf1ecbf3fe52642b7b4aec3f9"
+    },
+    {
+      "name": "xpan_page_e02d0000",
+      "address": 3761045504,
+      "bytes": 4096,
+      "sha256": "41434dcaad708e3a2e6d013071b80836b43bd5e8b0537b50c5c0707484e19d73"
+    },
+    {
+      "name": "xpan_page_e02d2000",
+      "address": 3761053696,
+      "bytes": 4096,
+      "sha256": "bb49b6e7d5a5db1256d88cba683ec88dc0bceca053776f2053a865faad3e5a43"
+    },
+    {
+      "name": "xpan_page_e02d8000",
+      "address": 3761078272,
+      "bytes": 4096,
+      "sha256": "e701d06ef40b47af1fdb6769bb11d44265be5338737ba316bf8569d0ba91148d"
+    },
+    {
+      "name": "xpan_page_e02df000",
+      "address": 3761106944,
+      "bytes": 4096,
+      "sha256": "ec86c0e9991d678e09ddcd71265319a44a91a2bb2fb8ee371c0d2a627dcc76a4"
+    },
+    {
+      "name": "xpan_page_e02e7000",
+      "address": 3761139712,
+      "bytes": 4096,
+      "sha256": "47e890478ebc10c669d8957f4d6d6cb4668b5d6dff36c7f69512afb98aeb6730"
+    },
+    {
+      "name": "xpan_page_e02e8000",
+      "address": 3761143808,
+      "bytes": 4096,
+      "sha256": "1c8aac5437fafc636be79a4b3d5ab1866a829b8c07ace8831d1b3f2310b9ce2a"
+    },
+    {
+      "name": "xpan_page_e0301000",
+      "address": 3761246208,
+      "bytes": 4096,
+      "sha256": "c33efc1129ebe6ca6d372d5992111feafc5977486d56c55d0d3dcb2745dcdf33"
+    },
+    {
+      "name": "xpan_page_e0306000",
+      "address": 3761266688,
+      "bytes": 4096,
+      "sha256": "683e977a9197366399325b252479cd5f52cf56b9564dc3b8ad353f7145cce883"
+    },
+    {
+      "name": "xpan_page_e030b000",
+      "address": 3761287168,
+      "bytes": 4096,
+      "sha256": "3359308cd015b1ba423c524813d9df1b79020c8ee5b6173e186315c4f2ab73e3"
+    },
+    {
+      "name": "xpan_page_e030c000",
+      "address": 3761291264,
+      "bytes": 4096,
+      "sha256": "ae1806f4bb8ba4e0b14b857e13cc2654b8de75ceb8c6fac263d839a5f6126b39"
+    },
+    {
+      "name": "xpan_page_e0313000",
+      "address": 3761319936,
+      "bytes": 4096,
+      "sha256": "6c056e2af9f7cc61ac753d9b73dbc261d18bb6758225b02558b2107677553212"
+    },
+    {
+      "name": "xpan_page_e0314000",
+      "address": 3761324032,
+      "bytes": 4096,
+      "sha256": "0307187b69379fb795873bde44538daf6d999b75a5617a01952113889512481d"
+    },
+    {
+      "name": "xpan_page_e0315000",
+      "address": 3761328128,
+      "bytes": 4096,
+      "sha256": "4f761dc6e8e024286c62b217192dd84b374f7633dd1f75cd1008c412d575f7ee"
+    },
+    {
+      "name": "xpan_page_e0316000",
+      "address": 3761332224,
+      "bytes": 4096,
+      "sha256": "d6f34ab4155d014976ac6554988d56c27f5ad631529557d26d4698ddf322cbae"
+    },
+    {
+      "name": "xpan_page_e0317000",
+      "address": 3761336320,
+      "bytes": 4096,
+      "sha256": "b0bc92f65ac3eafbc0a345a76e86595d67535e41b0b8e7c681565d59a8dcc204"
+    },
+    {
+      "name": "xpan_page_e0318000",
+      "address": 3761340416,
+      "bytes": 4096,
+      "sha256": "83854fa2df64feafaecd8fa25e5c706977aea8f0920e4d1ebb5ebe3b589d8daf"
+    },
+    {
+      "name": "xpan_page_e0319000",
+      "address": 3761344512,
+      "bytes": 4096,
+      "sha256": "d6e45587b3c782b33a8528572418e6d60433f3dfa815716ff3a4fb09d2473db2"
+    },
+    {
+      "name": "xpan_page_e0321000",
+      "address": 3761377280,
+      "bytes": 4096,
+      "sha256": "211b660087081a01e83604a8e1b9ba7f68ec1555b5d38a81dd4a7cf603f6a3fb"
+    },
+    {
+      "name": "xpan_page_e0323000",
+      "address": 3761385472,
+      "bytes": 4096,
+      "sha256": "54d0520c1f9366338332ae4137dfa96e67a86677701329d5c0a38525ed8998e7"
+    },
+    {
+      "name": "xpan_page_e0324000",
+      "address": 3761389568,
+      "bytes": 4096,
+      "sha256": "13bf1eb315b5d8f3789f704955459fdd74504945fa487c74a294f35653f37dc2"
+    },
+    {
+      "name": "xpan_page_e0326000",
+      "address": 3761397760,
+      "bytes": 4096,
+      "sha256": "560f3df71b31addfa1629b952a4d4470448216874b1be98d8b2a4ac113b6f43e"
+    },
+    {
+      "name": "xpan_page_e0332000",
+      "address": 3761446912,
+      "bytes": 4096,
+      "sha256": "1892dfb03b81d8cf21f1d6a438ecbe0813aef187fe3d8a02c303463c8cabf969"
+    },
+    {
+      "name": "xpan_page_e0333000",
+      "address": 3761451008,
+      "bytes": 4096,
+      "sha256": "00c243f91e3934f7d95b1c4497e47f5c7146584c7d303878e767422ee1fd483c"
+    },
+    {
+      "name": "xpan_page_e0334000",
+      "address": 3761455104,
+      "bytes": 4096,
+      "sha256": "0d0160a9178cda8c9354b328637de3443f14f6259bbaaf3e964a7e148ea63f77"
+    },
+    {
+      "name": "xpan_page_e0335000",
+      "address": 3761459200,
+      "bytes": 4096,
+      "sha256": "46d5278950a2dfd5f815e3cc886bd54816c188dc3ca21c44d4d6f821c4c80dc6"
+    },
+    {
+      "name": "xpan_page_e0336000",
+      "address": 3761463296,
+      "bytes": 4096,
+      "sha256": "5293a62723eda607211f3a915f9be57dc3c05f082868a60e63d7cd8275e3c058"
+    },
+    {
+      "name": "xpan_page_e037c000",
+      "address": 3761750016,
+      "bytes": 4096,
+      "sha256": "80f498b7f10e3490af80c00141c2842a3865ec2a11696e37748402d718231355"
+    },
+    {
+      "name": "xpan_page_e0392000",
+      "address": 3761840128,
+      "bytes": 4096,
+      "sha256": "59acc8d50c16c872a4d96e634d3647c5cd4a5ceefbf67d03b032d11fd685a8f0"
+    },
+    {
+      "name": "xpan_page_e039e000",
+      "address": 3761889280,
+      "bytes": 4096,
+      "sha256": "ec9068591efee06142381fdba2064ba5a3a1b1a43f66b6e2266b2f61bee7c776"
+    },
+    {
+      "name": "xpan_page_e03a6000",
+      "address": 3761922048,
+      "bytes": 4096,
+      "sha256": "a7c62071df737a47a27316dd6465ab06a66c09e7726ac55a4488b9f6dacc6b46"
+    },
+    {
+      "name": "xpan_page_e03db000",
+      "address": 3762139136,
+      "bytes": 4096,
+      "sha256": "f57e90709b543751f2831e2dbb0accdd00d8a81315fda7c90d75d49aa261ea32"
+    },
+    {
+      "name": "xpan_page_e03e1000",
+      "address": 3762163712,
+      "bytes": 4096,
+      "sha256": "f1c2c793f94a2e76ce5f591257f84a98d6f2b3cab7229ec9fe4e1367922ae390"
+    },
+    {
+      "name": "xpan_page_e0451000",
+      "address": 3762622464,
+      "bytes": 4096,
+      "sha256": "f4ac7cfcfdf9f781274d74ff4699e6dcc81440b9c994e06d07babb6dc03d98a5"
+    },
+    {
+      "name": "xpan_page_e04e1000",
+      "address": 3763212288,
+      "bytes": 4096,
+      "sha256": "ac7401d70b63806aa902e17d445dad00866da4c3868b21c565ed2891b92efcc1"
+    },
+    {
+      "name": "xpan_page_e04e2000",
+      "address": 3763216384,
+      "bytes": 4096,
+      "sha256": "b392c1be7714cf75610db237ea12c934f704403ae487fc8a4d8f657bde600bb9"
+    },
+    {
+      "name": "xpan_page_e04f9000",
+      "address": 3763310592,
+      "bytes": 4096,
+      "sha256": "23abd894f1aa16b094b145ad7155afa0b61ac8aeee54269268f3d79a757f4991"
+    },
+    {
+      "name": "xpan_page_e04fa000",
+      "address": 3763314688,
+      "bytes": 4096,
+      "sha256": "749adf45d6a5462adf95c4a2e81855c6ac9faf3a99cf7de02393c9f2b44b1ae8"
+    },
+    {
+      "name": "xpan_page_e052a000",
+      "address": 3763511296,
+      "bytes": 4096,
+      "sha256": "02a247aa84671af5f0d0d18a24ee5804071bc74b01240859308e3e8d638ac0be"
+    },
+    {
+      "name": "xpan_page_e05de000",
+      "address": 3764248576,
+      "bytes": 4096,
+      "sha256": "9363c0afb01bd0a0a9a827ad7ac75484d80ea617c5579ed81ea2718af679a92c"
+    },
+    {
+      "name": "xpan_page_e05df000",
+      "address": 3764252672,
+      "bytes": 4096,
+      "sha256": "79fdd9e27b9d9bd9f89a496fa6e8f13a551b5b5dea1511e90a6f6eb6220b6604"
+    },
+    {
+      "name": "xpan_page_e05e3000",
+      "address": 3764269056,
+      "bytes": 4096,
+      "sha256": "62c6364346f834967d86868406e09e0a2d87292e2f91aea5ac78b7c0e067bfae"
+    },
+    {
+      "name": "xpan_page_e061d000",
+      "address": 3764506624,
+      "bytes": 4096,
+      "sha256": "9ae33e9c74bd55d29c4ccb2edbe15db6003e2da1e2cc06e911c4c9f31b4d5782"
+    },
+    {
+      "name": "xpan_page_e061e000",
+      "address": 3764510720,
+      "bytes": 4096,
+      "sha256": "7ebc33c94f6c6f0d09dbe504b20bfe95172e24dda37f4eaebc88b36b28358ca5"
+    },
+    {
+      "name": "xpan_page_e069b000",
+      "address": 3765022720,
+      "bytes": 4096,
+      "sha256": "7aa2b9a211cf53fd66e701959ab23954015537a7c3408b07399fdc04b1df4946"
+    },
+    {
+      "name": "xpan_page_e069e000",
+      "address": 3765035008,
+      "bytes": 4096,
+      "sha256": "51240b9ef2438fd61cc723ee7d693cca7abfff827d0f5054a1c58d2a3f3533c7"
+    },
+    {
+      "name": "xpan_page_e06cb000",
+      "address": 3765219328,
+      "bytes": 4096,
+      "sha256": "08a4632e70237985b58b1da02a4dfd9c519151ad1ce5147ea3aa914dbed3d886"
+    },
+    {
+      "name": "xpan_page_e06cc000",
+      "address": 3765223424,
+      "bytes": 4096,
+      "sha256": "5fdf17e5f7420495bab939b2cb932ffbe9b29dc3bcf0f3712fa162debe1642a3"
+    },
+    {
+      "name": "xpan_page_e06ea000",
+      "address": 3765346304,
+      "bytes": 4096,
+      "sha256": "7160dc8a331fbf4e7199813ce75a7f427c449acc3da81e1fe1e467a3b708b7e3"
+    },
+    {
+      "name": "xpan_page_e06eb000",
+      "address": 3765350400,
+      "bytes": 4096,
+      "sha256": "69dd86b9a76142b2adf4d81bfd6d5f5b603421a91d7a0ec69b7f7cf91f9fb0b9"
+    },
+    {
+      "name": "xpan_page_e0710000",
+      "address": 3765501952,
+      "bytes": 4096,
+      "sha256": "0c76b652b15e760b2470ff8ab0f1ee282c4d9429f20699cfb167660f26d137a4"
+    },
+    {
+      "name": "xpan_page_e0711000",
+      "address": 3765506048,
+      "bytes": 4096,
+      "sha256": "e2812236f6b95750f306fc2cc6117fb1f6b087080d2c02b667841c24e2c99854"
+    },
+    {
+      "name": "xpan_page_e0712000",
+      "address": 3765510144,
+      "bytes": 4096,
+      "sha256": "a65be2d96e58e400017b593429c42a572b65b4087ae2fe07030c911a23b58d4e"
+    },
+    {
+      "name": "xpan_page_e0713000",
+      "address": 3765514240,
+      "bytes": 4096,
+      "sha256": "47c211b4517503df12c364a2865fc1c53d591f494c9ef066f3fdb410a31088df"
+    },
+    {
+      "name": "xpan_page_e073f000",
+      "address": 3765694464,
+      "bytes": 4096,
+      "sha256": "a8d66c94d24707aace1be49eaa75260aaf18d15d55e57f7723dc3b8deda12182"
+    },
+    {
+      "name": "xpan_page_e075b000",
+      "address": 3765809152,
+      "bytes": 4096,
+      "sha256": "465033fd66f4a54c8059fe770fa57c6f9b2690320090f4d35bc0cbb77328bb2b"
+    },
+    {
+      "name": "xpan_page_e0773000",
+      "address": 3765907456,
+      "bytes": 4096,
+      "sha256": "00ffaa3d3ed12b1d26db5c3bc976fb9075f287729fb51b0660526bc8da556f55"
+    },
+    {
+      "name": "xpan_page_e077b000",
+      "address": 3765940224,
+      "bytes": 4096,
+      "sha256": "b4b916bdaa6149fb6a111ca608c7a9487238943ac22e3e16ff4ed1f70f1f7551"
+    },
+    {
+      "name": "xpan_page_e077c000",
+      "address": 3765944320,
+      "bytes": 4096,
+      "sha256": "b151bf6028c6aadbaef3559f324191cf06bb29aceeff868c4cc51309c3d97e63"
+    },
+    {
+      "name": "xpan_page_e078c000",
+      "address": 3766009856,
+      "bytes": 4096,
+      "sha256": "51bd1775de78d29f9ea581873c28b48d0bf6692b14e0885c63293b3e62c254fb"
+    },
+    {
+      "name": "xpan_page_e078d000",
+      "address": 3766013952,
+      "bytes": 4096,
+      "sha256": "37368b836a9ce8f23d454d35051878ec69cfd88bd4c0b066fd2fcde009246a02"
+    },
+    {
+      "name": "xpan_page_e078e000",
+      "address": 3766018048,
+      "bytes": 4096,
+      "sha256": "5e7459f2b5a306bebe58ed1e61071bcd1b9c5570cbe609415c13db457d458a3a"
+    },
+    {
+      "name": "xpan_page_e0791000",
+      "address": 3766030336,
+      "bytes": 4096,
+      "sha256": "4d78293f2128cae7a083d6f39b3d1173eb1bc92ba3188f8e7dffb854de6a8b36"
+    },
+    {
+      "name": "xpan_page_e0793000",
+      "address": 3766038528,
+      "bytes": 4096,
+      "sha256": "183802ffa3470e1f16186b12937eaede50588280bea9a1645919e285be231bd2"
+    },
+    {
+      "name": "xpan_page_e0797000",
+      "address": 3766054912,
+      "bytes": 4096,
+      "sha256": "a71090a30955b01c094179525380ebc6be5e27ede7a8997b5d502fe75914aa8c"
+    },
+    {
+      "name": "xpan_page_e07c3000",
+      "address": 3766235136,
+      "bytes": 4096,
+      "sha256": "b5ef6832e40f600ef59ae0b6e452e8de35228de71cd644bdc3fe85ef8497ac0d"
+    },
+    {
+      "name": "xpan_page_e07c4000",
+      "address": 3766239232,
+      "bytes": 4096,
+      "sha256": "b1a1c83cfd6da27749f9cf4532bfea4c0c0b62fe1f97e27aa6db95dc31375b36"
+    },
+    {
+      "name": "xpan_page_e07c5000",
+      "address": 3766243328,
+      "bytes": 4096,
+      "sha256": "d8653f84a4ac862dfd659d07a031ef07f5c44a700045914c8a1052f49ec49ce0"
+    },
+    {
+      "name": "xpan_page_e07cb000",
+      "address": 3766267904,
+      "bytes": 4096,
+      "sha256": "032e6305bbcf30d319dec16fa8bfeeac5dc5963e35439688d6942e769db39cea"
+    },
+    {
+      "name": "xpan_page_e07cc000",
+      "address": 3766272000,
+      "bytes": 4096,
+      "sha256": "77ff5fd3e3a7b6f6950f36af7f7bdf521a9489c4fb12d660dfbb91eb0a7dcaa4"
+    },
+    {
+      "name": "xpan_page_e07d0000",
+      "address": 3766288384,
+      "bytes": 4096,
+      "sha256": "125f7426d22bae2a6e35918738d8af321c26a9dea4c9b94374ebd42c98866dc9"
+    },
+    {
+      "name": "xpan_page_e07d2000",
+      "address": 3766296576,
+      "bytes": 4096,
+      "sha256": "6f94f30fc8cfced2a0b2f765fc2b2835bee7f671952c8e6e67bbdd9768d4b1e4"
+    },
+    {
+      "name": "xpan_page_e07dd000",
+      "address": 3766341632,
+      "bytes": 4096,
+      "sha256": "23e76b01cee484437ab62ea4decae4ea46222ff925080b391a5fb2480826efde"
+    },
+    {
+      "name": "xpan_page_e07e7000",
+      "address": 3766382592,
+      "bytes": 4096,
+      "sha256": "08661451e2ff87b35ba00c0bed7135e4efd04495831dbc74b9f1e7591a362462"
+    },
+    {
+      "name": "xpan_page_e07f1000",
+      "address": 3766423552,
+      "bytes": 4096,
+      "sha256": "0032c7063fcfa6e7ed3e0070043fdb74d182370ac6777c031c7bc403c3a17a5a"
+    },
+    {
+      "name": "xpan_page_e07f6000",
+      "address": 3766444032,
+      "bytes": 4096,
+      "sha256": "92af4272c86429d0b8abb97905035eb7db8830ba18408d8159bcd341d2b8e1b9"
+    },
+    {
+      "name": "xpan_page_e07f7000",
+      "address": 3766448128,
+      "bytes": 4096,
+      "sha256": "4b45e0169b35515923162306aa193f496288460d7dff0a2c47efc8a51155de19"
+    },
+    {
+      "name": "xpan_page_e0808000",
+      "address": 3766517760,
+      "bytes": 4096,
+      "sha256": "6b3dcbef254b376a656637798f59ff08bca94e08fd263201ae36236f9c5e9e53"
+    },
+    {
+      "name": "xpan_page_e0809000",
+      "address": 3766521856,
+      "bytes": 4096,
+      "sha256": "40b1ac0e918fbccefdd59af003c2fc9503ff0ae684983d0baebd4b5a339678ce"
+    },
+    {
+      "name": "xpan_page_e080a000",
+      "address": 3766525952,
+      "bytes": 4096,
+      "sha256": "d47c8c8e93b9532a362647a44da4527186f2c57ade1da2b23a832606fcb32c25"
+    },
+    {
+      "name": "xpan_page_e084e000",
+      "address": 3766804480,
+      "bytes": 4096,
+      "sha256": "369c7ff702ff1a33111df1bed2e7279a3bacf34ed02f638b2a18723beeec42dd"
+    },
+    {
+      "name": "xpan_page_e0863000",
+      "address": 3766890496,
+      "bytes": 4096,
+      "sha256": "50d3775071de9794568e0e5d3c824365daa840df61169680664a950df3312540"
+    },
+    {
+      "name": "xpan_page_e0942000",
+      "address": 3767803904,
+      "bytes": 4096,
+      "sha256": "7e32d9e76bcbbadd9e8b16782c949607732b587b596c5f35cfe5e0d1be71e391"
+    },
+    {
+      "name": "xpan_page_e098b000",
+      "address": 3768102912,
+      "bytes": 4096,
+      "sha256": "e63e80de0db02e8583391fdc5f736c7c6c607591666fcd8c4e65397f69775857"
+    },
+    {
+      "name": "xpan_page_e098f000",
+      "address": 3768119296,
+      "bytes": 4096,
+      "sha256": "a6db716c8f52c2cc3e1b8ce9217b4ea4570ddfc405993fc4106d5c7e05269fd9"
+    },
+    {
+      "name": "xpan_page_e0990000",
+      "address": 3768123392,
+      "bytes": 4096,
+      "sha256": "9acaa4f9f77db1a36bffa712f7d8f0dcd91433db9a9831fc5e353ec7220ee22c"
+    },
+    {
+      "name": "xpan_page_e09ab000",
+      "address": 3768233984,
+      "bytes": 4096,
+      "sha256": "3d005dbc5a70d33181736326d687d29498bde3fecd66baad8b7119afd59ec0ee"
+    },
+    {
+      "name": "xpan_page_e09b2000",
+      "address": 3768262656,
+      "bytes": 4096,
+      "sha256": "926fcc80dd3a2d68b8e414713c40ed9004dd0e98d7a0afe9a66a6a65d9d90d3d"
+    },
+    {
+      "name": "xpan_page_e09e1000",
+      "address": 3768455168,
+      "bytes": 4096,
+      "sha256": "065892e7190a553ded5d3261a9923871f362e4c3ed4dd4e504de5c2b3e840eff"
+    },
+    {
+      "name": "xpan_page_e09fe000",
+      "address": 3768573952,
+      "bytes": 4096,
+      "sha256": "a14e657d0701a0e4f09399e7b3dbc2a64ff74dabd0efa363a0b651769506bea8"
+    },
+    {
+      "name": "xpan_page_e0a02000",
+      "address": 3768590336,
+      "bytes": 4096,
+      "sha256": "69b73f9354c81b4aa40e6ca0777f485ba027d4c6c4fcc837a106fa26ff75d025"
+    },
+    {
+      "name": "xpan_page_e0a03000",
+      "address": 3768594432,
+      "bytes": 4096,
+      "sha256": "b0874b172bb34b2c978772a86ef3770a95414f8c1986dbd610d0e37d1186d6fe"
+    },
+    {
+      "name": "xpan_page_e0a06000",
+      "address": 3768606720,
+      "bytes": 4096,
+      "sha256": "0702a6c31f87e81901e01a1569ed120848eafc8dac907c16aef20d52779a8eb1"
+    },
+    {
+      "name": "xpan_page_e0a0c000",
+      "address": 3768631296,
+      "bytes": 4096,
+      "sha256": "dba2c04e49b0e383b4160048efcd61dc9a4cea4775d016b877811860ba68e9ce"
+    },
+    {
+      "name": "xpan_page_e0a41000",
+      "address": 3768848384,
+      "bytes": 4096,
+      "sha256": "8ad58cf2713939adce4841e73e8b1ceacb78760c5e2d7a5589623b2fd5c522c7"
+    },
+    {
+      "name": "xpan_page_e0b5d000",
+      "address": 3770011648,
+      "bytes": 4096,
+      "sha256": "67dc55e1d477ee3fb0963fe5a731e102a0ef334227d3bb79fa0010ab68f30d67"
+    },
+    {
+      "name": "xpan_page_e0cd9000",
+      "address": 3771568128,
+      "bytes": 4096,
+      "sha256": "6811e3f6c2c6be97c11e3ae2a5616704505a855070b13ac779a0575e6163534c"
+    },
+    {
+      "name": "xpan_page_e0e2c000",
+      "address": 3772956672,
+      "bytes": 4096,
+      "sha256": "19bd74d0d5c366db91375a79fd5a907972148529dad776c8f33209ac35f00154"
+    },
+    {
+      "name": "xpan_page_e1732000",
+      "address": 3782418432,
+      "bytes": 4096,
+      "sha256": "34f7994955f35737c4f9c33edbdd82db6cc35e7fc6db042d400816669e7969e7"
+    },
+    {
+      "name": "xpan_page_e1d56000",
+      "address": 3788857344,
+      "bytes": 4096,
+      "sha256": "e1789838613e984c3b57e4ea3201dd02ae19ca7f3848ad6da7b3098ec15bccc9"
+    },
+    {
+      "name": "xpan_page_e1d57000",
+      "address": 3788861440,
+      "bytes": 4096,
+      "sha256": "c0edaa0f940fd40200ab84bed432d96ae0631fd8c289383519f12828e3ab265d"
+    },
+    {
+      "name": "xpan_page_e1d5b000",
+      "address": 3788877824,
+      "bytes": 4096,
+      "sha256": "92877536bada274610395845c06249bff974b209cee9af30d1c804cb7e5a30c5"
+    },
+    {
+      "name": "xpan_page_e1d5c000",
+      "address": 3788881920,
+      "bytes": 4096,
+      "sha256": "75d42dba8e310a850befa21c0adf238f0bbe8997e9611c23329517f92bf79346"
+    },
+    {
+      "name": "xpan_page_e20bf000",
+      "address": 3792433152,
+      "bytes": 4096,
+      "sha256": "fc8e3bd4b47c285a3476306f001e55a3d4709bf0d66653ef54c6767ee590ebe4"
+    },
+    {
+      "name": "xpan_page_e20cf000",
+      "address": 3792498688,
+      "bytes": 4096,
+      "sha256": "0fb3bdabaa9a7a656b4894bee7265a58ca7fad53ccea5f58582060dfb2dbd34e"
+    },
+    {
+      "name": "xpan_page_e20d0000",
+      "address": 3792502784,
+      "bytes": 4096,
+      "sha256": "e62c259d392f482bb5a713cbd6e2e126612ebe75c25913de8ba3bdc40a3055d1"
+    },
+    {
+      "name": "xpan_page_e20da000",
+      "address": 3792543744,
+      "bytes": 4096,
+      "sha256": "ad85b36231219cc23c08c0e8a96cfff22c80f83524df91c1271bfd1492808923"
+    },
+    {
+      "name": "xpan_page_e3500000",
+      "address": 3813670912,
+      "bytes": 4096,
+      "sha256": "06f536958dc68fdda89a0f2805ff3881564fbfc3ed7b89a8771e40465c4df237"
+    },
+    {
+      "name": "xpan_page_e3516000",
+      "address": 3813761024,
+      "bytes": 4096,
+      "sha256": "198444bb2aae902f1d78bd9194f437ba419f9bbc7eb3d055d61543ea9414a552"
+    }
+  ]
+}

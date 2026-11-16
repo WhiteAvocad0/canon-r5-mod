@@ -7,11 +7,16 @@ Portions of the boot entry prefix, footer marker, and whole-image XOR checksum t
 - **Upstream repository:** `magiclantern_simplified`
 - **Pinned upstream commit:** `142472e95054d73640f50789ac0fd66325499d82`
 - **Derived / adapted components:**
-  - [`src/r5_221/handoff.S`](src/r5_221/handoff.S): ARM/Thumb dual-entry prefix and self-XOR integrity check convention adapted from Trammell Hudson's `src/reboot.c` (GPL-2.0-or-later).
+  - [`src/r5_221/handoff.S`](src/r5_221/handoff.S) and [`src/experimental/xpan/resident/handoff.S`](src/experimental/xpan/resident/handoff.S): ARM/Thumb dual-entry prefix and self-XOR integrity check convention adapted from Trammell Hudson's `src/reboot.c` (GPL-2.0-or-later).
   - [`src/r5_221/footer.S`](src/r5_221/footer.S): Footer marker (`0xE12FFF13`) and checksum placeholder layout adapted from `src/footer.c` (GPL-2.0-or-later).
   - [`tools/image_format.py`](tools/image_format.py): Little-endian word XOR checksum finalization and verification adapted from `build_tools/xor_chk.c` (GPL-2.0-or-later).
 
 All original GPL-2.0-or-later copyright and license notices are preserved in the corresponding source files and [`LICENSE`](LICENSE).
+
+## Clean-Room / Derived Build Inputs (No Bundled Canon or Font Binaries)
+
+- This repository bundles **no** Canon firmware pages, vector resource payloads, or proprietary font files (`.ttf`/`.otf`).
+- [`src/experimental/xpan/tools/xpan_font.json`](src/experimental/xpan/tools/xpan_font.json) contains clean-room path coordinates for the `"XPan"` menu label (`Arial-BoldMT` metric outline), combined at offline build time with the user-supplied verified ROM resource `0xE38F614C` into `--output/menu-vector.bin`.
 
 ## External Build Toolchain (Not Bundled)
 
