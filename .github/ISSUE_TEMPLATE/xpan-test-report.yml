@@ -118,6 +118,14 @@ body:
       required: true
 
   - type: textarea
+    id: instant_review
+    attributes:
+      label: Automatic After-Shot Review
+      description: Report this separately from normal ▶ playback. If tested, state LCD/EVF, orientation, the first visible guide or mask, and any approximate delay. Otherwise say not tested.
+    validations:
+      required: false
+
+  - type: textarea
     id: recovery
     attributes:
       label: Recovery Steps & Outcome

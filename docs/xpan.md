@@ -4,7 +4,7 @@
 > **Experimental Source Preview — Original Canon EOS R5 Firmware `2.2.1` Only**
 > - `--profile xpan-crop` is **intentionally silent (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged.
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
-> - **Latest `4838eb81` (`source_id=427bb28d5d188f6b`) portrait/EVF extension is software/ROM/ABI-verified only** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`) — **no physical camera test has been run on `4838eb81` or the public repackaged build.**
+> - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression. **Automatic rear-LCD instant review after a shot still has a brief 16:9-guide flash; the public repackaged build remains hardware-untested.**
 
 ---
 
@@ -15,6 +15,13 @@
 - **Large JPEG output:** `8192 x 3024` pixels (`8192 * 189 / 512 = 3024`).
 - **CR3 RAW output:** Full sensor `8192 x 5464` logical canvas with centered crop box `(x=0, y=1220, w=8192, h=3024)` recorded in RAW/IFD crop metadata.
 - **Unverified / uncovered qualities & modes:** Other still qualities (M/S/C-RAW and other RAW/JPEG combinations), continuous burst, and movie mode are not certified and require separate test coverage.
+
+### Stored Crop Tags
+
+The relevant MakerNote is **`0x009a` AspectInfo**, five unsigned 32-bit words: `(aspect, width, height, left, top)`. Returned XPan RAW files contain `[7,8192,3024,0,1220]`; the physically cropped JPEGs contain `[7,8192,3024,0,0]`. These match the native playback classifier in `playback_box.c`.
+
+In ExifTool, query **`CroppedImageLeft` / `CroppedImageTop`** for this structure. **`CropTopMargin` belongs to the separate `0x0098` CropInfo structure**; a value of 0 in RAW or 352 in JPEG is not the AspectInfo crop origin. The JPEG CropInfo value was also present in the stock 16:9 comparison. See [ExifTool 13.55's Canon definitions](https://github.com/exiftool/exiftool/blob/13.55/lib/Image/ExifTool/Canon.pm#L7163-L7198). The Canon aspect enum remains 7, so a metadata reader may label it 16:9 even though the stored dimensions carry the wide crop. Third-party RAW-editor crop handling has not been validated.
+
 
 ---
 
@@ -43,14 +50,22 @@ flowchart TD
 3. **Admitted vs. Declined Playback Views:**
    - **Admitted (`r7 == 0`, `drawmode == 0`, `category != 13`, `clear_color == 0`):**
      - `(device=0, orientation=0)`: Rear LCD landscape — **hardware-confirmed in prior `466ca8fe` (`DbgRA127`)**
-     - `(device=0, orientation=2)`: Rear LCD portrait (Auto-Rotate Off / Computer-Only, effective `r7 == 0`) — **software-only in `4838eb81`, hardware-untested**
-     - `(device=1, orientation=0)`: EVF landscape — **software-only in `4838eb81`, hardware-untested**
-     - `(device=1, orientation=2)`: EVF portrait (effective `r7 == 0`) — **software-only in `4838eb81`, hardware-untested**
+     - `(device=0, orientation=2)`: Rear LCD portrait (Auto-Rotate Off / Computer-Only, effective `r7 == 0`) — **reported working in the owner's normal ▶ session on private `4838eb81`**
+     - `(device=1, orientation=0)`: EVF landscape — **reported working in the owner's normal ▶ session on private `4838eb81`**
+     - `(device=1, orientation=2)`: EVF portrait (effective `r7 == 0`) — **reported working in the owner's normal ▶ session on private `4838eb81`**
    - **Declined:** `device >= 2` (HDMI/external), `orientation not in {0, 2}` (`1`, `3`, `0x5a`, etc.), active auto-rotation (`r7 != 0`), `drawmode != 0`, `category == 13`, non-black clear color, `O+0x34 != 0`, and legacy `16:9` files.
 
 ---
 
-## 3. Build-Time ROM Derivation & Diagnostic Verification
+## 3. Hardware Follow-Up and Instant-Review Limit
+
+On 17 November 2026, the owner reported that the instructed four-case first-open normal ▶ session worked: rear-LCD landscape and portrait, then EVF portrait and landscape, plus Full-frame/display-switch checks. This is an aggregate visual report, not an instrumented per-case latency measurement. The returned payload was the exact private `4838eb81` image, not public `18f2c774`.
+
+All four complete playback reports show crop projection and guide suppression. Three first-view reports are complete; one is incomplete at the log ring boundary, so its missing detail remains unknown. Two additional portrait RAW/JPEG pairs were returned, with JPEG dimensions 8192×3024 and full RAW dimensions 8192×5464.
+
+**Automatic post-shot instant review is a separate case:** on the rear LCD, the owner sees a 16:9 outline first and XPan black bars about one second later. That estimate has not been instrumented, EVF instant review has not been reported, and no fix is claimed yet. The investigation targets the earliest visible preview and its metadata/readiness ownership while preserving the successful normal ▶ path and its guards.
+
+## 4. Build-Time ROM Derivation & Diagnostic Verification
 
 `python3 tools/build.py --profile xpan-crop` embeds **no Canon ROM pages or binaries** in the repository. Instead, `tools/contracts.py` (`admit_xpan_rom_with_provenance`) first verifies:
 

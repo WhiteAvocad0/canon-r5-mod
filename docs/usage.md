@@ -119,6 +119,8 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
 
 ## 6. Camera Test Procedure & Runtime Behavior
 
+### Audio Profile (`shutter-feedback`)
+
 1. **Before powering on**:
    - Disconnect any USB cable.
    - Ensure the battery is well charged.
@@ -137,11 +139,15 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
    - Changing Canon's **Beep** menu setting (`0x80000023`) triggers an `R5O2` diagnostic snapshot in RAM (`DebugMsg`); it is a **diagnostic dump trigger, NOT an immediate mute control**.
    - Capture callbacks never play audio, wait, or perform file I/O.
    - Optional developer debugging (`DbgRA*.bin` RAM export via Canon Basic) is not required for normal playback.
-6. **Additional Notes for `--profile xpan-crop`**:
-   - `--profile xpan-crop` is **silent** (no startup or shutter sound).
-   - Select **`XPan`** (replacing the stock **`16:9`** aspect option) in Canon's Shooting Menu / Quick Control (`Q`) screen, with **`RAW + Large JPEG`** quality on rear LCD or EVF.
-   - Note that the public repackaged build is **hardware-untested**; portrait rear LCD `(0,2,0)` and EVF playback `(1,0,0)` / `(1,2,0)` are software-only in the `4838eb81` reference, active auto-rotation (`r7 != 0`) and opposite portrait orientations (`1`, `3`) are declined, and other qualities/modes (FHD/CRAW/burst/movie) remain unverified.
-   - When submitting a test report, include only text hashes/observations — **never upload ROM dumps, `.CR3`/`.JPG` files, or raw card images**.
+
+### Silent XPan Profile (`--profile xpan-crop`)
+
+1. With the camera off, insert the prepared SD card. For an initial controlled test, remove CFexpress and disconnect USB/HDMI. Added startup/shutter clips are disabled; Canon's own Beep setting is unchanged.
+2. Select **RAW + Large JPEG** and **XPan** (the replaced 16:9 option) through the Shooting Menu or Q screen. Record the Auto-Rotate setting; the admitted playback scope uses effective rotation `r7=0` (for example Auto-Rotate Off or Computer-Only).
+3. Take Full-frame control and XPan landscape/portrait photos. Check **automatic review immediately after the shot separately** from normal ▶ playback. Record which guide/mask appears first, the display used, orientation and any visible delay. A brief rear-LCD 16:9-guide flash before XPan bars remains a known issue in the current reference.
+4. Open each XPan photo in normal ▶ playback for the first time and inspect it before navigating away/back. Check rear LCD and EVF, landscape and portrait, LCD↔EVF switching, and that the Full-frame control retains its normal framing. The owner reported the private `4838eb81` four-case normal ▶ session working on 17 November 2026; the **public repackaged image is still hardware-untested**.
+5. Check saved JPEG dimensions and RAW crop metadata using the [documented AspectInfo fields](xpan.md#stored-crop-tags). Other still qualities/modes (M/S/C-RAW/burst/movie), active in-camera rotation `r7!=0`, and cached orientations outside `{0,2}` remain unverified or declined.
+6. Wait for card activity to stop before power-off/removal. Submit text hashes/observations through the [XPan report form](https://github.com/WhiteAvocad0/canon-r5-mod/issues/new?template=xpan-test-report.yml); **do not upload ROM dumps, photos or card images**. Optional Canon Basic debug exports are not a prerequisite for this visual test.
 
 ---
 
