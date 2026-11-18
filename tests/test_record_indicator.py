@@ -765,6 +765,17 @@ class StepMachineTests(unittest.TestCase):
         other = record_indicator_log.decode(_pack_kuwa(packed), "fedcba9876543210")
         self.assertEqual(other["groups"], [])
 
+    def test_stop_row_reports_the_hook_count_without_a_stop_cue(self):
+        self.step()
+        for old, new, lr in TAKE:
+            self.observe(old, new, lr)
+        self.lib.rec_tone_report(1)
+        fmts = (ctypes.c_char_p * 16).in_dll(self.lib, "host_fmt")
+        args = ((U * 8) * 16).in_dll(self.lib, "host_args")
+        k = [fmts[i].decode() for i in range(U.in_dll(self.lib, "host_rows").value)].index(
+            "R5T1 W=%u B=%u K=%u H=%u I=%u A=%u")
+        self.assertEqual(list(args[k])[:6], [0, 0, 0, 0, 0, 1])
+
     def test_faulty_tables_publish_nothing(self):
         start = "rec_tone_segments, rec_tone_pcm, rec_tone_descriptor"
         cases = {"bytes": dict(entries={"start": "{%s, 1u, 12000u, 23968u}" % start}),
@@ -1083,6 +1094,20 @@ class StopCueTests(StopCueBase):
         self.step()
         self.assertEqual(self.cam.beeps, [(2, START, self.cam.desc(0))])
 
+    def test_other_preflight_failures_drop_the_dong_at_once(self):
+        a = AUDIO
+        for name, mutate, reason in (
+                ("stock owned", lambda: self.cam.mem.__setitem__(self.cam.CTX + 0x4C, 1), PF["STOCK_OWNED"]),
+                ("audio ic", lambda: self.cam.mem.__setitem__(self.cam.IC + a["audio_ic_init_offset"], 0), PF["AUDIO_IC"]),
+                ("actrl invalid", lambda: self.cam.states.pop(self.cam.ACH), PF["ACTRL_INVALID"])):
+            with self.subTest(case=name):
+                self.setUp()
+                mutate()
+                self.lib.host_add_stop(1)
+                self.step()
+                s = self.st()
+                self.assertEqual((self.cam.beeps, s.pending, s.preflight_drop[reason]), ([], 0, 1))
+
     def test_a_replacing_cue_gets_its_own_full_retry_budget(self):
         self.cam.states[self.cam.ABH] = 2   # busy: the ding uses 8 of its 10 retry ticks
         for old, new, lr in TAKE[:4]:
@@ -1224,16 +1249,28 @@ class StopOnlyTests(StopCueBase):
         self.assertEqual(self.lib.host_press_seq(), 2)
         self.assert_no_unowned()
 
-    def test_press_during_a_pending_dong_does_not_supersede_it(self):
+    def test_press_counter_without_a_start_cue_never_supersedes_the_dong(self):
         self.run_take(TAKE[:-1])
         self.cam.states[self.cam.ABH] = 2
         self.observe(5, 0, 0xE0B10905)
         self.step()
-        self.lib.host_add_press(1)
+        self.lib.host_add_press(1)          # the counter moves, RecState stays idle
         self.cam.states[self.cam.ABH] = 1
         self.step()
         s = self.st()
         self.assertEqual((self.cues(), s.stop_superseded), ([1], 0))
+
+    def test_new_take_while_the_dong_is_pending_drops_it_as_not_idle(self):
+        self.run_take(TAKE[:-1])
+        self.cam.states[self.cam.ABH] = 2   # busy when the take ends
+        self.observe(5, 0, 0xE0B10905)
+        self.step()
+        self.observe(0, 1, 0xE0B0B883)      # a real REC press: RecState 1
+        self.cam.states[self.cam.ABH] = 1
+        self.step(15)
+        s = self.st()
+        self.assertEqual(self.cam.beeps, [], "never a late dong in the next take")
+        self.assertEqual((s.stop_not_idle, s.stop_superseded, s.presses), (1, 0, 0))
 
 
 # --- build plumbing, contracts and CLI (no toolchain) ----------------------
@@ -1439,6 +1476,85 @@ def default_off_digest(out, tmp):
     return hashlib.sha256(blob).hexdigest(), files, argv
 
 
+def synthetic_linked(t):
+    """A finalized-image stand-in laid out from the build's own encoders, for verify_linked."""
+    base, load = 0x1A0000, 0x40
+    symbols = {"_resident_start": base, "_resident_load_offset": load}
+    data = bytearray(0x8000)
+    at = base + 0x100
+
+    def place(name, blob, align=32):
+        nonlocal at
+        at = (at + align - 1) & ~(align - 1)
+        symbols[name] = at
+        data[load + at - base : load + at - base + len(blob)] = blob
+        at += max(len(blob), 4)
+    for name in ri.SYMBOLS:
+        place(name, b"")
+    for role in ri.ROLES:
+        cue = t["cues"][role]
+        if cue:
+            segs, _, desc = ri.CUE_SYMBOLS[role]
+            place(segs, bytes.fromhex(cue["segments_hex"]))
+            place(desc, ri.pending_descriptor(cue))
+    place("rec_tone_config", struct.pack(f"<{ri.CONFIG_WORDS}I", *ri.config_words(t, AUDIO)))
+    symbols["_resident_data_end"] = at + 64
+    symbols["_bss_start"] = bss = (at + 4096) & ~4095
+    for role in ri.ROLES:
+        if t["cues"][role]:
+            symbols[ri.CUE_SYMBOLS[role][1]] = bss
+            bss += t["cues"][role]["bytes"]
+    symbols["_bss_objects_end"] = bss
+    place_at = lambda name, blob: data.__setitem__(slice(load + symbols[name] - base,
+                                                         load + symbols[name] - base + len(blob)), blob)
+    place_at("rec_tone_cues", struct.pack(f"<{2 * ri.CUE_WORDS}I", *ri.cue_words(t, symbols)))
+    place_at("rec_tone_api", struct.pack("<4I", symbols["rec_tone_native_read"] | 1, AUDIO["state_query"],
+                                         AUDIO["beep_start"], symbols["rec_tone_native_clean"] | 1))
+    return data, symbols
+
+
+class LinkedCheckTests(unittest.TestCase):
+    """verify_linked against a synthetic image built from the same encoders (no toolchain)."""
+
+    def check(self, t, data, symbols, remaining=900000):
+        return ri.verify_linked(bytes(data), symbols, t, AUDIO, minimum_user_left=MANIFEST["minimum_user_left"],
+                                remaining_user_bytes=remaining)
+
+    def test_accepts_each_selection_and_records_both_buffers(self):
+        for start, stop in (("ding", "off"), ("off", "dong"), ("ding", "dong"), ("chirp2", "dong")):
+            with self.subTest(start=start, stop=stop):
+                t = ri.facts(start, stop)
+                data, symbols = synthetic_linked(t)
+                rec = self.check(t, data, symbols)
+                for role in ri.ROLES:
+                    self.assertEqual(rec["cues"][role] is None, t["cues"][role] is None)
+                    if rec["cues"][role]:
+                        self.assertEqual(rec["cues"][role]["pcm_address"], symbols[ri.CUE_SYMBOLS[role][1]])
+
+    def test_rejects_wrong_or_unselected_cues_and_the_heap_floor(self):
+        t = ri.facts("ding", "dong")
+        data, symbols = synthetic_linked(t)
+        start_only = ri.facts("ding")
+        one, one_symbols = synthetic_linked(start_only)
+        with self.assertRaisesRegex(ValueError, "cue linked without its option"):
+            self.check(start_only, one, {**one_symbols, "rec_tone_stop_pcm": 0x300000})
+        table = symbols["rec_tone_cues"]
+        bad = bytearray(data)
+        bad[0x40 + table - symbols["_resident_start"] + 4 * 11] ^= 1   # stop bytes word
+        with self.assertRaisesRegex(ValueError, "cue table differs"):
+            self.check(t, bad, symbols)
+        bad = bytearray(data)
+        bad[0x40 + symbols["rec_tone_stop_descriptor"] - symbols["_resident_start"] + 8] ^= 1
+        with self.assertRaisesRegex(ValueError, "stop descriptor differs"):
+            self.check(t, bad, symbols)
+        with self.assertRaisesRegex(ValueError, "stop PCM outside aligned"):
+            self.check(t, data, {**symbols, "rec_tone_stop_pcm": symbols["rec_tone_stop_pcm"] + 2})
+        with self.assertRaisesRegex(ValueError, "symbols missing"):
+            self.check(t, data, {k: v for k, v in symbols.items() if k != "rec_stop_seq"})
+        with self.assertRaisesRegex(ValueError, "heap floor"):
+            self.check(t, data, symbols, remaining=MANIFEST["minimum_user_left"] - 1)
+
+
 class MockBuildTests(unittest.TestCase):
     def _build(self, indicator, hooks_key, stop=None):
         import build as build_mod
@@ -1477,6 +1593,14 @@ class MockBuildTests(unittest.TestCase):
         self.assertEqual(len(feature["hooks"]), 34)
         self.assertEqual(len(feature["pages"]), 20)
         self.assertEqual(len(feature["source_guard_pages"]), 137)
+
+    def test_default_build_refuses_a_retained_indicator_symbol(self):
+        from unittest import mock
+        call, _ = self._build(None, False)
+        # The mock linker emits sound_worker_entry; pretend it were an indicator symbol.
+        with mock.patch.object(ri, "ALL_SYMBOLS", (*ri.ALL_SYMBOLS, "sound_worker_entry")):
+            with self.assertRaisesRegex(ValueError, "record indicator retained without opt-in: sound_worker_entry"):
+                call()
 
     def test_default_off_build_is_byte_identical_to_the_pre_stop_cue_build(self):
         digests = []

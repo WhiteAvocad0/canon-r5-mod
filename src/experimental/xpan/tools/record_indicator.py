@@ -45,7 +45,7 @@ SYMBOLS = (
     "rec_state_entry", "rec_state_observe", "rec_press_seq", "rec_stop_seq",
     "rec_tone_step", "rec_tone_preflight", "rec_tone_report", "rec_tone_state", "rec_tone_api",
     "rec_tone_config", "rec_tone_cues", "rec_tone_native_read", "rec_tone_native_clean",
-    "tone_gen_fill", "tone_sin_q15",
+    "tone_gen_fill", "tone_sin_q15", "tone_segment_valid",
 )
 # Linked only with their own cue: (segments, pcm, descriptor).
 CUE_SYMBOLS = {
