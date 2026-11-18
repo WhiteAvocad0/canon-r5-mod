@@ -28,9 +28,9 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from cardprep import devices as card_devices, layout as card_layout, workflow as card_flow
+from cardprep import devices as card_devices, workflow as card_flow
 from gui import card, checks, runner
-from gui.prep_state import ACKNOWLEDGE, EXPLAIN, PrepState
+from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 
 DOCS = {
@@ -102,6 +102,7 @@ class App:
         cannot = ttk.Frame(self.notebook, padding=10)
         ttk.Label(cannot, text=CANNOT_DO, justify="left").pack(anchor="w")
         self.notebook.add(cannot, text="What this tool cannot do")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
         self.root.after(100, self._poll)
@@ -279,15 +280,13 @@ class App:
 
     def _prep_tab(self, scrolledtext):
         tab = self._tab("5. Prepare card")
-        self.ttk.Label(tab, text=EXPLAIN, wraplength=740, justify="left").pack(anchor="w")
+        self.ttk.Label(tab, text=FORMAT_WARNING, wraplength=740, justify="left", foreground="#b3261e",
+                       font=("TkDefaultFont", 0, "bold")).pack(anchor="w")
+        self.ttk.Label(tab, text=EXPLAIN, wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
         self.ttk.Label(tab, text=card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."),
                        foreground="#b3261e", wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
-        self.prep_ack = self.tk.BooleanVar(value=False)
-        self.ttk.Checkbutton(tab, variable=self.prep_ack, text=ACKNOWLEDGE,
-                             command=lambda: (self.prep.set_acknowledged(self.prep_ack.get()), self.refresh())
-                             ).pack(anchor="w", pady=4)
         row = self.ttk.Frame(tab)
-        row.pack(fill="x")
+        row.pack(fill="x", pady=(6, 0))
         self.prep_find = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
         self.prep_find.pack(side="left")
         self.prep_choice = self.tk.StringVar()
@@ -296,37 +295,28 @@ class App:
         self.prep_combo.bind("<<ComboboxSelected>>", lambda _e: self._prep_selected())
         self.prep_details = self.ttk.Label(tab, text="", wraplength=740, justify="left")
         self.prep_details.pack(anchor="w", pady=(4, 0))
-        row = self.ttk.Frame(tab)
-        row.pack(fill="x", pady=4)
-        self.ttk.Label(row, text="Type the volume name to confirm:").pack(side="left")
-        self.prep_name = self.tk.StringVar()
-        self.prep_name.trace_add("write", lambda *_: (self.prep.set_typed_name(self.prep_name.get()), self.refresh()))
-        self.ttk.Entry(row, textvariable=self.prep_name, width=24).pack(side="left", padx=6)
         buttons = self.ttk.Frame(tab)
-        buttons.pack(anchor="w", pady=2)
-        self.prep_read = self.ttk.Button(buttons, text="Read card and save backup", command=self._prep_read)
-        self.prep_read.pack(side="left")
-        self.prep_write = self.ttk.Button(buttons, text="Write boot markers", command=self._prep_write)
-        self.prep_write.pack(side="left", padx=6)
-        restore = self.ttk.Frame(tab)
-        restore.pack(anchor="w", pady=2)
-        self.ttk.Button(restore, text="Choose backup to restore...", command=self._prep_choose_backup).pack(side="left")
-        self.prep_restore = self.ttk.Button(restore, text="Read card for restore", command=lambda: self._prep_read(True))
-        self.prep_restore.pack(side="left", padx=6)
-        self.prep_restore_label = self.ttk.Label(restore, text="", foreground="#555")
-        self.prep_restore_label.pack(side="left")
+        buttons.pack(anchor="w", pady=4)
+        self.prep_button = self.ttk.Button(buttons, text="Prepare card", command=lambda: self._prep_run("mark"))
+        self.prep_button.pack(side="left")
+        self.prep_undo = self.ttk.Button(buttons, text="Undo (restore the latest backup)",
+                                         command=lambda: self._prep_run("undo"))
+        self.prep_undo.pack(side="left", padx=6)
+        self.prep_restore = self.ttk.Button(buttons, text="Restore from a chosen backup...",
+                                            command=lambda: self._prep_run("restore"))
+        self.prep_restore.pack(side="left")
         self.prep_blockers = self.ttk.Label(tab, text="", wraplength=740, justify="left", foreground="#7a5c00")
         self.prep_blockers.pack(anchor="w", pady=2)
-        self.prep_plan = scrolledtext.ScrolledText(tab, height=8, state="disabled", font="TkFixedFont")
-        self.prep_plan.pack(fill="both", expand=True, pady=4)
-        self.prep_result = self.ttk.Label(tab, text="", wraplength=740, justify="left")
-        self.prep_result.pack(anchor="w")
+        self.prep_title = self.ttk.Label(tab, text="", wraplength=740, justify="left")
+        self.prep_title.pack(anchor="w")
+        self.prep_log = scrolledtext.ScrolledText(tab, height=9, state="disabled", font="TkFixedFont")
+        self.prep_log.pack(fill="both", expand=True, pady=4)
 
     def _refresh_prep(self):
         p = self.prep
         accepted = p.accepted
         self.prep_combo.configure(values=[c.summary() for c in accepted],
-                                  state="readonly" if accepted and not p.busy else "disabled")
+                                  state="readonly" if accepted and not p.busy and p.session is None else "disabled")
         self.prep_choice.set(p.selected.summary() if p.selected else "")
         lines = p.selected.details() if p.selected else []
         if p.searched and not accepted:
@@ -335,26 +325,23 @@ class App:
             lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
                                                      for c in p.refused))
         self.prep_details.configure(text="\n".join(lines))
-        self.prep_find.configure(state="disabled" if p.busy else "normal")
-        self.prep_read.configure(state="disabled" if p.read_blockers() else "normal")
-        self.prep_restore.configure(state="disabled" if p.read_blockers(restoring=True) else "normal")
-        write = p.write_blockers()
-        self.prep_write.configure(state="disabled" if write else "normal",
-                                  text="Write restore" if p.plan and p.plan.kind == "restore" else "Write boot markers")
-        shown = p.read_blockers() if p.plan is None else write
-        self.prep_blockers.configure(text="" if not shown else "Next:\n- " + "\n- ".join(shown))
-        self.prep_restore_label.configure(text=str(p.restore_from.folder) if p.restore_from else "")
-        self.prep_plan.configure(state="normal")
-        self.prep_plan.delete("1.0", "end")
-        self.prep_plan.insert("end", "\n".join(p.plan_lines()))
-        self.prep_plan.configure(state="disabled")
+        blocked = p.blockers()
+        self.prep_find.configure(state="disabled" if p.busy or p.session is not None or p.copying else "normal")
+        for button in (self.prep_button, self.prep_undo, self.prep_restore):
+            button.configure(state="disabled" if blocked else "normal")
+        self.prep_blockers.configure(text="" if not blocked else "Next:\n- " + "\n- ".join(blocked))
         if p.error:
-            self.prep_result.configure(text=p.error, foreground=STATUS_COLOURS[FAILED])
+            title, body, colour = p.error, [], STATUS_COLOURS[FAILED]
         elif p.report:
-            self.prep_result.configure(text="\n".join([p.report.title] + p.report.lines),
-                                       foreground=STATUS_COLOURS[OK] if p.report.ok else STATUS_COLOURS[FAILED])
+            title, body = p.report.title, p.report.lines
+            colour = STATUS_COLOURS[OK] if p.report.ok else STATUS_COLOURS[FAILED]
         else:
-            self.prep_result.configure(text="")
+            title, body, colour = "", [], "#444"
+        self.prep_title.configure(text=title, foreground=colour)
+        self.prep_log.configure(state="normal")
+        self.prep_log.delete("1.0", "end")
+        self.prep_log.insert("end", "\n".join(body))
+        self.prep_log.configure(state="disabled")
 
     def _prep_find(self):
         self.prep.busy = "Looking for SD cards..."
@@ -364,10 +351,9 @@ class App:
             self.prep.busy = None
             if isinstance(result, Exception):
                 self.prep.set_candidates([])
-                self.prep.failed(f"Could not list cards: {result}")
+                self.prep.error = f"Could not list cards: {result}"
             else:
                 self.prep.set_candidates(result)
-            self.prep_name.set("")
             self.refresh()
         self._background(card_devices.enumerate_candidates, done)
 
@@ -375,75 +361,89 @@ class App:
         summary = self.prep_choice.get()
         match = next((c for c in self.prep.accepted if c.summary() == summary), None)
         self.prep.select(match.whole_id if match else None)
-        self.prep_name.set("")
         self.refresh()
 
-    def _prep_choose_backup(self):
-        folder = self.filedialog.askdirectory(title="Choose a card backup folder (it contains manifest.json)",
-                                              initialdir=str(card_flow.DEFAULT_BACKUP_ROOT))
-        if not folder:
-            return
-        try:
-            self.prep.set_restore_from(card_flow.load_backup(Path(folder)))
-        except card_flow.PrepFailure as exc:
-            self.prep.set_restore_from(None)
-            self.prep.failed(str(exc))
-        self.refresh()
-
-    def _prep_read(self, restoring=False):
+    def _prep_run(self, kind):
+        """Prepare ("mark"), Undo ("undo": the latest backup) or Restore ("restore": a chosen backup)."""
         p = self.prep
-        cand, source = p.selected, p.restore_from
-        p.busy = "Reading the card (macOS asks for your password)..."
-        p.error = None
-        self.refresh()
-
-        def work():
-            ops = card_devices.MacOps()
-            if restoring:
-                snapshot, plan = card_flow.read_card_for_restore(cand, ops, source)
-                purpose = "before-restore"
-            else:
-                snapshot = card_flow.read_card(cand, ops)
-                plan = card_layout.plan_markers(snapshot.mbr, snapshot.area, disk_bytes=cand.disk_bytes)
-                purpose = "before-marking"
-            backup = card_flow.save_backup(snapshot, plan, p.backup_root, purpose=purpose)
-            return snapshot, plan, backup
-
-        def done(result):
-            p.busy = None
-            if isinstance(result, Exception):
-                p.failed(f"Not read: {result}")
-            elif not p.read_done(*result, source=source if restoring else None):
-                p.failed("The card or confirmation changed while reading; nothing was written. Read it again.")
-            elif result[0].warnings:
-                p.failed(" ".join(result[0].warnings))
-            self.refresh()
-        self._background(work, done)
-
-    def _prep_write(self):
-        p = self.prep
-        snapshot, plan, backup = p.snapshot, p.plan, p.backup
-        sectors = ", ".join(str(w.sector) for w in plan.writes)
-        if not self.messagebox.askokcancel(
-            "Write to the card",
-            f"Write sector(s) {sectors} of “{snapshot.candidate.volume_name}” ({snapshot.candidate.whole_id})?\n\n"
-            f"Backup: {backup.folder}\n\nmacOS will ask for your administrator password. Nothing else on the card "
-            "is written."):
+        if p.blockers():
             return
-        p.busy = "Writing and verifying (macOS asks for your password)..."
+        cand, source = p.selected, None
+        if kind == "undo":
+            source = card_flow.latest_backup(cand, p.backup_root)
+            if source is None:
+                p.failed(f"No backup of this card from before it was prepared was found in {p.backup_root}. "
+                         "Use 'Restore from a chosen backup...' instead.")
+                self.refresh()
+                return
+        elif kind == "restore":
+            folder = self.filedialog.askdirectory(title="Choose a card backup folder (it contains manifest.json)",
+                                                  initialdir=str(p.backup_root))
+            if not folder:
+                return
+            try:
+                source = card_flow.load_backup(Path(folder))
+            except card_flow.PrepFailure as exc:
+                p.failed(str(exc))
+                self.refresh()
+                return
+        p.restore_from = source
+        token = p.begin("Reading the card and saving a backup (macOS asks for your password)...")
+        ops = card_devices.MacOps()
         self.refresh()
 
-        def done(result):
-            p.busy = None
+        def read_done(result):
             if isinstance(result, Exception):
-                p.write_done(card_flow.Report(False, "Card state unknown.", [
-                    f"{result}", "Read the card again before using it, and restore it from "
-                    f"{backup.folder} if it differs from the plan."]))
-            else:
-                p.write_done(result)
-                self.messagebox.showinfo("Card preparation", "\n".join([result.title] + result.lines))
+                p.failed(f"Not {'prepared' if kind == 'mark' else 'restored'}: {result}")
+                self.refresh()
+                return
+            verdict = p.read_finished(token, result)
+            if verdict == "stale":
+                p.busy = "Mounting the card again..."
+                self.refresh()
+                self._background(lambda: card_flow.cancel(result, ops) if result.needs_write else None,
+                                 lambda _r: (setattr(p, "busy", None), self.refresh()))
+                return
             self.refresh()
-        self._background(lambda: card_flow.apply_plan(snapshot, plan, backup, card_devices.MacOps()), done)
+            if verdict == "done":
+                return
+            title, text = p.confirmation()
+            ok = self.messagebox.askokcancel(title, text, icon="warning")
+            if not ok or not p.may_write(token, result):
+                p.busy = "Mounting the card again..."
+                p.session = None
+                self.refresh()
+                note = "Cancelled at the confirmation." if not ok else \
+                    "The card or choice changed during the confirmation; nothing was written."
+                self._background(lambda: card_flow.cancel(result, ops), lambda r: self._prep_finished(r, note))
+                return
+            p.begin_write(result)
+            self.refresh()
+            self._background(lambda: card_flow.write(result, ops), lambda r: self._prep_finished(r, None, show=True))
+        self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source), read_done)
+
+    def _prep_finished(self, report, note, show=False):
+        if isinstance(report, Exception):  # write() and cancel() report instead of raising; be safe anyway
+            report = card_flow.Report(False, "Card state unknown.", [f"{report}",
+                                      "Read the card again (Prepare or Undo) before using it."])
+        if note:
+            report.lines.insert(0, note)
+        self.prep.finished(report)
+        self.refresh()
+        if show:
+            self.messagebox.showinfo("Card preparation", "\n".join([report.title] + report.lines))
+
+    def _on_close(self):
+        p = self.prep
+        if p.busy and not self.messagebox.askokcancel(
+                "Quit", "A card operation is still running. Quitting now can leave the card unmounted. Quit anyway?"):
+            return
+        if p.session is not None:
+            try:
+                card_flow.cancel(p.session, card_devices.MacOps())
+            except Exception:
+                pass
+        self.root.destroy()
 
     # -- refresh --------------------------------------------------------------
 
@@ -478,7 +478,8 @@ class App:
         self.blockers.configure(text="Ready to build." if not blockers else "Before you can build:\n- " + "\n- ".join(blockers))
         self.build_button.configure(state="disabled" if blockers else "normal")
         ready_to_copy = self.summary is not None and self.card_info is not None and not self.card_info.errors \
-            and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying
+            and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying \
+            and not self.prep.blocks_copy
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
         self._refresh_prep()
@@ -662,13 +663,15 @@ class App:
             f"Copy autoexec.bin to {info.root}?\n\nAny existing autoexec.bin is backed up to {backups} first.",
         ):
             return
+        if self.prep.blocks_copy:
+            return  # a card preparation step is running or waiting for confirmation
         confirmed = list(info.warnings) if self.card_confirm.get() else []
-        self.copying = True
+        self.copying = self.prep.copying = True
         self.copy_result.configure(text="Copying...", foreground="#444")
         self.refresh()
 
         def done(result):
-            self.copying = False
+            self.copying = self.prep.copying = False
             if isinstance(result, (card.CardError, OSError)):
                 self.copy_result.configure(text=f"Not copied: {result}", foreground=STATUS_COLOURS[FAILED])
             elif isinstance(result, Exception):
