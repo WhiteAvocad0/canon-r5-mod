@@ -78,7 +78,8 @@ int main(int argc,char **argv)
   uint32_t page[1024];if(!read_at(rom,targets[n].va-0xe0000000u,page,sizeof page)||root_page_checksum(page)!=checksums[n])return 8;
   if(code_patch_apply((uint8_t *)page,targets[n].va,patches,FEATURE_PATCH_COUNT,start,init_end))return 9;
   printf("%s{\"va\":%u,\"pa\":%u,\"source_checksum\":%u,\"checksum\":%u,\"patched_hex\":\"",n?",":"",targets[n].va,targets[n].pa,checksums[n],root_page_checksum(page));
-  for(unsigned i=0;i<4096;i++)printf("%02x",((const unsigned char *)page)[i]);printf("\"}");
+  for(unsigned i=0;i<4096;i++)printf("%02x",((const unsigned char *)page)[i]);
+  printf("\"}");
  }
 #if defined(R5_CROP_ONLY) && R5_CROP_ONLY
  printf("],\"roles\":[],\"menu\":{");

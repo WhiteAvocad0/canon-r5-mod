@@ -184,7 +184,8 @@ int main(void){
   printf("%s{",i?",":"");comma=0;number("selector",v->selector);number("token_offset",v->token_offset);number("width_offset",v->width_offset);number("height_offset",v->height_offset);putchar('}');
  }
  printf("]}},\"slots\":{\"count\":%u,\"metadata_count\":%u,\"cache_index\":%u,\"objects\":[",PLAYBACK_TAG_SLOT_COUNT,playback_native_profile.metadata_count,playback_native_profile.cache_slot);
- for(unsigned i=0;i<playback_native_profile.metadata_count;i++)printf("%s%" PRIu32,i?",":"",playback_native_profile.objects[i]);printf(",%" PRIu32 "]},\"layouts\":{",playback_native_profile.cache_key);comma=0;
+ for(unsigned i=0;i<playback_native_profile.metadata_count;i++)printf("%s%" PRIu32,i?",":"",playback_native_profile.objects[i]);
+ printf(",%" PRIu32 "]},\"layouts\":{",playback_native_profile.cache_key);comma=0;
  number("facts_bytes",sizeof(struct playback_box_facts));number("facts_words",PLAYBACK_TAG_FACT_WORDS);
  number("tag_record_bytes",sizeof(struct playback_tag_record));number("tag_record_alignment",_Alignof(struct playback_tag_record));number("tag_owner_bytes",sizeof(struct playback_tags));
  number("view_owner_bytes",sizeof(struct playback_mask_view_owner));number("view_owner_alignment",_Alignof(struct playback_mask_view_owner));
