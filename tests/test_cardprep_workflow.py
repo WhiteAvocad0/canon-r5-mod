@@ -378,9 +378,9 @@ class Flow(unittest.TestCase):
         cand, ops = self.card("FAT32")
         wrong = replace(cand, partition_offset=cand.partition_offset + 512)
         ops.chosen = wrong
-        with self.assertRaises(CardPrepError) as ctx:
+        with self.assertRaises(workflow.PrepFailure) as ctx:  # refused by rawio on the card's own MBR (R3-1)
             workflow.start(wrong, ops, self.backups)
-        self.assertEqual(ctx.exception.code, "geometry_mismatch")
+        self.assertIn("MBR partition starts at byte", str(ctx.exception))
         self.assertTrue(ops.mounted)
         ops.chosen = cand
         session = workflow.start(cand, ops, self.backups)

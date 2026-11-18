@@ -37,7 +37,7 @@ MAC_FAT32_CONTENT = frozenset({"Windows_FAT_32", "DOS_FAT_32"})
 DISKUTIL = "/usr/sbin/diskutil"
 
 UNTESTED_NOTE = {
-    "darwin": "macOS: the real-device path is untested until the owner's first verification.",
+    "darwin": "macOS: verified with a camera-formatted 128 GB exFAT card on the owner's Mac; FAT32 cards are untested.",
     "linux": "Linux: detection only, untested. Preparing a card is offered on macOS only.",
     "win32": "Windows: detection only, untested. Preparing a card is offered on macOS only.",
 }
@@ -443,10 +443,11 @@ class MacOps:
 
     def raw_read(self, cand: Candidate, length: int) -> tuple[bytes, bytes]:
         """One password window (read-only): the MBR and the partition's first ``length`` bytes."""
-        return self.raw.read(self._device(cand), cand.partition_offset, length)
+        return self.raw.read(self._device(cand), cand.partition_offset, length, confirm=lambda: self.refresh(cand))
 
     def raw_write(self, cand: Candidate, ranges: list[tuple[int, int]], expect_sha256: str, after: bytes, *,
                   expect_mbr_sha256: str, expect_area_sha256: str) -> dict:
         """One password window (read/write): the planned partition sectors, with all checks."""
         return self.raw.write(self._device(cand), cand.partition_offset, ranges, after, expect_sha256=expect_sha256,
-                              expect_mbr_sha256=expect_mbr_sha256, expect_area_sha256=expect_area_sha256)
+                              expect_mbr_sha256=expect_mbr_sha256, expect_area_sha256=expect_area_sha256,
+                              confirm=lambda: self.refresh(cand))

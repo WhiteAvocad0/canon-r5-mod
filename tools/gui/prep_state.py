@@ -40,7 +40,8 @@ EXPLAIN = (
     "folder on this computer and checked; Undo puts them back. Only the planned sectors are written: one on "
     "FAT32, four on exFAT. macOS asks for your administrator password in its own window (once to read, once to "
     "write); this assistant never sees it.\n\n"
-    "Prototype: not yet tested on a real card. Windows and Linux can only list cards."
+    "Prototype: verified on one Mac with a camera-formatted exFAT card; FAT32 cards are untested. "
+    "Windows and Linux can only list cards."
 )
 
 

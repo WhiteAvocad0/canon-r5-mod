@@ -232,6 +232,50 @@ class Write(Images):
         fsync.assert_called_once_with(3)
 
 
+class StartAndIdentity(Images):
+    """R3-1: rawio itself confirms the partition start from the card's own MBR and boot
+    sector on the descriptor. R3-2: the card is re-identified after the descriptor arrives."""
+
+    def test_wrong_start_is_refused_even_with_consistent_hashes(self):
+        before = self.disk.read_bytes()
+        wrong = 512  # LBA 1: outside the partition, never the MBR
+        with open(self.disk, "rb") as f:
+            f.seek(wrong)
+            area = f.read(12288)
+        out = self.raw.write(str(self.disk), wrong, [(0, 512)], b"\x01" * 512, expect_sha256=sha(area[:512]),
+                             expect_mbr_sha256=sha(before[:512]), expect_area_sha256=sha(area))
+        self.assertEqual((out["code"], out["written"], out["possibly_written"]), ("start_mismatch", [], []))
+        self.assertEqual(self.disk.read_bytes(), before)
+        with self.assertRaises(devices.DeviceError):
+            self.raw.read(str(self.disk), wrong)
+
+    def test_boot_sector_field_must_agree(self):
+        self.poke(START + 64, (ci.LAB_EXFAT["start_lba"] + 8).to_bytes(8, "little"))  # exFAT PartitionOffset
+        with self.assertRaises(devices.DeviceError):
+            self.raw.read(str(self.disk), START)
+        out = self.write([(0, 512)], b"\x01" * 512)
+        self.assertEqual(out["code"], "start_mismatch")
+
+    def test_card_is_reidentified_after_the_descriptor_arrives(self):
+        order = []
+
+        def confirm():
+            order.append("confirm")
+            raise devices.DeviceError("disk6 is gone. Was the card removed?")
+        before = self.disk.read_bytes()
+        with self.assertRaises(devices.DeviceError):
+            self.raw.read(str(self.disk), START, confirm=confirm)
+        out = self.raw.write(str(self.disk), START, [(0, 512)], b"\x01" * 512, expect_sha256="0" * 64,
+                             expect_mbr_sha256="0" * 64, expect_area_sha256="0" * 64, confirm=confirm)
+        self.assertEqual((out["code"], out["written"], out["possibly_written"]), ("open_failed", [], []))
+        self.assertIn("gone", out["error"])
+        self.assertEqual(order, ["confirm", "confirm"])
+        self.assertEqual(self.disk.read_bytes(), before)
+        self.assertEqual(self.raw.read(str(self.disk), START, confirm=lambda: order.append("ok")),
+                         (self.mbr, self.area))
+        self.assertEqual(order[-1], "ok")
+
+
 class MacOpsRawPath(Images):
     """MacOps opens the WHOLE disk node of the chosen card and uses diskutil's partition start."""
 
@@ -239,12 +283,12 @@ class MacOpsRawPath(Images):
         seen = []
 
         class Recorder(rawio.RawAccess):
-            def read(self, device, start, length=12288):
-                seen.append(("read", device, start, length))
+            def read(self, device, start, length=12288, *, confirm=None):
+                seen.append(("read", device, start, length, callable(confirm)))
                 return b"m" * 512, b"a" * length
 
-            def write(self, device, start, ranges, after, **kw):
-                seen.append(("write", device, start, list(ranges)))
+            def write(self, device, start, ranges, after, *, confirm=None, **kw):
+                seen.append(("write", device, start, list(ranges), callable(confirm)))
                 return {"ok": True}
         cand = devices.Candidate("darwin", "disk6", "disk6s1", "Built In SDXC Reader", "Secure Digital",
                                  ci.LAB_EXFAT["disk_bytes"], START, ci.LAB_EXFAT["sectors"] * 512, "exFAT",
@@ -252,7 +296,8 @@ class MacOpsRawPath(Images):
         ops = devices.MacOps(raw=Recorder())
         ops.raw_read(cand, 12288)
         ops.raw_write(cand, [(0, 512)], "a" * 64, b"x" * 512, expect_mbr_sha256="b" * 64, expect_area_sha256="c" * 64)
-        self.assertEqual(seen, [("read", "/dev/rdisk6", START, 12288), ("write", "/dev/rdisk6", START, [(0, 512)])])
+        self.assertEqual(seen, [("read", "/dev/rdisk6", START, 12288, True),
+                                ("write", "/dev/rdisk6", START, [(0, 512)], True)])
         with self.assertRaises(devices.DeviceError):
             devices.MacOps(raw=Recorder()).raw_read(devices.Candidate(**{**cand.__dict__, "whole_id": "disk6s1"}),
                                                     12288)

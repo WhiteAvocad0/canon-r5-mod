@@ -140,6 +140,32 @@ def _flush(fd: int) -> None:
     os.fsync(fd)
 
 
+def check_start(mbr: bytes, sector0: bytes, start: int) -> None:
+    """The partition start must be the one this card's own bytes give: the single MBR
+    entry's LBA x 512, and the boot sector's field (exFAT PartitionOffset at byte 64,
+    FAT32 HiddenSectors at byte 28). Checked on the descriptor itself before any I/O
+    at ``start``, so rawio never reads or writes a partition the card doesn't have."""
+    if len(mbr) != SECTOR or mbr[510:512] != b"\x55\xaa":
+        raise DeviceError("The card has no MBR partition table.")
+    entries = [mbr[446 + 16 * i:462 + 16 * i] for i in range(4)]
+    used = [e for e in entries if e != bytes(16)]
+    if len(used) != 1:
+        raise DeviceError(f"Expected exactly one partition on the card, found {len(used)}.")
+    lba = int.from_bytes(used[0][8:12], "little")
+    if lba < 1 or lba * SECTOR != start:
+        raise DeviceError(f"The MBR partition starts at byte {lba * SECTOR:,}, not at the expected {start:,}.")
+    if sector0 is None:
+        return
+    if sector0[3:11] == b"EXFAT   ":
+        field = int.from_bytes(sector0[64:72], "little")
+    elif sector0[82:90] == b"FAT32   ":
+        field = int.from_bytes(sector0[28:32], "little")
+    else:
+        raise DeviceError("The partition's boot sector is not FAT32 or exFAT; its position cannot be confirmed.")
+    if field != lba:
+        raise DeviceError(f"The boot sector says the partition starts at sector {field:,}, the MBR says {lba:,}.")
+
+
 def validate_ranges(ranges: Sequence[tuple[int, int]], after: bytes) -> str | None:
     """Why a write request is outside the whitelist, or None."""
     if not 1 <= len(ranges) <= MAX_RANGES:
@@ -164,32 +190,42 @@ class RawAccess:
                  check: Callable[[int, str], None] = check_char_device, timeout: float = 1800):
         self.command, self.check, self.timeout = tuple(command), check, timeout
 
-    def _open(self, device: str, flags: int) -> int:
+    def _open(self, device: str, flags: int, confirm: Callable[[], object] | None) -> int:
+        """Open through authopen, bind the descriptor to ``device``, then call ``confirm``
+        (the caller re-identifies the card: the password window may have been open a long time)."""
         fd = open_device(device, flags, command=self.command, timeout=self.timeout)
         try:
             self.check(fd, device)
             import fcntl
             if fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE != flags & os.O_ACCMODE:
                 raise DeviceError("The descriptor received does not have the requested access mode.")
+            if confirm is not None:
+                confirm()
         except BaseException:
             os.close(fd)
             raise
         return fd
 
-    def read(self, device: str, start: int, length: int = AREA_BYTES) -> tuple[bytes, bytes]:
+    def read(self, device: str, start: int, length: int = AREA_BYTES, *,
+             confirm: Callable[[], object] | None = None) -> tuple[bytes, bytes]:
         """The MBR and the first ``length`` bytes of the partition at byte ``start`` (read-only)."""
         if start <= 0 or start % SECTOR or not SECTOR <= length <= AREA_BYTES or length % SECTOR:
             raise DeviceError("The read request is outside the boot area.")
-        fd = self._open(device, os.O_RDONLY)
+        fd = self._open(device, os.O_RDONLY, confirm)
         try:
-            return _read(fd, 0, SECTOR), _read(fd, start, length)
+            mbr = _read(fd, 0, SECTOR)
+            check_start(mbr, None, start)
+            area = _read(fd, start, length)
+            check_start(mbr, area[:SECTOR], start)
+            return mbr, area
         except OSError as exc:
             raise DeviceError(f"Reading the card failed: {exc}") from exc
         finally:
             os.close(fd)
 
     def write(self, device: str, start: int, ranges: Sequence[tuple[int, int]], after: bytes, *,
-              expect_sha256: str, expect_mbr_sha256: str, expect_area_sha256: str) -> dict:
+              expect_sha256: str, expect_mbr_sha256: str, expect_area_sha256: str,
+              confirm: Callable[[], object] | None = None) -> dict:
         """Write the planned partition sectors; the result says exactly what happened.
 
         Refusals and failures are results, not exceptions; only a cancelled password
@@ -198,7 +234,7 @@ class RawAccess:
         if problem:
             return {"ok": False, "code": "range_not_allowed", "error": problem, "written": [], "possibly_written": []}
         try:
-            fd = self._open(device, os.O_RDWR)
+            fd = self._open(device, os.O_RDWR, confirm)
         except Cancelled:
             raise
         except (DeviceError, OSError) as exc:
@@ -218,7 +254,13 @@ class RawAccess:
 def _write_steps(fd, start, ranges, after, expect_sha, expect_mbr_sha, expect_area_sha, written, started) -> dict:
     pieces = [after[i * SECTOR:(i + 1) * SECTOR] for i in range(len(ranges))]
     mbr_before = _read(fd, 0, SECTOR)
-    area_before = _read(fd, start, AREA_BYTES)
+    try:
+        check_start(mbr_before, None, start)
+        area_before = _read(fd, start, AREA_BYTES)
+        check_start(mbr_before, area_before[:SECTOR], start)
+    except DeviceError as exc:
+        return {"ok": False, "code": "start_mismatch", "error": f"{exc} Nothing was written.", "written": [],
+                "possibly_written": []}
     current = b"".join(area_before[o:o + n] for o, n in ranges)
     for value, expected, what in ((mbr_before, expect_mbr_sha, "MBR"), (area_before, expect_area_sha, "boot area"),
                                   (current, expect_sha, "target sectors")):
