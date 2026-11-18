@@ -3,9 +3,11 @@
 Run:  python3 tools/gui/app.py
 
 Standard-library Python 3.11+ with Tkinter only. This window is a thin view: the
-decisions live in state.py, checks.py, runner.py and card.py, and the build itself
-is tools/build.py with all of its checks. It never downloads anything, never
-formats or partitions a card, never writes boot sectors and never contacts a camera.
+decisions live in state.py, prep_state.py, checks.py, runner.py, card.py and
+tools/cardprep, and the build itself is tools/build.py with all of its checks. It
+never downloads anything, never formats or partitions a card and never contacts a
+camera. Boot sectors are written only by the "Prepare card" tab (issue #16 Phase 2),
+after the person confirms the card, through the operating system's password prompt.
 """
 from __future__ import annotations
 
@@ -26,7 +28,9 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from cardprep import devices as card_devices, layout as card_layout, workflow as card_flow
 from gui import card, checks, runner
+from gui.prep_state import ACKNOWLEDGE, EXPLAIN, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 
 DOCS = {
@@ -35,13 +39,15 @@ DOCS = {
     "About this assistant": ROOT / "docs" / "gui.md",
 }
 CANNOT_DO = """\
-This assistant only builds autoexec.bin on your computer and copies it to a card
-that is ALREADY prepared. It cannot, and will not try to:
+This assistant builds autoexec.bin on your computer, can write the two boot
+markers onto a card you formatted in the camera (tab 5, macOS only, with a backup
+first), and copies autoexec.bin to the card. It cannot, and will not try to:
 
   - dump your camera's ROM (you need your own 64 MiB gang100.bin first);
   - enable the camera's BootDisk setting (a permanent change inside the camera);
-  - make an SD card bootable (the EOS_DEVELOP / BOOTDISK boot markers);
-  - format, partition or erase a card, or write raw disk sectors;
+  - format, partition or erase a card, or write its partition table (MBR);
+  - write anything to a card except the boot-marker sectors shown in tab 5;
+  - write the camera's firmware or NVRAM;
   - download the toolchain (you install it yourself; see the Toolchain tab);
   - test anything on the camera, or tell you whether your camera will work.
 
@@ -71,6 +77,7 @@ class App:
         self.summary: runner.BuildSummary | None = None
         self.card_info: card.CardInspection | None = None
         self.copying = False
+        self.prep = PrepState()
 
         self.root = tk.Tk()
         self.root.title("Canon R5 mod build assistant (prototype)")
@@ -90,6 +97,7 @@ class App:
         self._features_tab()
         self._toolchain_tab()
         self._build_tab(scrolledtext)
+        self._prep_tab(scrolledtext)
         self._card_tab()
         cannot = ttk.Frame(self.notebook, padding=10)
         ttk.Label(cannot, text=CANNOT_DO, justify="left").pack(anchor="w")
@@ -246,9 +254,9 @@ class App:
         self.open_contents.pack(side="left", padx=6)
 
     def _card_tab(self):
-        tab = self._tab("5. Copy to card")
+        tab = self._tab("6. Copy to card")
         self.ttk.Label(tab, wraplength=700, justify="left", text=(
-            "Only for a card that is already bootable (prepared separately). Choose the card's top folder "
+            "Only for a card that is already bootable (tab 5, or prepared separately). Choose the card's top folder "
             "(for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Any existing autoexec.bin is "
             "backed up to the build folder on this computer first; nothing on the card is deleted and the "
             "card is never formatted.")).pack(anchor="w")
@@ -268,6 +276,174 @@ class App:
         self.copy_button.pack(anchor="w")
         self.copy_result = self.ttk.Label(tab, text="", wraplength=700, justify="left")
         self.copy_result.pack(anchor="w", pady=6)
+
+    def _prep_tab(self, scrolledtext):
+        tab = self._tab("5. Prepare card")
+        self.ttk.Label(tab, text=EXPLAIN, wraplength=740, justify="left").pack(anchor="w")
+        self.ttk.Label(tab, text=card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."),
+                       foreground="#b3261e", wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
+        self.prep_ack = self.tk.BooleanVar(value=False)
+        self.ttk.Checkbutton(tab, variable=self.prep_ack, text=ACKNOWLEDGE,
+                             command=lambda: (self.prep.set_acknowledged(self.prep_ack.get()), self.refresh())
+                             ).pack(anchor="w", pady=4)
+        row = self.ttk.Frame(tab)
+        row.pack(fill="x")
+        self.prep_find = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
+        self.prep_find.pack(side="left")
+        self.prep_choice = self.tk.StringVar()
+        self.prep_combo = self.ttk.Combobox(row, textvariable=self.prep_choice, state="disabled", width=70)
+        self.prep_combo.pack(side="left", padx=6, fill="x", expand=True)
+        self.prep_combo.bind("<<ComboboxSelected>>", lambda _e: self._prep_selected())
+        self.prep_details = self.ttk.Label(tab, text="", wraplength=740, justify="left")
+        self.prep_details.pack(anchor="w", pady=(4, 0))
+        row = self.ttk.Frame(tab)
+        row.pack(fill="x", pady=4)
+        self.ttk.Label(row, text="Type the volume name to confirm:").pack(side="left")
+        self.prep_name = self.tk.StringVar()
+        self.prep_name.trace_add("write", lambda *_: (self.prep.set_typed_name(self.prep_name.get()), self.refresh()))
+        self.ttk.Entry(row, textvariable=self.prep_name, width=24).pack(side="left", padx=6)
+        buttons = self.ttk.Frame(tab)
+        buttons.pack(anchor="w", pady=2)
+        self.prep_read = self.ttk.Button(buttons, text="Read card and save backup", command=self._prep_read)
+        self.prep_read.pack(side="left")
+        self.prep_write = self.ttk.Button(buttons, text="Write boot markers", command=self._prep_write)
+        self.prep_write.pack(side="left", padx=6)
+        restore = self.ttk.Frame(tab)
+        restore.pack(anchor="w", pady=2)
+        self.ttk.Button(restore, text="Choose backup to restore...", command=self._prep_choose_backup).pack(side="left")
+        self.prep_restore = self.ttk.Button(restore, text="Read card for restore", command=lambda: self._prep_read(True))
+        self.prep_restore.pack(side="left", padx=6)
+        self.prep_restore_label = self.ttk.Label(restore, text="", foreground="#555")
+        self.prep_restore_label.pack(side="left")
+        self.prep_blockers = self.ttk.Label(tab, text="", wraplength=740, justify="left", foreground="#7a5c00")
+        self.prep_blockers.pack(anchor="w", pady=2)
+        self.prep_plan = scrolledtext.ScrolledText(tab, height=8, state="disabled", font="TkFixedFont")
+        self.prep_plan.pack(fill="both", expand=True, pady=4)
+        self.prep_result = self.ttk.Label(tab, text="", wraplength=740, justify="left")
+        self.prep_result.pack(anchor="w")
+
+    def _refresh_prep(self):
+        p = self.prep
+        accepted = p.accepted
+        self.prep_combo.configure(values=[c.summary() for c in accepted],
+                                  state="readonly" if accepted and not p.busy else "disabled")
+        self.prep_choice.set(p.selected.summary() if p.selected else "")
+        lines = p.selected.details() if p.selected else []
+        if p.searched and not accepted:
+            lines.append("No usable SD card found.")
+        if p.refused:
+            lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
+                                                     for c in p.refused))
+        self.prep_details.configure(text="\n".join(lines))
+        self.prep_find.configure(state="disabled" if p.busy else "normal")
+        self.prep_read.configure(state="disabled" if p.read_blockers() else "normal")
+        self.prep_restore.configure(state="disabled" if p.read_blockers(restoring=True) else "normal")
+        write = p.write_blockers()
+        self.prep_write.configure(state="disabled" if write else "normal",
+                                  text="Write restore" if p.plan and p.plan.kind == "restore" else "Write boot markers")
+        shown = p.read_blockers() if p.plan is None else write
+        self.prep_blockers.configure(text="" if not shown else "Next:\n- " + "\n- ".join(shown))
+        self.prep_restore_label.configure(text=str(p.restore_from.folder) if p.restore_from else "")
+        self.prep_plan.configure(state="normal")
+        self.prep_plan.delete("1.0", "end")
+        self.prep_plan.insert("end", "\n".join(p.plan_lines()))
+        self.prep_plan.configure(state="disabled")
+        if p.error:
+            self.prep_result.configure(text=p.error, foreground=STATUS_COLOURS[FAILED])
+        elif p.report:
+            self.prep_result.configure(text="\n".join([p.report.title] + p.report.lines),
+                                       foreground=STATUS_COLOURS[OK] if p.report.ok else STATUS_COLOURS[FAILED])
+        else:
+            self.prep_result.configure(text="")
+
+    def _prep_find(self):
+        self.prep.busy = "Looking for SD cards..."
+        self.refresh()
+
+        def done(result):
+            self.prep.busy = None
+            if isinstance(result, Exception):
+                self.prep.set_candidates([])
+                self.prep.failed(f"Could not list cards: {result}")
+            else:
+                self.prep.set_candidates(result)
+            self.prep_name.set("")
+            self.refresh()
+        self._background(card_devices.enumerate_candidates, done)
+
+    def _prep_selected(self):
+        summary = self.prep_choice.get()
+        match = next((c for c in self.prep.accepted if c.summary() == summary), None)
+        self.prep.select(match.whole_id if match else None)
+        self.prep_name.set("")
+        self.refresh()
+
+    def _prep_choose_backup(self):
+        folder = self.filedialog.askdirectory(title="Choose a card backup folder (it contains manifest.json)",
+                                              initialdir=str(card_flow.DEFAULT_BACKUP_ROOT))
+        if not folder:
+            return
+        try:
+            self.prep.set_restore_from(card_flow.load_backup(Path(folder)))
+        except card_flow.PrepFailure as exc:
+            self.prep.set_restore_from(None)
+            self.prep.failed(str(exc))
+        self.refresh()
+
+    def _prep_read(self, restoring=False):
+        p = self.prep
+        cand, source = p.selected, p.restore_from
+        p.busy = "Reading the card (macOS asks for your password)..."
+        p.error = None
+        self.refresh()
+
+        def work():
+            ops = card_devices.MacOps()
+            snapshot = card_flow.read_card(cand, ops)
+            if restoring:
+                plan = card_flow.restore_plan(snapshot, source)
+                purpose = "before-restore"
+            else:
+                plan = card_layout.plan_markers(snapshot.mbr, snapshot.area, disk_bytes=cand.disk_bytes)
+                purpose = "before-marking"
+            backup = card_flow.save_backup(snapshot, plan, p.backup_root, purpose=purpose)
+            return snapshot, plan, backup
+
+        def done(result):
+            p.busy = None
+            if isinstance(result, Exception):
+                p.failed(f"Not read: {result}")
+            elif not p.read_done(*result):
+                p.failed("The card or confirmation changed while reading; nothing was written. Read it again.")
+            elif result[0].warnings:
+                p.failed(" ".join(result[0].warnings))
+            self.refresh()
+        self._background(work, done)
+
+    def _prep_write(self):
+        p = self.prep
+        snapshot, plan, backup = p.snapshot, p.plan, p.backup
+        sectors = ", ".join(str(w.sector) for w in plan.writes)
+        if not self.messagebox.askokcancel(
+            "Write to the card",
+            f"Write sector(s) {sectors} of “{snapshot.candidate.volume_name}” ({snapshot.candidate.whole_id})?\n\n"
+            f"Backup: {backup.folder}\n\nmacOS will ask for your administrator password. Nothing else on the card "
+            "is written."):
+            return
+        p.busy = "Writing and verifying (macOS asks for your password)..."
+        self.refresh()
+
+        def done(result):
+            p.busy = None
+            if isinstance(result, Exception):
+                p.write_done(card_flow.Report(False, "Not written.", [
+                    f"{result}", "The card's state is unknown if this happened during the write: read the card "
+                    f"again, and restore it from {backup.folder} if needed."]))
+            else:
+                p.write_done(result)
+                self.messagebox.showinfo("Card preparation", "\n".join([result.title] + result.lines))
+            self.refresh()
+        self._background(lambda: card_flow.apply_plan(snapshot, plan, backup, card_devices.MacOps()), done)
 
     # -- refresh --------------------------------------------------------------
 
@@ -305,6 +481,7 @@ class App:
             and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
+        self._refresh_prep()
         for what, input_id in s.needs_check():
             self._start_check(what, input_id)
 

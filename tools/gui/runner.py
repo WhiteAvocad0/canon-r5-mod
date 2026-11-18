@@ -200,8 +200,9 @@ def contents_text(s: BuildSummary, manifest: features.FeatureManifest, now: date
         f"Built from your ROM with SHA-256 {s.rom_sha256} (keep the ROM private).",
         f"Toolchain: GNU Arm GCC {s.gcc_version}",
         "",
-        "Not in this build and not done by this tool: enabling BootDisk in the camera, writing card",
-        "boot markers, or dumping the ROM. The card must already be prepared.",
+        "Not in this build and not done by the build: enabling BootDisk in the camera, writing card",
+        "boot markers, or dumping the ROM. The card must be prepared (the assistant's Prepare card",
+        "tab can write the boot markers on macOS) before you copy autoexec.bin to it.",
         "Full provenance: build.json and source-manifest.json in this folder.",
     ]
     return "\n".join(lines) + "\n"

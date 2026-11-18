@@ -3,7 +3,7 @@
 Ordinary file operations only. This module never formats, never opens a raw
 device, never writes boot sectors and never deletes anything except the one
 temporary file it created itself in the current copy. Making a card bootable
-(boot markers) is a separate prerequisite that this prototype does not do.
+(boot markers) is the separate "Prepare card" step (tools/cardprep, prep_state.py).
 """
 from __future__ import annotations
 
