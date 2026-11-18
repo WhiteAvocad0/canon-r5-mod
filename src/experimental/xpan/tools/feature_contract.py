@@ -85,8 +85,10 @@ def load_hooks(
             raise ValueError("hook extension source_guard_pages: " + str(selected))
         guard_pages.extend(v for v in extra_guards if v not in guard_pages)
         extension_facts.append({"selected_path": _repo_key(selected), "sha256": hashlib.sha256(raw).hexdigest()})
+    if guard_pages != list(contract["source_guard_pages"]):
+        contract = {**contract, "source_guard_pages": guard_pages}
     if optional_extensions:
-        contract = {**contract, "source_guard_pages": guard_pages, "optional_hook_extensions": list(optional_extensions)}
+        contract = {**contract, "optional_hook_extensions": list(optional_extensions)}
     return contract, hooks, extension_facts
 
 

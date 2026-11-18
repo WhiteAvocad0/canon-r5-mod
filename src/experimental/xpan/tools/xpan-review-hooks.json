@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "role": "XPan automatic post-shot review: descriptor crop, per-shot authority and outline gate",
+  "hooks": [
+    {
+      "role": "review_descriptor_crop",
+      "va": 3764648942,
+      "length": 10,
+      "original_bytes": "2de9f047174698229846",
+      "destination_symbol": "review_crop_entry",
+      "resume_thumb": 3764648953
+    },
+    {
+      "role": "review_authority",
+      "va": 3763651888,
+      "length": 8,
+      "original_bytes": "70b504000e461546",
+      "destination_symbol": "xpan_review_authority_entry",
+      "resume_thumb": 3763651897
+    },
+    {
+      "role": "review_outline",
+      "va": 3769194238,
+      "length": 10,
+      "original_bytes": "089a1e21d8f814004446",
+      "destination_symbol": "xpan_review_outline_entry",
+      "resume_thumb": 3769194249
+    }
+  ],
+  "source_guard_pages": [
+    "0xe063b000",
+    "0xe0190000",
+    "0xe0191000",
+    "0xe01bc000",
+    "0xe01be000",
+    "0xe0594000",
+    "0xe07fa000",
+    "0xe07fd000",
+    "0xe0803000",
+    "0xe0840000",
+    "0xe0e35000",
+    "0xe0f28000",
+    "0xe05fd000",
+    "0xe05fe000",
+    "0xe07c3000",
+    "0xe07d6000",
+    "0xe0a94000",
+    "0xe0b20000"
+  ]
+}

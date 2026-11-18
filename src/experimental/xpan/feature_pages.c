@@ -10,6 +10,9 @@
 #include "playback_mask_native.h"
 #include "q_label.h"
 #include "export_refresh.h"
+#include "review_crop.h"
+#include "xpan_authority.h"
+#include "xpan_review_gate.h"
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 #include "rec_state.h"
 #endif

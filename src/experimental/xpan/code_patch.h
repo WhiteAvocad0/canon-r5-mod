@@ -1,7 +1,7 @@
 #ifndef R5_CODE_PATCH_H
 #define R5_CODE_PATCH_H
 #include <stdint.h>
-#define CODE_PATCH_MAX 32u
+#define CODE_PATCH_MAX 35u
 struct code_patch {uint32_t va,destination,length;uint8_t before[16];};
 enum code_patch_error {CODE_PATCH_OK,CODE_PATCH_ARGUMENT,CODE_PATCH_LAYOUT,
  CODE_PATCH_SOURCE,CODE_PATCH_OVERLAP};
