@@ -126,6 +126,19 @@ class ConfirmFlow(unittest.TestCase):
         self.assertTrue(s.steps()[-1].done)
         self.assertIsNone(s.plan)
 
+    def test_restore_read_must_match_the_backup_shown(self):
+        s = ready(PrepState("darwin"))
+        snap, mark, backup = read_result()
+        _, _, area_backup = read_result()
+        source = workflow.Backup(Path("/tmp/a"), snap.mbr, snap.area, {})
+        restore = layout.plan_restore(snap.mbr, snap.area, snap.mbr, snap.area, disk_bytes=snap.candidate.disk_bytes)
+        s.set_restore_from(source)
+        s.set_typed_name("EOS_DIGITAL")
+        s.set_restore_from(workflow.Backup(Path("/tmp/b"), snap.mbr, snap.area, {}))  # changed during the read
+        self.assertFalse(s.read_done(snap, restore, backup, source=source))
+        s.set_restore_from(source)
+        self.assertTrue(s.read_done(snap, restore, backup, source=source))
+
     def test_restore_needs_a_backup_folder(self):
         s = ready(PrepState("darwin"))
         self.assertIn("Choose a backup folder", " ".join(s.read_blockers(restoring=True)))

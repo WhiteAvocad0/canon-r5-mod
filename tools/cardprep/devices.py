@@ -444,7 +444,8 @@ class MacOps:
             result = json.loads(lines[-1])
         except (IndexError, json.JSONDecodeError) as exc:
             raise DeviceError("The privileged helper returned no result.") from exc
-        if result.get("helper") != "r5-cardprep" or result.get("protocol") != HELPER_PROTOCOL:
+        if not isinstance(result, dict) or result.get("helper") != "r5-cardprep" \
+                or result.get("protocol") != HELPER_PROTOCOL:
             raise DeviceError("The privileged helper returned an unexpected result.")
         return result
 

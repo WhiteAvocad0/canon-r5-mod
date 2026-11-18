@@ -120,9 +120,13 @@ class PrepState:
     def _is_current(self, cand: devices.Candidate) -> bool:
         return self.selected is not None and cand.identity() == self.selected.identity() and self.name_confirmed
 
-    def read_done(self, snapshot: workflow.Snapshot, plan: layout.Plan, backup: workflow.Backup) -> bool:
-        """Accept a finished read only if it is still for the card and confirmation shown now."""
+    def read_done(self, snapshot: workflow.Snapshot, plan: layout.Plan, backup: workflow.Backup,
+                  source: workflow.Backup | None = None) -> bool:
+        """Accept a finished read only if it is still for the card, confirmation and (for a
+        restore) backup folder shown now."""
         if not self._is_current(snapshot.candidate) or backup.area != snapshot.area or plan.before_area != snapshot.area:
+            return False
+        if plan.kind == "restore" and (source is None or source is not self.restore_from):
             return False
         self.snapshot, self.plan, self.backup, self.report, self.error = snapshot, plan, backup, None, None
         return True

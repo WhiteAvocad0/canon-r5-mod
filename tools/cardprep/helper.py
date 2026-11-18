@@ -13,8 +13,8 @@ handles a password. It is self-contained (standard library only) and accepts onl
 ``read`` returns the 512-byte MBR of the disk and the first BYTES of the
 partition. ``write`` writes only the listed ranges of the partition, and only if
 the bytes currently there hash to --expect-sha; it then reads back the whole boot
-area and the MBR. The MBR is only ever read. Ranges are whole 512-byte sectors in
-the first 24 sectors of the partition, at most four, non-overlapping, and written
+area and the MBR. The MBR is only ever read. Write ranges are single 512-byte
+sectors chosen from partition sectors 0, 11, 12 and 23, at most four, non-overlapping, and written
 in the order given, each followed by fsync. It prints exactly one JSON line and
 exits 0 for every handled outcome (refusals included); a crash exits non-zero.
 """
@@ -31,6 +31,8 @@ PROTOCOL = 1
 SECTOR = 512
 AREA_BYTES = 24 * SECTOR
 MAX_RANGES = 4
+# The only sectors any plan writes: FAT32 sector 0; exFAT sectors 0 and 11 (main) and 12 and 23 (backup).
+WRITABLE_OFFSETS = frozenset({0, 11 * SECTOR, 12 * SECTOR, 23 * SECTOR})
 DISK_RE = re.compile(r"/dev/rdisk([0-9]{1,3})")
 PART_RE = re.compile(r"/dev/rdisk([0-9]{1,3})s([0-9]{1,2})")
 RANGE_RE = re.compile(r"([0-9]{1,6}):([0-9]{1,6})")
@@ -99,7 +101,7 @@ def _devices(values: dict, allow_image_files: bool) -> tuple[str, str]:
     return disk, part
 
 
-def _ranges(texts: list[str]) -> list[tuple[int, int]]:
+def _ranges(texts: list[str], allowed: frozenset[int] | None = None) -> list[tuple[int, int]]:
     if not 1 <= len(texts) <= MAX_RANGES:
         raise Refused("range_not_allowed", f"Between 1 and {MAX_RANGES} ranges are allowed.")
     ranges = []
@@ -111,6 +113,8 @@ def _ranges(texts: list[str]) -> list[tuple[int, int]]:
         if offset % SECTOR or length % SECTOR or length == 0 or offset + length > AREA_BYTES:
             raise Refused("range_not_allowed",
                           f"Range {text} must be whole 512-byte sectors inside the first {AREA_BYTES} bytes.")
+        if allowed is not None and (length != SECTOR or offset not in allowed):
+            raise Refused("range_not_allowed", f"Range {text} is not one of the boot sectors 0, 11, 12 or 23.")
         for o, n in ranges:
             if offset < o + n and o < offset + length:
                 raise Refused("range_not_allowed", f"Range {text} overlaps another range.")
@@ -176,7 +180,7 @@ def _after_file(path: str, size: int, expected_sha: str) -> bytes:
 
 def do_write(values: dict, allow_image_files: bool) -> dict:
     disk, part = _devices(values, allow_image_files)
-    ranges = _ranges(values["--range"])
+    ranges = _ranges(values["--range"], WRITABLE_OFFSETS)
     expect, after_sha = values["--expect-sha"], values["--after-sha"]
     if not SHA_RE.fullmatch(expect) or not SHA_RE.fullmatch(after_sha):
         raise Refused("usage", "SHA-256 values must be 64 lowercase hex digits.")

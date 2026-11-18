@@ -399,11 +399,11 @@ class App:
 
         def work():
             ops = card_devices.MacOps()
-            snapshot = card_flow.read_card(cand, ops)
             if restoring:
-                plan = card_flow.restore_plan(snapshot, source)
+                snapshot, plan = card_flow.read_card_for_restore(cand, ops, source)
                 purpose = "before-restore"
             else:
+                snapshot = card_flow.read_card(cand, ops)
                 plan = card_layout.plan_markers(snapshot.mbr, snapshot.area, disk_bytes=cand.disk_bytes)
                 purpose = "before-marking"
             backup = card_flow.save_backup(snapshot, plan, p.backup_root, purpose=purpose)
@@ -413,7 +413,7 @@ class App:
             p.busy = None
             if isinstance(result, Exception):
                 p.failed(f"Not read: {result}")
-            elif not p.read_done(*result):
+            elif not p.read_done(*result, source=source if restoring else None):
                 p.failed("The card or confirmation changed while reading; nothing was written. Read it again.")
             elif result[0].warnings:
                 p.failed(" ".join(result[0].warnings))
@@ -436,9 +436,9 @@ class App:
         def done(result):
             p.busy = None
             if isinstance(result, Exception):
-                p.write_done(card_flow.Report(False, "Not written.", [
-                    f"{result}", "The card's state is unknown if this happened during the write: read the card "
-                    f"again, and restore it from {backup.folder} if needed."]))
+                p.write_done(card_flow.Report(False, "Card state unknown.", [
+                    f"{result}", "Read the card again before using it, and restore it from "
+                    f"{backup.folder} if it differs from the plan."]))
             else:
                 p.write_done(result)
                 self.messagebox.showinfo("Card preparation", "\n".join([result.title] + result.lines))

@@ -97,7 +97,7 @@ helper.py write --disk /dev/rdiskN --partition /dev/rdiskNsM --range OFFSET:LENG
                 --expect-sha SHA256 --after FILE --after-sha SHA256
 ```
 
-Ranges must be whole 512-byte sectors inside the partition's first 24 sectors, at most four and non-overlapping. Devices must be raw nodes `/dev/rdiskN` and `/dev/rdiskNsM` of the same disk. The MBR is only ever read. For the lab's 128 GB exFAT layout the write is `--range 6144:512 --range 11776:512 --range 0:512 --range 5632:512` (sectors 12, 23, 0, 11); for FAT32 it is `--range 0:512`. The assistant never asks for, sees or stores your password: macOS's own window handles it.
+Write ranges must be single 512-byte sectors chosen from partition sectors 0, 11, 12 and 23 (the only sectors any plan touches), at most four and non-overlapping. Reads cover at most the first 24 sectors. Devices must be raw nodes `/dev/rdiskN` and `/dev/rdiskNsM` of the same disk. The MBR is only ever read. For the lab's 128 GB exFAT layout the write is `--range 6144:512 --range 11776:512 --range 0:512 --range 5632:512` (sectors 12, 23, 0, 11); for FAT32 it is `--range 0:512`. The assistant never asks for, sees or stores your password: macOS's own window handles it.
 
 **Windows and Linux:** **Find SD cards** lists cards on a best-effort basis (PowerShell `Get-Disk` / `lsblk`), **untested**. Preparing a card is offered on macOS only.
 

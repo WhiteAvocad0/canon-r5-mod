@@ -138,9 +138,8 @@ class Flow(unittest.TestCase):
             f.write(b"\x02")
             f.seek(112)
             f.write(b"\x05")
-        snap2 = workflow.read_card(cand, ops)
-        self.assertTrue(snap2.volume.markers_present)
-        restore = workflow.restore_plan(snap2, workflow.load_backup(backup.folder))
+        self.assertTrue(workflow.read_card(cand, ops).volume.markers_present)
+        snap2, restore = workflow.read_card_for_restore(cand, ops, workflow.load_backup(backup.folder))
         before_restore = workflow.save_backup(snap2, restore, self.backups, purpose="before-restore",
                                               now=datetime(2026, 11, 18, 13, 0, 0))
         report = workflow.apply_plan(snap2, restore, before_restore, ops)
@@ -206,19 +205,41 @@ class Flow(unittest.TestCase):
 
         def flaky(fd, data, offset):
             calls.append(offset)
-            if len(calls) == 3:
+            if len(calls) == 2:
                 raise OSError(5, "Input/output error")
             return real(fd, data, offset)
         with mock.patch.object(helper.os, "pwrite", flaky):
             report = workflow.apply_plan(snap, plan, backup, ops)
         self.assertFalse(report.ok)
-        self.assertEqual(report.written_sectors, [12, 23])
+        self.assertEqual(report.written_sectors, [12])
         self.assertIn("Restore it from", "\n".join(report.lines))
         self.assertTrue(ops.mounted)
-        current = ops.part.read_bytes()[:12288]
-        restore = layout.plan_restore(snap.mbr, backup.area, snap.mbr, current, disk_bytes=cand.disk_bytes)
-        self.assertEqual([w.sector for w in restore.writes], [12, 23])
-        self.assertEqual(restore.after_area, original[:12288])
+        # The backup region now has a stale checksum, so a normal read refuses the card...
+        with self.assertRaises(CardPrepError) as ctx:
+            workflow.read_card(cand, ops)
+        self.assertEqual(ctx.exception.code, "exfat_checksum")
+        # ...but the restore read checks it against the backup instead and puts it back.
+        snap2, restore = workflow.read_card_for_restore(cand, ops, backup)
+        self.assertEqual([w.sector for w in restore.writes], [12])
+        again = workflow.save_backup(snap2, restore, self.backups, purpose="before-restore",
+                                     now=datetime(2026, 11, 18, 14, 0, 0))
+        report = workflow.apply_plan(snap2, restore, again, ops)
+        self.assertTrue(report.ok, report.lines)
+        self.assertEqual(ops.part.read_bytes(), original)
+
+    def test_volume_check_crash_still_reports_the_write(self):
+        cand, ops = self.card("FAT32")
+
+        def timeout(_cand):
+            raise subprocess.TimeoutExpired(["diskutil", "verifyVolume"], 1800)
+        ops.verify = timeout
+        _, _, _, report = self.prepare(cand, ops)
+        text = "\n".join(report.lines)
+        self.assertFalse(report.ok)
+        self.assertEqual(report.written_sectors, [0])
+        self.assertIn("Read-back check passed", text)
+        self.assertIn("did not complete", text)
+        self.assertTrue(ops.mounted)
 
     def test_identity_and_backup_checks(self):
         cand, ops = self.card("FAT32")
@@ -244,7 +265,7 @@ class Flow(unittest.TestCase):
         eplan = layout.plan_markers(esnap.mbr, esnap.area, disk_bytes=ecand.disk_bytes)
         ebackup = workflow.save_backup(esnap, eplan, self.backups, purpose="other")
         with self.assertRaises(CardPrepError):
-            workflow.restore_plan(snap, ebackup)
+            workflow.restore_plan(snap.candidate, snap.mbr, snap.area, ebackup)
         with self.assertRaises(workflow.PrepFailure):
             workflow.load_backup(self.tmp)
 
