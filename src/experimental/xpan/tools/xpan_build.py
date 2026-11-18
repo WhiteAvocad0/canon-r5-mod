@@ -25,6 +25,7 @@ import menu_vector
 import playback_mask_profile
 import playback_native_profile
 import q_label_profile
+import record_indicator as ri
 
 from contracts import (
     MANIFEST as M,
@@ -191,6 +192,7 @@ def _tracked_input_paths() -> list[Path]:
     paths.extend(XPAN_SRC_DIR / f"{n}.c" for n in XPAN_C_MODULES)
     paths.extend(XPAN_SRC_DIR / n for n in XPAN_HEADER_NAMES)
     paths.extend(XPAN_SRC_DIR / s for s, _ in XPAN_ASM_MODULES)
+    paths.extend(XPAN_SRC_DIR / n for n in ri.SOURCE_NAMES)
     paths.extend(
         CONFIG_DIR / n
         for n in ("firmware.json", "target_contract.json", "xpan_target_contract.json", "toolchain_policy.json")
@@ -216,8 +218,10 @@ def _tracked_input_paths() -> list[Path]:
             "playback-mask-hooks.json",
             "q-label-hooks.json",
             "xpan_font.json",
+            *ri.TOOL_NAMES,
         )
     )
+    paths.append(TOOLS_DIR / "audio_profile.py")
     return paths
 
 
@@ -235,8 +239,16 @@ def build_xpan_image(
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
     xpan_hooks: list[dict] | None = None,
     policy_path: Path = POLICY_PATH,
+    record_indicator: str | None = None,
 ) -> dict:
-    """Execute the offline experimental silent XPan crop-only build into a fresh directory."""
+    """Execute the offline experimental XPan crop-only build into a fresh directory.
+
+    Silent by default. record_indicator selects the opt-in movie record indicator
+    cue (issue #14); "off" (the default) links none of its code, hook or pages."""
+    indicator = ri.admit_choice(record_indicator)
+    indicator_on = indicator != ri.OFF
+    optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
+    indicator_facts = ri.facts(indicator) if indicator_on else None
     env = controlled_environment()
     _check_profile_headers_sync()
     _, toolchain_admission = admit_toolchain(toolchain_dir, policy_path=policy_path)
@@ -245,11 +257,10 @@ def build_xpan_image(
     rom_resolved = Path(rom_path).resolve(strict=True)
     rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
 
-    if xpan_hooks is None:
-        _, loaded_hooks, _ = feature_contract.load_hooks()
-        hooks_to_check = loaded_hooks
-    else:
-        hooks_to_check = xpan_hooks
+    loaded_contract, loaded_hooks, _ = feature_contract.load_hooks(optional_extensions=optional_extensions)
+    hooks_to_check = loaded_hooks if xpan_hooks is None else xpan_hooks
+    if any(h["destination"] == "rec_state_entry" for h in hooks_to_check) != indicator_on:
+        raise ValueError("record indicator hook inventory disagrees with --record-indicator " + indicator)
 
     startup, rom_provenance = admit_xpan_rom_with_provenance(
         rom_bytes,
@@ -257,6 +268,8 @@ def build_xpan_image(
         contract=target_contract,
         xpan_contract=xpan_contract,
         hooks=hooks_to_check,
+        record_indicator=indicator_on,
+        guard_pages=[int(v, 16) for v in loaded_contract["source_guard_pages"]],
     )
     actual_rom_sha256 = rom_provenance["sha256"]
 
@@ -291,6 +304,7 @@ def build_xpan_image(
         actual_rom_sha256=actual_rom_sha256,
         hooks_override=hooks_to_check,
         rom_base=manifest["rom_base"],
+        optional_extensions=optional_extensions,
     )
 
     profile = "crop-only"
@@ -311,6 +325,7 @@ def build_xpan_image(
         "precopy_report_refresh": True,
         "feature_contract": feature,
         "menu_vector_proof": vector_proof,
+        "record_indicator": indicator_facts,
     }
 
     tracked = _tracked_input_paths()
@@ -438,6 +453,9 @@ def build_xpan_image(
         "};\n"
     )
 
+    if indicator_on:
+        (out / "rec-tone-bindings.c").write_text(ri.bindings_source(indicator_facts, manifest["audio"]))
+
     (out / "startup.bin").write_bytes(startup)
     linker = (XPAN_RESIDENT_DIR / "handoff.ld").read_text()
     for key, value in {
@@ -449,6 +467,7 @@ def build_xpan_image(
         linker = linker.replace("@" + key + "@", hex(value))
     (out / "handoff.ld").write_text(linker)
 
+    indicator_defines = [ri.DEFINE] if indicator_on else []
     objects: list[Path] = []
     c_sources: list[tuple[Path, str]] = [
         (XPAN_RESIDENT_DIR / "observer.c", "observer.o"),
@@ -461,9 +480,13 @@ def build_xpan_image(
         *((XPAN_SRC_DIR / f"{name}.c", f"{name}.o") for name in XPAN_C_MODULES),
         (XPAN_ROW_DIR / "frame_row.c", "frame-row.o"),
     ]
+    if indicator_on:
+        c_sources += [(XPAN_SRC_DIR / f"{name}.c", f"{name}.o") for name in ri.C_MODULES]
+        c_sources.append((out / "rec-tone-bindings.c", "rec-tone-bindings.o"))
     for source_file, object_name in c_sources:
         run(
-            "gcc", "-c", "-std=c11", "-Os", "-DR5_CROP_ONLY=1", "-mgeneral-regs-only", "-DOBS_FIRMWARE",
+            "gcc", "-c", "-std=c11", "-Os", "-DR5_CROP_ONLY=1", *indicator_defines, "-mgeneral-regs-only",
+            "-DOBS_FIRMWARE",
             "-mcpu=cortex-a9", "-mthumb", "-mno-unaligned-access", "-ffreestanding", "-fno-builtin",
             "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-fno-stack-protector", "-fno-common",
             "-fstack-usage", "-Wall", "-Wextra", "-Werror", "-DOBSERVER_FIRMWARE",
@@ -472,9 +495,10 @@ def build_xpan_image(
         )
         objects.append(out / object_name)
 
-    for source_name, object_name in XPAN_ASM_MODULES:
+    for source_name, object_name in (*XPAN_ASM_MODULES, *(ri.ASM_MODULES if indicator_on else ())):
         run(
-            "gcc", "-c", "-x", "assembler-with-cpp", "-DR5_CROP_ONLY=1", "-mcpu=cortex-a9", "-marm",
+            "gcc", "-c", "-x", "assembler-with-cpp", "-DR5_CROP_ONLY=1", *indicator_defines, "-mcpu=cortex-a9",
+            "-marm",
             "-ffreestanding", "-nostdlib",
             "-I", out, "-I", XPAN_RESIDENT_DIR, "-I", R5_221_SRC_DIR, "-I", XPAN_SRC_DIR,
             XPAN_SRC_DIR / source_name, "-o", out / object_name,
@@ -483,8 +507,8 @@ def build_xpan_image(
 
     def compile_link() -> dict[str, int]:
         run(
-            "gcc", "-c", "-x", "assembler-with-cpp", "-DR5_CROP_ONLY=1", "-mcpu=cortex-a9", "-marm",
-            "-ffreestanding", "-nostdlib", "-Wa,--fatal-warnings",
+            "gcc", "-c", "-x", "assembler-with-cpp", "-DR5_CROP_ONLY=1", *indicator_defines, "-mcpu=cortex-a9",
+            "-marm", "-ffreestanding", "-nostdlib", "-Wa,--fatal-warnings",
             "-I", out, "-I", XPAN_RESIDENT_DIR, "-I", R5_221_SRC_DIR, "-I", XPAN_SRC_DIR,
             XPAN_RESIDENT_DIR / "handoff.S", "-o", out / "handoff.o",
         )
@@ -555,6 +579,20 @@ def build_xpan_image(
     for forbidden_sym in FORBIDDEN_AUDIO_SYMBOLS:
         if forbidden_sym in symbols:
             raise ValueError(f"forbidden audio symbol retained in xpan-crop build: {forbidden_sym}")
+    if indicator_on:
+        indicator_record = ri.verify_linked(
+            data,
+            symbols,
+            indicator_facts,
+            manifest["audio"],
+            minimum_user_left=manifest["minimum_user_left"],
+            remaining_user_bytes=layout["remaining_user_bytes"],
+        )
+    else:
+        indicator_record = None
+        retained = [n for n in ri.SYMBOLS if n in symbols]
+        if retained:
+            raise ValueError("record indicator retained without opt-in: " + ", ".join(retained))
 
     loc = lambda name: symbols["_resident_load_offset"] + symbols[name] - symbols["_resident_start"]
     props_expected = struct.pack(f"<{len(observer['properties'])}I", *observer["properties"])
@@ -664,6 +702,7 @@ def build_xpan_image(
         "rom_admission": rom_provenance,
         "audio": None,
         "shutter_audio": None,
+        "record_indicator": indicator_record,
         "shutter_feedback": shutter_feedback_record,
         "configuration": configuration,
         "host_build_ok": True,
@@ -701,7 +740,9 @@ def build_xpan_image(
                 "Canonical registration can assert on request OOM",
                 "Stock logging/ACK internals have no proven nonblocking bound",
                 "8-byte MechaCounter second word is outside FIRST_U32 prefix",
-                "Headless silent XPan worker runs boot_mmu_tick only; shutter audio disabled",
+                "Headless XPan worker runs boot_mmu_tick only; shutter audio disabled"
+                if not indicator_on
+                else "XPan worker runs rec_tone_step then boot_mmu_tick; shutter audio disabled",
             ],
         },
     }

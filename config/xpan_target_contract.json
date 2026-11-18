@@ -812,5 +812,26 @@
       "bytes": 4096,
       "sha256": "198444bb2aae902f1d78bd9194f437ba419f9bbc7eb3d055d61543ea9414a552"
     }
+  ],
+  "record_indicator_note": "Opt-in --record-indicator only: the GUI_SetRecordingState hook page and its two source guard pages (RecState accessor leaf, handleMovieButton/record-start callers). Verified only when the record indicator is selected, so default xpan-crop admission is unchanged.",
+  "record_indicator_code_fingerprints": [
+    {
+      "name": "record_indicator_page_e07c6000",
+      "address": 3766247424,
+      "bytes": 4096,
+      "sha256": "235d42b153ba7c1d96c311f922b0a058cf77e32641bdd28a6c43454d2a1304c4"
+    },
+    {
+      "name": "record_indicator_page_e0a98000",
+      "address": 3769204736,
+      "bytes": 4096,
+      "sha256": "6b1b1d92f6babfc2670820247588efbcf1e19a3b1a94573f804286624a23775a"
+    },
+    {
+      "name": "record_indicator_page_e0b0b000",
+      "address": 3769675776,
+      "bytes": 4096,
+      "sha256": "be99677f2463d7164604eb574bc5636f45d31cee01b437502858e6a4052025aa"
+    }
   ]
 }

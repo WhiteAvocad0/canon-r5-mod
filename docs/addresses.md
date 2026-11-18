@@ -144,3 +144,21 @@ All addresses below belong exclusively to Canon EOS R5 `2.2.1` for `--profile xp
 | `fit` (`playback_mask_fit_entry`) | `0xE0710D04` (caller `0xE07110FD`) | ROM hook site | Playback crop-ROI fit (`drawOneImage` `0xE071106E` -> `GRAPHICS_DrawOneImageForTrimImage` `0xE078DE84`). |
 | `guide` (`playback_mask_guide_entry`) | `0xE06CBFD6` (caller `0xE075B2DF`) | ROM hook site | Hides stock `16:9` outline (`0xE073FBC0`) by branching to `PM_GUIDE_BAIL` (`0xE06CC061`). |
 | View RAM slots (`PM_*`) | `0x00008EDC`, `0x00016E78`, `0x00017674`, `0x00140580` | Fixed RAM slots | Display device word (`0`/`1`), orientation (`0`/`2`), category, and clear color. |
+
+---
+
+## 9. Opt-In Movie Record Indicator (`--profile xpan-crop --record-indicator`)
+
+Linked only when `--record-indicator` is not `off`. The two `0xE0A98000` / `0xE0B0B000` guard pages and the hook page `0xE07C6000` are admitted through `record_indicator_code_fingerprints` in `config/xpan_target_contract.json`.
+
+| Name | Address / Value | Type | Role |
+| --- | --- | --- | --- |
+| `GUI_SetRecordingState` (`rec_state_entry`) | `0xE07C6FBC` (8 bytes `10b5044603460321`, resume `0xE07C6FC5`) | ROM hook site | Entry observer: reads the old RecState, counts a REC press, replays the prologue. |
+| RecState getter / accessor | `0xE07C6FB8` -> `0xE0A98D0E`; single store `0xE0A98D2C` | ROM Thumb code | Reads `[0x16DD0 + 4]`; guard page `0xE0A98000`. |
+| `REC_STATE_WORD` | `0x00016DD4` | Fixed RAM slot | RecState: `0` idle, `1` pressed, `2` start requested, `3` recording, `5` stopping. |
+| REC press call site | `0xE0B0B87C` `movs r0,#1`; `0xE0B0B87E` BL (LR `0xE0B0B883`) | ROM call site | `handleMovieButton` (`0xE0B0B758`); the only caller counted. Guard page `0xE0B0B000`. |
+| `SE_BeepStart` | `0xE08B1971` | ROM Thumb entry (odd) | Same stock API as the audio profile, called with SE id `2` and the generated cue descriptor. |
+| PCM worker SE-id gate | `0xE08B1330`..`0xE08B135C` | ROM code | SE ids 2 and 3 skip the "Movie Playing" refusal taken while AudioCtrl is exactly `5`. |
+| ABeep `+0x40` last SE id | `0xE08B142E` (store) | Field offset | Read by the record-indicator observer only. |
+| AudioCtrl admitted states | `{1, 4, 5}` | Mask | The indicator's only preflight change from `audio.S` (`5` = audio recording started). |
+| `rec_tone_pcm` / `rec_tone_descriptor` | build-dependent (`symbols.json`) | Private resident symbols | 32-byte-aligned BSS cue buffer (`24,000` B for `ding`) and 64-byte resident descriptor. |

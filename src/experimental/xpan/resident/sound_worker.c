@@ -1,6 +1,9 @@
 /* Boot-resident single-photo shutter sound worker core. Host-testable via sound_worker_api. */
 #include "sound_worker.h"
 #include "boot_mmu.h"
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+#include "rec_tone.h"
+#endif
 
 _Static_assert(sizeof(unsigned) == 4, "stock scalar ABI is u32");
 _Static_assert(sizeof(int) == 4, "stock signed scalar ABI is i32");
@@ -225,6 +228,10 @@ CODE void sound_worker_entry(void *arg)
     for (;;) {
 #if !defined(R5_CROP_ONLY) || !R5_CROP_ONLY
         (void)sound_worker_poll_once();
+#endif
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+        /* Issue #14: one non-blocking record-indicator step per tick. */
+        rec_tone_step();
 #endif
         boot_mmu_tick();
         if (sound_worker_api.sleep_ms) {

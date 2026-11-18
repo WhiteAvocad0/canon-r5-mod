@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "role": "movie record indicator (opt-in --record-indicator)",
+  "hooks": [
+    {
+      "role": "record_state_set",
+      "va": 3766251452,
+      "length": 8,
+      "original_bytes": "10b5044603460321",
+      "destination_symbol": "rec_state_entry",
+      "resume_thumb": 3766251461
+    }
+  ],
+  "source_guard_pages": [
+    "0xe0a98000",
+    "0xe0b0b000"
+  ]
+}

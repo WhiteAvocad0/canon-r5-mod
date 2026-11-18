@@ -10,6 +10,9 @@
 #include "../frame_native.h"
 #include "../frame_disable_trace.h"
 #include "../playback_report.h"
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+#include "../rec_tone.h"
+#endif
 #endif
 #ifdef OBSERVER_FIRMWARE
 #include "observer.h"
@@ -137,6 +140,9 @@ CODE void boot_mmu_emit_bundle(void *unused, unsigned reports)
     frame_native_report(reports);
     frame_disable_report(reports);
     playback_report(reports);
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+    rec_tone_report(reports);
+#endif
 }
 static const char refresh_fmt[] DATA = "R5R1 S=" OBSERVER_SOURCE_ID " Q=%u I=%u R=%u";
 CODE static void refresh_marker(void *unused, unsigned ticket, unsigned report, unsigned result)

@@ -240,8 +240,14 @@ def validate_xpan_target_contract_consistency(
     contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
     hooks: list[dict] | None = None,
+    *,
+    record_indicator: bool = False,
+    guard_pages: list[int] | None = None,
 ) -> None:
-    """Validate base R5 2.2.1 contract plus XPan extra pages, tables, and resources (no full dump lock)."""
+    """Validate base R5 2.2.1 contract plus XPan extra pages, tables, and resources (no full dump lock).
+
+    record_indicator admits the opt-in record_indicator_code_fingerprints as coverage
+    for its hook and guard_pages; without it those pages never count as covered."""
     validate_target_contract_consistency(manifest, contract)
     if "dump_sha256" in xpan_contract or "rom_sha256" in xpan_contract:
         raise ValueError("public XPan target profile must not enforce a single-device full dump_sha256")
@@ -274,6 +280,17 @@ def validate_xpan_target_contract_consistency(
         dump_bytes=dump_bytes,
         seen_names=seen_names,
     )
+    indicator_ranges = _validate_fingerprint_list(
+        xpan_contract.get("record_indicator_code_fingerprints"),
+        label="record_indicator_code_fingerprints",
+        rom_base=rom_base,
+        dump_bytes=dump_bytes,
+        seen_names=seen_names,
+    )
+    if type(record_indicator) is not bool:
+        raise ValueError("record_indicator must be bool")
+    if record_indicator:
+        page_ranges = [*page_ranges, *indicator_ranges]
     if hooks is not None:
         for h in hooks:
             va = int(h["va"], 16) if isinstance(h["va"], str) else int(h["va"])
@@ -281,6 +298,9 @@ def validate_xpan_target_contract_consistency(
             page = va & ~4095
             if not any(start <= page and va + length <= end for start, end in page_ranges):
                 raise ValueError(f"XPan hook at {hex(va)} is not covered by extra_code_fingerprints")
+    for page in guard_pages or ():
+        if page & 4095 or not any(start <= page and page + 4096 <= end for start, end in page_ranges):
+            raise ValueError(f"XPan source guard page {hex(page)} is not covered by code fingerprints")
 
 
 def admit_rom_with_provenance(
@@ -339,9 +359,13 @@ def admit_xpan_rom_with_provenance(
     contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
     hooks: list[dict] | None = None,
+    record_indicator: bool = False,
+    guard_pages: list[int] | None = None,
 ) -> tuple[bytes, dict]:
     """Admit an R5 2.2.1 ROM for experimental XPan build using base + XPan immutable fingerprints."""
-    validate_xpan_target_contract_consistency(manifest, contract, xpan_contract, hooks=hooks)
+    validate_xpan_target_contract_consistency(
+        manifest, contract, xpan_contract, hooks=hooks, record_indicator=record_indicator, guard_pages=guard_pages
+    )
     startup, provenance = admit_rom_with_provenance(data, manifest=manifest, contract=contract)
     rom_base = manifest["rom_base"]
     extra_entries = [
@@ -349,6 +373,7 @@ def admit_xpan_rom_with_provenance(
         xpan_contract["menu_vector_resource"],
         *xpan_contract["boot_tables"],
         *xpan_contract["extra_code_fingerprints"],
+        *(xpan_contract["record_indicator_code_fingerprints"] if record_indicator else ()),
     ]
     extra_verified = _verify_fingerprint_entries(data, extra_entries, rom_base=rom_base)
     if hooks is not None:

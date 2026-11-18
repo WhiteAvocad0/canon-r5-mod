@@ -1,7 +1,7 @@
 #ifndef R5_MULTI_PLAN_H
 #define R5_MULTI_PLAN_H
 #include <stdint.h>
-#define MULTI_MAX_PAGES 17u
+#define MULTI_MAX_PAGES 18u
 #define MULTI_MAX_TABLES 8u
 struct multi_target { uint32_t va,pa; };
 struct multi_shape { uint32_t count,sections[MULTI_MAX_TABLES]; };

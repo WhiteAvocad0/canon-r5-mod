@@ -2,7 +2,7 @@
 
 > [!WARNING]
 > **Experimental Source Preview — Original Canon EOS R5 Firmware `2.2.1` Only**
-> - `--profile xpan-crop` is **intentionally silent (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged.
+> - `--profile xpan-crop` is **silent by default (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged. The only sound it can add is the opt-in [movie record indicator](#4-opt-in-movie-record-indicator---record-indicator) (`--record-indicator`, off by default).
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
 > - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression. **Automatic rear-LCD instant review after a shot still has a brief 16:9-guide flash; the public repackaged build remains hardware-untested.**
 
@@ -65,7 +65,27 @@ All four complete playback reports show crop projection and guide suppression. T
 
 **Automatic post-shot instant review is a separate case:** on the rear LCD, the owner sees a 16:9 outline first and XPan black bars about one second later. That estimate has not been instrumented, EVF instant review has not been reported, and no fix is claimed yet. The investigation targets the earliest visible preview and its metadata/readiness ownership while preserving the successful normal ▶ path and its guards.
 
-## 4. Build-Time ROM Derivation & Diagnostic Verification
+## 4. Opt-In Movie Record Indicator (`--record-indicator`)
+
+`--record-indicator {off,ding,chirp2,2k150loud}` (default `off`) adds issue [#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)'s cue on the Movie REC press. With `off`, none of the parts below is linked and admission checks exactly the default pages. Usage, cues and the evidence boundary are in [docs/usage.md](usage.md#movie-record-indicator---record-indicator).
+
+```mermaid
+flowchart LR
+    Press["handleMovieButton<br/>BL 0xE0B0B87E (LR 0xE0B0B883)"] -->|"r0 = 1"| Hook["rec_state_entry @ 0xE07C6FBC<br/>reads old RecState [0x16DD4]<br/>old 0 -> new 1: rec_press_seq++"]
+    Hook -->|"replays 8-byte prologue"| Orig["GUI_SetRecordingState resumes 0xE07C6FC5"]
+    Worker["XPan worker, every 20 ms"] --> Step["rec_tone_step<br/>publish once, preflight, submit, observe"]
+    Step -->|"SE id 2, AudioCtrl in {1,4,5}"| Beep["SE_BeepStart 0xE08B1971"]
+```
+
+- **Hook (counter only).** The 8-byte `GUI_SetRecordingState` prologue `10b5 0446 0346 0321` has no PC-relative instruction and no interior branch target. The hook increments one counter and touches no audio. Its page (`0xE07C6000`) and two guard pages (`0xE0A98000`, the RecState accessor; `0xE0B0B000`, the movie-button callers) are admitted through `record_indicator_code_fingerprints` in `config/xpan_target_contract.json` and checked again at boot as source witnesses.
+- **Cue buffer.** `tone_gen_fill` renders the selected cue once on the first worker tick into a 32-byte-aligned BSS buffer. The buffer is cleaned, then the descriptor pointer is set, and nothing is written again. Any fault leaves the pointer at 0.
+- **Submission.** The preflight is a port of `audio.S`'s readiness and dependency checks with one change: AudioCtrl states 1, 4 and 5 are admitted (5 is audio recording). SE id 2 skips the PCM worker's "Movie Playing" gate. A busy speaker or another AudioCtrl state is retried for up to 10 ticks; then the cue is dropped. A cue still pending outside RecState `{1, 2, 3}` is dropped and never replayed.
+- **Observation.** The step follows ABeep's phase and recognises its own buffer by pointer and byte count: settled, stopped (cut by a Canon sound), rejected (confirmed on a second tick) or timeout after 25 ticks. A timeout disables further cues until power-off.
+- **Capacity.** With the indicator the build has `32` hooks, `18` pages, `8` L2 tables and `122` source witnesses (`MULTI_MAX_PAGES` is `18`; the default build still uses `31/17/8/120`).
+
+Not ported from the private lab build: the 2-cue A/B rotation, the `request`/`confirmed` triggers, per-attempt before/after report rows and the movie-limit diagnostic.
+
+## 5. Build-Time ROM Derivation & Diagnostic Verification
 
 `python3 tools/build.py --profile xpan-crop` embeds **no Canon ROM pages or binaries** in the repository. Instead, `tools/contracts.py` (`admit_xpan_rom_with_provenance`) first verifies:
 

@@ -29,8 +29,13 @@ def _repo_key(path: Path) -> str:
     return resolved.relative_to(REPO_ROOT.resolve()).as_posix() if resolved.is_relative_to(REPO_ROOT.resolve()) else str(resolved)
 
 
-def load_hooks(contract: dict | None = None) -> tuple[dict, list[dict], list[dict]]:
-    """Load base hooks + named hook extensions without any whole-ROM digest lock."""
+def load_hooks(
+    contract: dict | None = None, *, optional_extensions: tuple[str, ...] = ()
+) -> tuple[dict, list[dict], list[dict]]:
+    """Load base hooks + named hook extensions without any whole-ROM digest lock.
+
+    optional_extensions are opt-in hook extensions (for example the record
+    indicator); their source_guard_pages join the returned contract's witnesses."""
     if contract is None:
         contract = json.loads((TOOLS_DIR / "feature-contract.json").read_text())
     if contract.get("schema") != "canon-r5-lab.crop-feature-input.v2":
@@ -45,6 +50,12 @@ def load_hooks(contract: dict | None = None) -> tuple[dict, list[dict], list[dic
     extensions = contract.get("hook_extensions", [])
     if not isinstance(extensions, list) or any(not isinstance(n, str) or not n for n in extensions):
         raise ValueError("named hook extension inventory")
+    if not isinstance(optional_extensions, tuple) or any(
+        not isinstance(n, str) or not n or n in extensions for n in optional_extensions
+    ) or len(set(optional_extensions)) != len(optional_extensions):
+        raise ValueError("optional hook extension inventory")
+    extensions = [*extensions, *optional_extensions]
+    guard_pages = list(contract["source_guard_pages"])
 
     for name in extensions:
         selected = TOOLS_DIR / name
@@ -67,7 +78,15 @@ def load_hooks(contract: dict | None = None) -> tuple[dict, list[dict], list[dic
                     "original_hex": h["original_bytes"],
                 }
             )
+        extra_guards = extension.get("source_guard_pages", [])
+        if not isinstance(extra_guards, list) or any(
+            not isinstance(v, str) or not re.fullmatch(r"0xe[0-3][0-9a-f]{2}[0-9a-f]000", v) for v in extra_guards
+        ):
+            raise ValueError("hook extension source_guard_pages: " + str(selected))
+        guard_pages.extend(v for v in extra_guards if v not in guard_pages)
         extension_facts.append({"selected_path": _repo_key(selected), "sha256": hashlib.sha256(raw).hexdigest()})
+    if optional_extensions:
+        contract = {**contract, "source_guard_pages": guard_pages, "optional_hook_extensions": list(optional_extensions)}
     return contract, hooks, extension_facts
 
 
@@ -78,9 +97,10 @@ def generate(
     actual_rom_sha256: str | None = None,
     hooks_override: list[dict] | None = None,
     rom_base: int = 0xE0000000,
+    optional_extensions: tuple[str, ...] = (),
 ) -> dict:
     """Validate hook windows on pre-admitted ROM bytes and generate feature headers."""
-    contract, loaded_hooks, extension_facts = load_hooks()
+    contract, loaded_hooks, extension_facts = load_hooks(optional_extensions=optional_extensions)
     hooks = list(hooks_override) if hooks_override is not None else loaded_hooks
     if actual_rom_sha256 is None:
         actual_rom_sha256 = hashlib.sha256(rom).hexdigest()
