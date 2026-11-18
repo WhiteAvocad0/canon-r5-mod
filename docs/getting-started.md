@@ -6,7 +6,7 @@ This guide is for EOS R5 owners who are comfortable copying commands into a term
 > **What this guide does not cover:** three one-time preparation steps. These are dumping your camera's ROM, enabling the camera's **BootDisk** setting, and making an SD card **bootable**. This guide explains what they are and how to check they're done, and the [Prerequisites](usage.md#1-prerequisites) section points to the background. This project does not provide tools or step-by-step instructions for them. If you haven't done them, stop at [Step 2](#step-2-check-the-one-time-prerequisites).
 
 > [!WARNING]
-> This is **experimental** software for one exact camera and firmware. It can hang the camera, show a Canon error such as `ERR70`, or lose card data. The BootDisk setting is a **permanent** change inside the camera, and there is no uninstaller. The public `xpan-crop` + `ding` image `0adff001` passed a short check on the maintainer's camera on 18 November 2026; builds from the newer source with the stop cue (`dong`), `ding` alone included, are new images that have not been checked. Most other features were confirmed on private lab builds, and the public `shutter-feedback` build is **hardware-untested**. You use this at your own risk.
+> This is **experimental** software for one exact camera and firmware. It can hang the camera, show a Canon error such as `ERR70`, or lose card data. The BootDisk setting is a **permanent** change inside the camera, and there is no uninstaller. The public `xpan-crop` + `ding` image `0adff001` passed a short check on the maintainer's camera on 18 November 2026; from the newer source, the `ding` + `dong` image `01956513` passed a short check the same day; other selections from it (such as `ding` alone) have not been checked. Most other features were confirmed on private lab builds, and the public `shutter-feedback` build is **hardware-untested**. You use this at your own risk.
 
 ---
 
@@ -75,7 +75,7 @@ If any row isn't done, stop here. See [usage.md → Prerequisites](usage.md#1-pr
 | --- | --- | --- |
 | `xpan-crop` | A **2.71:1 XPan** crop mode replacing 16:9: menu/Q label, live LCD/EVF framing bars, saved JPEG/RAW crop, playback masking, and immediate XPan bars in automatic review | Silent: no custom sounds |
 | `xpan-crop` + `--record-indicator ding` | All of the above, plus a short **ding when you press movie REC** | The cue is generated in the camera; no audio files needed |
-| `xpan-crop` + `--record-stop-indicator dong` | A lower two-note **dong when a take ends** (combine it with the ding or use it alone) | Generated in the camera; the public build is hardware-untested |
+| `xpan-crop` + `--record-stop-indicator dong` | A lower two-note **dong when a take ends** (combine it with the ding or use it alone) | Generated in the camera; the public `ding` + `dong` build passed a short owner check |
 | `shutter-feedback` | Your own **startup** and **shutter** sounds through the speaker | Needs two WAV files; no XPan |
 
 XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.
