@@ -52,7 +52,7 @@ def export_model(source_id: str = "0000000000000000") -> dict:
     cc = find_host_cc()
     with tempfile.TemporaryDirectory(prefix="r5-playback-model-") as tmp:
         exe = Path(tmp) / "export"
-        subprocess.run(
+        built = subprocess.run(
             [
                 cc, "-std=c11", "-Wall", "-Wextra", "-Werror", *FLAGS,
                 '-DOBSERVER_SOURCE_ID="' + source_id + '"',
@@ -61,9 +61,11 @@ def export_model(source_id: str = "0000000000000000") -> dict:
                 *[str(XPAN_SRC / n) for n in POLICY_SOURCES],
                 "-o", str(exe),
             ],
-            check=True,
             capture_output=True,
+            text=True,
         )
+        if built.returncode:
+            raise RuntimeError("playback model export failed to compile:\n" + built.stderr)
         result = json.loads(subprocess.check_output([str(exe)]))
     verify_model_sources(before)
     return result
