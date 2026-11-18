@@ -192,7 +192,7 @@ python3 tools/build.py --profile xpan-crop \
 **Evidence boundary.**
 
 - **Start cue.** The owner tested the `ding` on the REC press on a private lab build on 18 November 2026 ("worked correctly": the cue over at least five takes in one boot, clip playback and the AF beep). Earlier private runs had 5/5 and 7/7 cues settle without errors. `chirp2` ran in a private A/B trial with the same press trigger. `2k150loud` ran on an earlier private build that used a later trigger, the start request; neither has run in this public configuration. The public `ding` image `0adff001` (built from `05e9612`) played the cue in a short owner check on 18 November 2026.
-- **Stop cue.** The owner verified the `ding` plus `dong` on private lab build `fbf31293` on 18 November 2026: three takes, a quick start-and-stop take, clip playback with no dong in the audio, and the AF beep ("Tested, inserted, and confirmed that the dong works perfectly good."). The public port follows that build's trigger and state machine. **This public image is not yet hardware-tested.**
+- **Stop cue.** On 18 November 2026 the owner tested private lab build `fbf31293` (`ding` at the press, `dong` at the end of a take) and reported: "Tested, inserted, and confirmed that the dong works perfectly good." The lab's camera test plan for that build was three takes, a quick start-and-stop take, clip playback checked for the dong, and the AF beep; results per item and counter dumps were not recorded. The public port follows that build's trigger and state machine. **This public image is not yet hardware-tested.**
 - **Every indicator build from this version is a new image.** That includes `ding` alone, because it now links the stop-capable worker even when no stop cue is selected. The `0adff001` check does not cover it. `--record-stop-indicator dong` without a start cue has not run on hardware in any form.
 
 How the start cue behaves:
@@ -208,8 +208,8 @@ How the stop cue behaves:
 
 1. It plays once per take, when RecState returns to idle (`0`) after the normal confirmed start (`2 -> 3` from the movie start sequence) of the same take. In private hardware logs, manual stops and the automatic time-limit stop follow the same RecState sequence. An error ending (`3 -> 0`) also counts, but that comes from ROM reading only.
 2. A start that never reached recording (refused, cancelled, or a start error before recording began) gives no dong. Timelapse and streaming takes give none either. A take started some other way that reaches the normal confirmed start would get a dong without a ding. This is untested.
-3. The dong waits until Canon's audio controller (AudioCtrl) has left its recording state `5`. It plays only in AudioCtrl state `4` or `1`, retries for about 200 ms, and is then dropped, never late. On the private build, clip playback had no dong in the audio.
-4. One cue plays at a time, so the dong never overlaps the ding. A new REC press drops a pending dong. A take that ends before its ding could play drops that ding. A REC press while the dong is still playing (within about 0.3 s) loses that take's ding.
+3. The dong waits until Canon's audio controller (AudioCtrl) has left its recording state `5`. It plays only in AudioCtrl state `4` or `1`, retries for about 200 ms, and is then dropped, never late.
+4. One cue plays at a time, so the dong never overlaps the ding. A new REC press drops a pending dong. A take that ends before its ding could play drops that ding, and a take that ends while its ding is still playing loses its dong. A REC press while the dong is still playing (within about 0.3 s) loses that take's ding.
 5. How long after the stop press the dong comes is not measured. It plays when Canon returns RecState to idle after the clip is finalized, within one 20 ms tick. Like the ding, a Canon sound in the first ~60 ms of the dong can cut it short; an AF half-press right after stopping may do that.
 
 Both cues use the same single `GUI_SetRecordingState` observer hook and the same fingerprinted pages, so any selection has `35` hooks, `21` pages, `10` L2 tables and `139` witnesses. The build refuses an image that falls below Canon's heap floor. With the reference ROM, `ding` plus `dong` leaves `883,224` bytes against the `524,304`-byte floor.
@@ -220,7 +220,7 @@ Optional counters: the build appends five `R5T1` DebugMsg rows to the existing r
 python3 src/experimental/xpan/tools/record_indicator_log.py path/to/DbgRA001.bin --build build/r5-xpan-indicator
 ```
 
-They count presses, submissions of both cues, settled/stopped/rejected/timeout outcomes and drops. The `W=` row counts ended takes, dong submissions, and dongs dropped because a cue was busy, a new take started, or RecState was not idle. The hook counts the end before Canon stores it, so a rare worker tick in that window drops the dong; `I=` counts this. The counters record what the worker saw, not what was audible.
+They count presses, submissions of both cues, settled/stopped/rejected/timeout outcomes and drops. The stop row counts ended takes (`W=`), dong submissions (`B=`), and dongs dropped because another cue was in flight (`K=`), a new press arrived while the dong was pending (`H=`), or RecState was not idle at its tick (`I=`; in a build without a start cue a new take lands here). The hook counts the end before Canon stores it, so a rare worker tick in that window drops the dong; `I=` counts this. The counters record what the worker saw, not what was audible. Exports from builds before the stop cue (four rows, such as `0adff001`) decode only with the decoder of their own source version.
 
 ---
 

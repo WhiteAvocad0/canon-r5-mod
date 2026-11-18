@@ -101,7 +101,7 @@ flowchart LR
 - **Submission.** The preflight is a port of `audio.S`'s readiness and dependency checks with one change: AudioCtrl states 1, 4 and 5 are admitted (5 is audio recording). SE id 2 skips the PCM worker's "Movie Playing" gate. A busy speaker or another AudioCtrl state is retried for up to 10 ticks; then the cue is dropped. A start cue still pending outside RecState `{1, 2, 3}` is dropped and never replayed. The stop cue is submitted only while RecState is `0` and only in AudioCtrl states 1 and 4: its own retry mask always waits out state 5 (the record path) within the same 10 ticks.
 - **One cue at a time.** Only one cue is pending or in flight. Events that arrive while a cue is observed are counted and dropped, never queued. An ended take drops a pending start cue, and a new press drops a pending stop cue; when both land in one tick the newer press wins. Without a start cue the worker never reads the press counter, and without a stop cue it never reads the ended-take counter.
 - **Observation.** The step follows ABeep's phase and recognises its own buffer by pointer and byte count: settled, stopped (cut by a Canon sound), rejected (confirmed on a second tick) or timeout after 25 ticks. A timeout disables further cues until power-off.
-- **Capacity.** With either or both cues the build has `35` hooks, `21` pages, `10` L2 tables and `139` source witnesses, the same inventory as the private lab build. The default build has `34/20/10/137`. Each cue reserves its own 24,000-byte buffer; the linked check refuses an image below Canon's heap floor.
+- **Capacity.** With either or both cues the build has `35` hooks, `21` pages, `10` L2 tables and `139` source witnesses, the same inventory as the private lab build. The default build has `34/20/10/137`. Each selected cue reserves its own buffer (24,000 bytes for `ding` or `dong`); the linked check refuses an image below Canon's heap floor.
 
 Not ported from the private lab build: the 2-cue A/B start rotation, the `request`/`confirmed` start triggers, per-attempt before/after report rows and the movie-limit diagnostic. Changed from it: the stop cue may be selected without a start cue, and it always waits out AudioCtrl state 5 (the lab build did so only with the `press` and `request` triggers).
 
@@ -111,7 +111,7 @@ Not ported from the private lab build: the 2-cue A/B start rotation, the `reques
 
 - Exact `64 MiB` dump size and `0xE0100000..0xE0140000` word-sum `0x22C94093`
 - All `25` base R5 `2.2.1` code fingerprints + `7` startup patch opcodes
-- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
+- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator` and/or `--record-stop-indicator`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
 
 Only after those immutable checks pass does the builder derive into `--output`:
 - `target-page.bin` (`0xE0100000` virgin boot shadow page)
