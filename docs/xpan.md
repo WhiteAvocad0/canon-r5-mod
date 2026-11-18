@@ -2,7 +2,7 @@
 
 > [!WARNING]
 > **Experimental Source Preview — Original Canon EOS R5 Firmware `2.2.1` Only**
-> - `--profile xpan-crop` is **silent by default (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged. The only sound it can add is the opt-in [movie record indicator](#4-opt-in-movie-record-indicator---record-indicator) (`--record-indicator`, off by default).
+> - `--profile xpan-crop` is **silent by default (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged. The only sounds it can add are the opt-in [movie record indicator](#4-opt-in-movie-record-indicator---record-indicator) cues (`--record-indicator` and `--record-stop-indicator`, both off by default).
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
 > - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression.
 > - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. The public `xpan-crop` + `ding` build (`05e9612`) passed a short owner check of this review behaviour on 18 November 2026.
@@ -85,23 +85,25 @@ flowchart LR
 
 ## 4. Opt-In Movie Record Indicator (`--record-indicator`)
 
-`--record-indicator {off,ding,chirp2,2k150loud}` (default `off`) adds issue [#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)'s cue on the Movie REC press. With `off`, none of the parts below is linked and admission checks exactly the default pages. Usage, cues and the evidence boundary are in [docs/usage.md](usage.md#movie-record-indicator---record-indicator).
+`--record-indicator {off,ding,chirp2,2k150loud}` adds issue [#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)'s start cue on the Movie REC press, and `--record-stop-indicator {off,dong}` its stop cue once per ended take. They are independent and both default to `off`. With both `off`, none of the parts below is linked and admission checks exactly the default pages; either one links all of them except the other cue's buffer. Usage, cues and the evidence boundary are in [docs/usage.md](usage.md#movie-record-indicator---record-indicator).
 
 ```mermaid
 flowchart LR
-    Press["handleMovieButton<br/>BL 0xE0B0B87E (LR 0xE0B0B883)"] -->|"r0 = 1"| Hook["rec_state_entry @ 0xE07C6FBC<br/>reads old RecState [0x16DD4]<br/>old 0 -> new 1: rec_press_seq++"]
+    Press["handleMovieButton<br/>BL 0xE0B0B87E (LR 0xE0B0B883)"] -->|"r0 = 1"| Hook["rec_state_entry @ 0xE07C6FBC<br/>reads old RecState [0x16DD4]<br/>old 0 -> new 1: rec_press_seq++<br/>2 -> 3 from LR 0xE0B0BD2D: take confirmed<br/>-> 0 after a confirmed take: rec_stop_seq++"]
+    Idle["any GUI_SetRecordingState(0)<br/>(14 ROM idle callers)"] -->|"r0 = 0"| Hook
     Hook -->|"replays 8-byte prologue"| Orig["GUI_SetRecordingState resumes 0xE07C6FC5"]
-    Worker["XPan worker, every 20 ms"] --> Step["rec_tone_step<br/>publish once, preflight, submit, observe"]
-    Step -->|"SE id 2, AudioCtrl in {1,4,5}"| Beep["SE_BeepStart 0xE08B1971"]
+    Worker["XPan worker, every 20 ms"] --> Step["rec_tone_step<br/>publish once, one cue pending or in flight,<br/>preflight, submit, observe"]
+    Step -->|"start: SE id 2, AudioCtrl in {1,4,5}<br/>stop: SE id 2, RecState 0, AudioCtrl in {1,4}"| Beep["SE_BeepStart 0xE08B1971"]
 ```
 
-- **Hook (counter only).** The 8-byte `GUI_SetRecordingState` prologue `10b5 0446 0346 0321` has no PC-relative instruction and no interior branch target. The hook increments one counter and touches no audio. Its page (`0xE07C6000`) and two guard pages (`0xE0A98000`, the RecState accessor; `0xE0B0B000`, the movie-button callers) are admitted through `record_indicator_code_fingerprints` in `config/xpan_target_contract.json` and checked again at boot as source witnesses.
-- **Cue buffer.** `tone_gen_fill` renders the selected cue once on the first worker tick into a 32-byte-aligned BSS buffer. The buffer is cleaned, then the descriptor pointer is set, and nothing is written again. Any fault leaves the pointer at 0.
-- **Submission.** The preflight is a port of `audio.S`'s readiness and dependency checks with one change: AudioCtrl states 1, 4 and 5 are admitted (5 is audio recording). SE id 2 skips the PCM worker's "Movie Playing" gate. A busy speaker or another AudioCtrl state is retried for up to 10 ticks; then the cue is dropped. A cue still pending outside RecState `{1, 2, 3}` is dropped and never replayed.
+- **Hook (counter only).** The 8-byte `GUI_SetRecordingState` prologue `10b5 0446 0346 0321` has no PC-relative instruction and no interior branch target. The hook increments two counters (REC presses, ended takes) and keeps one latch: a take is confirmed by the normal start `2 -> 3` from LR `0xE0B0BD2D` and ends at the next idle (`0`) set from any caller, once. It touches no audio. Its page (`0xE07C6000`) and two guard pages (`0xE0A98000`, the RecState accessor; `0xE0B0B000`, the movie-button callers) are admitted through `record_indicator_code_fingerprints` in `config/xpan_target_contract.json` and checked again at boot as source witnesses.
+- **Cue buffers.** `tone_gen_fill` renders each selected cue once on the first worker tick into its own 32-byte-aligned BSS buffer (`rec_tone_cues` lists them; an unselected cue is all zero). Every buffer is cleaned before any descriptor pointer is set, and nothing is written again. Any fault leaves every pointer at 0.
+- **Submission.** The preflight is a port of `audio.S`'s readiness and dependency checks with one change: AudioCtrl states 1, 4 and 5 are admitted (5 is audio recording). SE id 2 skips the PCM worker's "Movie Playing" gate. A busy speaker or another AudioCtrl state is retried for up to 10 ticks; then the cue is dropped. A start cue still pending outside RecState `{1, 2, 3}` is dropped and never replayed. The stop cue is submitted only while RecState is `0` and only in AudioCtrl states 1 and 4: its own retry mask always waits out state 5 (the record path) within the same 10 ticks.
+- **One cue at a time.** Only one cue is pending or in flight. Events that arrive while a cue is observed are counted and dropped, never queued. An ended take drops a pending start cue, and a new press drops a pending stop cue; when both land in one tick the newer press wins. Without a start cue the worker never reads the press counter, and without a stop cue it never reads the ended-take counter.
 - **Observation.** The step follows ABeep's phase and recognises its own buffer by pointer and byte count: settled, stopped (cut by a Canon sound), rejected (confirmed on a second tick) or timeout after 25 ticks. A timeout disables further cues until power-off.
-- **Capacity.** With the indicator the build has `35` hooks, `21` pages, `10` L2 tables and `139` source witnesses, the same inventory as the private lab build. The default build has `34/20/10/137`.
+- **Capacity.** With either or both cues the build has `35` hooks, `21` pages, `10` L2 tables and `139` source witnesses, the same inventory as the private lab build. The default build has `34/20/10/137`. Each cue reserves its own 24,000-byte buffer; the linked check refuses an image below Canon's heap floor.
 
-Not ported from the private lab build: the 2-cue A/B rotation, the `request`/`confirmed` triggers, per-attempt before/after report rows and the movie-limit diagnostic.
+Not ported from the private lab build: the 2-cue A/B start rotation, the `request`/`confirmed` start triggers, per-attempt before/after report rows and the movie-limit diagnostic. Changed from it: the stop cue may be selected without a start cue, and it always waits out AudioCtrl state 5 (the lab build did so only with the `press` and `request` triggers).
 
 ## 5. Build-Time ROM Derivation & Diagnostic Verification
 
