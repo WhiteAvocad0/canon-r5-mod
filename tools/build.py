@@ -21,8 +21,9 @@ SRC_DIR = ROOT / "src" / "r5_221"
 XPAN_TOOLS_DIR = ROOT / "src" / "experimental" / "xpan" / "tools"
 CONFIG_DIR = ROOT / "config"
 
-if str(TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(TOOLS_DIR))
+for _path in (TOOLS_DIR, XPAN_TOOLS_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from audio_log import SCHEMA as AUDIO_LOG_SCHEMA, build_template
 from audio_profile import (
@@ -43,11 +44,95 @@ from contracts import (
     validate_target_contract_consistency,
     validate_write_buffer,
 )
+import features
 from image_format import finalize_image, inspect_image
 from input_files import hash_regular_file, read_regular_file
+import record_indicator as ri
 from toolchain import POLICY_PATH, admit_toolchain, controlled_environment
 
 PROVENANCE_FILENAMES = ("conversion.json", "pcm-facts.json")
+
+FEATURES = features.load()
+RECORD_INDICATOR = FEATURES.options["record_indicator"]
+
+
+def check_feature_catalog(manifest: features.FeatureManifest = FEATURES) -> None:
+    """Fail closed when the feature manifest drifts from the owners it describes."""
+    if manifest.default_profile != "shutter-feedback" or set(manifest.profile_ids) != {"shutter-feedback", "xpan-crop"}:
+        raise ValueError("feature manifest profiles disagree with the profiles build_image implements")
+    if set(manifest.inputs) != {"startup_wav", "shutter_wav"} or set(manifest.options) != {"record_indicator"}:
+        raise ValueError("feature manifest inputs/options disagree with build_image parameters")
+    for spec in (*manifest.inputs.values(), *manifest.options.values()):
+        if spec.flag != "--" + spec.id.replace("_", "-"):
+            raise ValueError(f"feature manifest flag {spec.flag} does not name parameter {spec.id}")
+    indicator = manifest.options["record_indicator"]
+    if indicator.values != ri.CHOICES or indicator.default != ri.OFF:
+        raise ValueError("feature manifest record indicator choices disagree with record_indicator.CHOICES")
+
+
+check_feature_catalog()
+
+
+def _flags(input_ids) -> list[str]:
+    return [FEATURES.inputs[i].flag for i in input_ids]
+
+
+def _api_violations(
+    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, record_indicator: str | None
+) -> list[features.Violation]:
+    """Manifest rules a build_image call breaks. The API treats an option's default ("off") as not selected."""
+    return FEATURES.selection_violations(
+        profile,
+        inputs={"startup_wav": startup_wav is not None, "shutter_wav": shutter_wav is not None},
+        options={"record_indicator": None if record_indicator in (None, RECORD_INDICATOR.default) else record_indicator},
+    )
+
+
+def _api_message(v: features.Violation) -> str:
+    """build_image's wording for one violation."""
+    profile = v.profile
+    if v.kind == features.OPTION_REQUIRES_PROFILE:
+        option = FEATURES.options[v.subjects[0]]
+        return f"{option.flag} requires --profile {' or '.join(option.profiles)}"
+    if v.kind == features.UNKNOWN_PROFILE:
+        return f"Unsupported build profile: {profile!r}"
+    if v.kind == features.FORBIDDEN_INPUT:
+        return f"--profile {profile} forbids {' and '.join(_flags(FEATURES.profiles[profile].inputs_with('forbidden')))}"
+    return f"{profile} profile requires {' and '.join(_flags(FEATURES.profiles[profile].inputs_with('required')))}"
+
+
+def api_selection_error(
+    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, record_indicator: str | None
+) -> str | None:
+    """The first manifest rule a build_image call breaks, in build_image's wording."""
+    violations = _api_violations(
+        profile, startup_wav=startup_wav, shutter_wav=shutter_wav, record_indicator=record_indicator
+    )
+    return _api_message(violations[0]) if violations else None
+
+
+def cli_selection_error(args: argparse.Namespace) -> str | None:
+    """The first manifest rule parsed CLI arguments break, in the CLI's wording.
+
+    The CLI treats any explicit option flag, including its default value, as selected."""
+    violations = FEATURES.selection_violations(
+        args.profile,
+        inputs={i: getattr(args, i) is not None for i in FEATURES.inputs},
+        options={o: getattr(args, o) for o in FEATURES.options},
+    )
+    if not violations:
+        return None
+    v = violations[0]
+    if v.kind == features.OPTION_REQUIRES_PROFILE:
+        option = FEATURES.options[v.subjects[0]]
+        return f"{option.flag} requires --profile {' or '.join(option.profiles)}"
+    if v.kind == features.FORBIDDEN_INPUT:
+        flags = _flags(FEATURES.profiles[args.profile].inputs_with("forbidden"))
+        return f"--profile {args.profile} is silent and forbids {' / '.join(flags)}"
+    if v.kind == features.MISSING_INPUT:
+        return f"the following arguments are required for --profile {args.profile}: {', '.join(_flags(v.subjects))}"
+    raise ValueError(f"unexpected selection violation {v.kind}")
+
 
 _PROTECTED_SOURCE_DIRS = (
     (ROOT / "src").resolve(),
@@ -189,6 +274,70 @@ def _validate_output_dir(output_dir: Path) -> Path:
     return out
 
 
+def _admit_rom_file(rom_path: Path, *, manifest: dict, target_contract: dict) -> tuple[str, Path, bytes, dict]:
+    """Read and strictly admit the selected shutter-feedback ROM (no output, no toolchain)."""
+    rom_caller_path = str(rom_path)
+    rom_resolved = Path(rom_path).resolve(strict=True)
+    rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
+    startup, rom_provenance = admit_rom_with_provenance(
+        rom_bytes, manifest=manifest, contract=target_contract
+    )
+    return rom_caller_path, rom_resolved, startup, rom_provenance
+
+
+def check_rom(
+    rom_path: Path,
+    *,
+    profile: str = FEATURES.default_profile,
+    record_indicator: str | None = None,
+    manifest: dict = M,
+    target_contract: dict = TARGET_CONTRACT,
+    xpan_contract: dict = XPAN_TARGET_CONTRACT,
+    xpan_hooks: list[dict] | None = None,
+) -> dict:
+    """Run the exact ROM admission a build of this selection runs, and stop.
+
+    Reads the ROM only: no toolchain, no output directory, no writes. Raises the
+    same errors the build would raise for the ROM. Returns a short summary."""
+    # WAV inputs are not part of a ROM check; every other selection rule applies.
+    violations = [
+        v
+        for v in _api_violations(profile, startup_wav=None, shutter_wav=None, record_indicator=record_indicator)
+        if v.kind != features.MISSING_INPUT
+    ]
+    if violations:
+        raise ValueError(_api_message(violations[0]))
+    if profile == "xpan-crop":
+        from xpan_build import admit_xpan_rom
+
+        admitted = admit_xpan_rom(
+            rom_path,
+            indicator=record_indicator,
+            manifest=manifest,
+            target_contract=target_contract,
+            xpan_contract=xpan_contract,
+            xpan_hooks=xpan_hooks,
+        )
+        rom_resolved, provenance = admitted.rom_resolved, admitted.rom_provenance
+    else:
+        _, rom_resolved, _, provenance = _admit_rom_file(rom_path, manifest=manifest, target_contract=target_contract)
+    summary = {
+        "rom_admitted": True,
+        "profile": profile,
+        "record_indicator": ri.admit_choice(record_indicator) if profile == "xpan-crop" else None,
+        "target": provenance["target"],
+        "resolved_path": str(rom_resolved),
+        "bytes": provenance["bytes"],
+        "sha256": provenance["sha256"],
+        "word_sum": provenance["word_sum"],
+        "admission_mode": provenance["admission_mode"],
+        "verified_code_regions": provenance["verified_code_regions"],
+    }
+    if "verified_xpan_regions" in provenance:
+        summary["verified_xpan_regions"] = provenance["verified_xpan_regions"]
+    return summary
+
+
 def build_image(
     *,
     rom_path: Path,
@@ -206,13 +355,12 @@ def build_image(
     record_indicator: str | None = None,
 ) -> dict:
     """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
-    if profile != "xpan-crop" and record_indicator not in (None, "off"):
-        raise ValueError("--record-indicator requires --profile xpan-crop")
+    error = api_selection_error(
+        profile, startup_wav=startup_wav, shutter_wav=shutter_wav, record_indicator=record_indicator
+    )
+    if error:
+        raise ValueError(error)
     if profile == "xpan-crop":
-        if startup_wav is not None or shutter_wav is not None:
-            raise ValueError("--profile xpan-crop forbids --startup-wav and --shutter-wav")
-        if str(XPAN_TOOLS_DIR) not in sys.path:
-            sys.path.insert(0, str(XPAN_TOOLS_DIR))
         from xpan_build import build_xpan_image
 
         return build_xpan_image(
@@ -230,21 +378,13 @@ def build_image(
             policy_path=policy_path,
             record_indicator=record_indicator,
         )
-    if profile != "shutter-feedback":
-        raise ValueError(f"Unsupported build profile: {profile!r}")
-    if startup_wav is None or shutter_wav is None:
-        raise ValueError("shutter-feedback profile requires --startup-wav and --shutter-wav")
-
     """Execute the full offline shutter-feedback build into a fresh output directory."""
     env = controlled_environment()
     validate_target_contract_consistency(manifest, target_contract)
     _, toolchain_admission = admit_toolchain(toolchain_dir, policy_path=policy_path)
 
-    rom_caller_path = str(rom_path)
-    rom_resolved = Path(rom_path).resolve(strict=True)
-    rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
-    startup, rom_provenance = admit_rom_with_provenance(
-        rom_bytes, manifest=manifest, contract=target_contract
+    rom_caller_path, rom_resolved, startup, rom_provenance = _admit_rom_file(
+        rom_path, manifest=manifest, target_contract=target_contract
     )
     actual_rom_sha256 = rom_provenance["sha256"]
 
@@ -287,12 +427,14 @@ def build_image(
                 "target_contract.json",
                 "audio_log_format.json",
                 "toolchain_policy.json",
+                "features.json",
             )
         ]
         + [
             TOOLS_DIR / n
             for n in (
                 "build.py",
+                "features.py",
                 "contracts.py",
                 "toolchain.py",
                 "image_format.py",
@@ -779,7 +921,8 @@ def build_image(
     return record
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The public CLI; profile, WAV and option arguments come from config/features.json."""
     ap = argparse.ArgumentParser(
         description=(
             "Offline builder for Canon EOS R5 (firmware 2.2.1) shutter-feedback sound mod (default) "
@@ -788,43 +931,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--profile",
-        choices=("shutter-feedback", "xpan-crop"),
-        default="shutter-feedback",
-        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
+        choices=FEATURES.profile_ids,
+        default=FEATURES.default_profile,
+        help=FEATURES.profile_cli_help,
     )
     ap.add_argument("--rom", type=Path, required=True, help="Path to user's 64 MiB Canon EOS R5 2.2.1 ROM dump")
-    ap.add_argument("--startup-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
-    ap.add_argument("--shutter-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE shutter clip")
+    for spec in FEATURES.inputs.values():
+        ap.add_argument(spec.flag, type=Path, required=False, help=spec.cli_help)
     ap.add_argument("--toolchain", type=Path, required=True, help="Directory containing arm-none-eabi GCC 15.2.1 binaries")
     ap.add_argument("--output", type=Path, required=True, help="New output directory for autoexec.bin and build artifacts")
-    if str(XPAN_TOOLS_DIR) not in sys.path:
-        sys.path.insert(0, str(XPAN_TOOLS_DIR))
-    import record_indicator
+    for option in FEATURES.options.values():
+        ap.add_argument(option.flag, choices=option.values, default=None, help=option.cli_help)
+    return ap
 
-    ap.add_argument(
-        "--record-indicator",
-        choices=record_indicator.CHOICES,
-        default=None,
-        help=(
-            "xpan-crop only: opt-in movie record indicator cue played on the Movie REC button press "
-            "(default off; 'ding' is the cue tested on a private lab build)"
-        ),
-    )
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
-
-    if args.profile == "xpan-crop":
-        if args.startup_wav is not None or args.shutter_wav is not None:
-            ap.error("--profile xpan-crop is silent and forbids --startup-wav / --shutter-wav")
-    else:
-        if args.record_indicator is not None:
-            ap.error("--record-indicator requires --profile xpan-crop")
-        missing = [
-            flag
-            for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
-            if val is None
-        ]
-        if missing:
-            ap.error(f"the following arguments are required for --profile shutter-feedback: {', '.join(missing)}")
+    error = cli_selection_error(args)
+    if error:
+        ap.error(error)
 
     record = build_image(
         rom_path=args.rom,
@@ -846,7 +972,7 @@ def main(argv: list[str] | None = None) -> int:
                 "rom_sha256": record["caller_input_hashes"]["rom"]["sha256"],
                 "reservation": record["reservation"],
                 "record_indicator": (record.get("record_indicator") or {}).get("cue", "off")
-                if args.profile == "xpan-crop"
+                if args.profile in RECORD_INDICATOR.profiles
                 else None,
             }
         )

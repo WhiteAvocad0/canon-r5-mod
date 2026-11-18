@@ -1,0 +1,95 @@
+{
+  "schema": "canon-r5-mod.features.v1",
+  "target": "Canon EOS R5 firmware 2.2.1",
+  "default_profile": "shutter-feedback",
+  "public_build_note": "Every build made from this repository is a public repackaged build and is hardware-untested. A status below describes the maintainer's private lab evidence for the same feature, not your build.",
+  "status_levels": {
+    "private-lab-verified": {
+      "label": "Verified on a private lab build",
+      "text": "Worked on the maintainer's private lab build of the same source. Your public build is hardware-untested."
+    },
+    "hardware-untested": {
+      "label": "Hardware-untested public build",
+      "text": "Built and host-tested, but no camera has run this feature yet."
+    },
+    "experimental": {
+      "label": "Experimental",
+      "text": "Built and host-tested only. Behaviour on a camera is unknown."
+    }
+  },
+  "inputs": {
+    "startup_wav": {
+      "flag": "--startup-wav",
+      "label": "Startup sound (WAV)",
+      "cli_help": "Path to 48 kHz mono 16-bit PCM WAVE startup clip"
+    },
+    "shutter_wav": {
+      "flag": "--shutter-wav",
+      "label": "Shutter sound (WAV)",
+      "cli_help": "Path to 48 kHz mono 16-bit PCM WAVE shutter clip"
+    }
+  },
+  "profile_cli_help": "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
+  "profile_exclusivity": "Profiles are exclusive: XPan and custom sounds together do not fit in the camera's free memory.",
+  "profiles": [
+    {
+      "id": "shutter-feedback",
+      "label": "Custom startup and shutter sounds",
+      "description": "Plays your own startup clip after the camera starts and your own shutter clip on single shots, through the camera speaker. No XPan.",
+      "status": "private-lab-verified",
+      "status_detail": "Private build36 played both clips with normal photo capture on 16 GB SDHC and 128 GB SDXC cards.",
+      "inputs": {
+        "startup_wav": "required",
+        "shutter_wav": "required"
+      }
+    },
+    {
+      "id": "xpan-crop",
+      "label": "XPan 2.71:1 crop (silent)",
+      "description": "Replaces 16:9 with a 2.71:1 XPan crop: menu and Q label, live LCD/EVF framing, saved JPEG/RAW crop, playback masking and immediate XPan bars in automatic review. Adds no sounds unless you pick a record indicator.",
+      "status": "private-lab-verified",
+      "status_detail": "Menu, Q label, live framing, saved crop, playback masking and automatic review were confirmed on private lab builds (17-18 November 2026). Other qualities, modes and active auto-rotation are unverified.",
+      "inputs": {
+        "startup_wav": "forbidden",
+        "shutter_wav": "forbidden"
+      }
+    }
+  ],
+  "options": [
+    {
+      "id": "record_indicator",
+      "flag": "--record-indicator",
+      "label": "Movie record indicator",
+      "description": "Plays a short generated cue when you press the movie REC button. No audio files are needed.",
+      "profiles": ["xpan-crop"],
+      "unavailable_reason": "The record indicator is part of the XPan profile only (it needs xpan-crop).",
+      "default": "off",
+      "cli_help": "xpan-crop only: opt-in movie record indicator cue played on the Movie REC button press (default off; 'ding' is the cue tested on a private lab build)",
+      "choices": [
+        {
+          "value": "off",
+          "label": "Off (no indicator code linked)",
+          "status": null
+        },
+        {
+          "value": "ding",
+          "label": "Ding: struck-bar chime, 250 ms",
+          "status": "private-lab-verified",
+          "status_detail": "Tested by the owner on a private lab build on 18 November 2026."
+        },
+        {
+          "value": "chirp2",
+          "label": "Chirp: two rising notes, 120 ms",
+          "status": "experimental",
+          "status_detail": "Built and host-tested only."
+        },
+        {
+          "value": "2k150loud",
+          "label": "Tone: single 2 kHz beep, 150 ms",
+          "status": "experimental",
+          "status_detail": "Built and host-tested only."
+        }
+      ]
+    }
+  ]
+}
