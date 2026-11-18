@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > **Source / Developer Preview for Already Boot-Enabled Cameras Only**
-> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** camera-side `EnableBootDisk` automator or card-formatting/raw-sector writer. Read every requirement and disclaimer below before putting a built image on an SD card.
+> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** camera-side `EnableBootDisk` automator and **no** card formatter. The command-line builder never writes cards. The only card writer is the build assistant's opt-in prototype step that writes the two boot markers ([Card preparation](#5-card-preparation)). Read every requirement and disclaimer below before putting a built image on an SD card.
 
 ---
 
@@ -109,22 +109,23 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
 ## 5. Card Preparation
 
 > [!WARNING]
-> **The public builder does NOT write cards.**
-> Do **not** blindly run unreviewed raw-device commands or `dd` entire disk/partition images onto an SD card.
+> **The command-line builder does NOT write cards.** The [build assistant](gui.md#5-prepare-card) can write the two boot markers for you: opt-in, macOS only, and a **prototype that has not been tested on a real card** until the owner's first verification. Do **not** blindly run unreviewed raw-device commands or `dd` entire disk/partition images onto an SD card.
 
 1. **Back up the card completely first**: Copy all existing photos, `DCIM`/`MISC` files, and verify hashes before touching boot sectors.
-2. **Choose the correct filesystem for your card**: The baseline passed on `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC. The FAT32 steps below apply to SDHC; use the separate [exFAT procedure](sdxc.md#3-preparation-route-that-passed-the-first-trial) for SDXC. Do not shrink SDXC to `32 GB` as a workaround.
+2. **Format the card in the camera**: The camera picks the filesystem (FAT32 on SD/SDHC, exFAT on SDXC). The baseline passed on `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC. The FAT32 offsets below apply to SDHC; the exFAT route is in [sdxc.md](sdxc.md#3-preparation-route-that-passed-the-first-trial). Do not shrink SDXC to `32 GB` as a workaround. Formatting removes the markers, so prepare the card again after every format.
 3. **Keep native `BOOTDISK` markers distinct from Canon Basic `SCRIPT`**:
    - Canon Basic uses `SCRIPT` at offset `496` (`0x1F0`) plus `script.req`/`extend.m` — that is a **different** loader path.
    - Native `autoexec.bin` booting on FAT32 requires **both** ASCII markers in the **primary FAT32 boot sector** (and matching geometry):
      - `EOS_DEVELOP` (`11` ASCII bytes) at byte offset **`71`** (`0x47`)
      - `BOOTDISK` (`8` ASCII bytes) at byte offset **`92`** (`0x5C`)
-4. **Use a reviewed native-marker preparation workflow**:
-   - Re-verify the target removable SD device and FAT32 BPB geometry on your host OS before writing.
-   - Save a raw backup of the original primary boot sector (and backup boot sector if applicable) before applying `EOS_DEVELOP` and `BOOTDISK`.
-   - Verify both the written boot-sector markers and filesystem integrity (`fsck` / readback) after applying markers.
+   - On exFAT, `BOOTDISK` goes at `+122` and `EOS_DEVELOP` at `+130` of **both** boot regions, and both boot checksum sectors must be recomputed ([sdxc.md](sdxc.md#2-r5-221-native-exfat-markers-and-checksums)).
+4. **Apply the markers** in one of two ways:
+   - **Build assistant (macOS):** the [Prepare card](gui.md#5-prepare-card) tab offers only removable SD cards in an SD card slot and asks you to type the volume name. It saves the MBR and the partition's first 24 sectors to a timestamped folder on your computer and re-reads them before writing. It writes only the planned sectors: one on FAT32 (the backup boot sector stays unchanged, as on the lab card that booted) and four on exFAT, backup region first. Then it reads every byte back, runs `diskutil verifyVolume` and mounts the card again. It can restore from the backup with the same checks. Raw access needs your administrator password in the macOS prompt. It refuses anything unexpected, such as a card not formatted in the camera, a geometry mismatch or sectors other than 512 bytes.
+   - **Any other reviewed native-marker workflow:** re-verify the target removable SD device and BPB geometry on your host OS before writing. Save a raw backup of the original boot sector(s) (both exFAT boot regions, and the MBR) before applying `EOS_DEVELOP` and `BOOTDISK`. Verify the written markers, the exFAT checksums and filesystem integrity (`fsck` / readback) afterwards.
 5. **Copy `autoexec.bin`**:
-   - Once the card's FAT32 markers and sector backup are verified, directly copy your built `autoexec.bin` to the root directory of the card (`AUTOEXEC.BIN` / `autoexec.bin`), verify its SHA-256 matches `build.json`, and safely eject the card.
+   - Once the card's markers and sector backup are verified, directly copy your built `autoexec.bin` to the root directory of the card (`AUTOEXEC.BIN` / `autoexec.bin`), verify its SHA-256 matches `build.json`, and safely eject the card. The build assistant's [Copy to card](gui.md#6-copy-to-card) tab does this with a read-back check.
+
+Neither the builder nor the assistant enables the camera's BootDisk setting, writes the camera's firmware or NVRAM, or formats or partitions a card.
 
 ---
 

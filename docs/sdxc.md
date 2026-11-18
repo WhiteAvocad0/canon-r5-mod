@@ -38,7 +38,7 @@ Markers were applied to both boot copies and both checksums were regenerated. MB
 
 ## 3. Preparation Route That Passed the First Trial
 
-This repository still provides an **offline builder**, not a public raw-sector writer or boot-activation tool. The following describes the reviewed private preparation; it is not a command to run an arbitrary legacy utility.
+The command-line builder is **offline only** and never writes cards, and there is no boot-activation tool. The build assistant's opt-in [Prepare card](gui.md#5-prepare-card) step (macOS, **prototype, untested on a real card** until the owner's first verification) re-implements steps 2, 5 and 6 below for camera-formatted cards: the same four sectors in the same order, the same checksum, a backup of the MBR and all 24 boot-region sectors, full read-back, an unchanged-MBR check and `diskutil verifyVolume`. The host tests reproduce this trial's recorded before/after boot-region hashes and checksums from its recorded geometry. The following describes the reviewed private preparation; it is not a command to run an arbitrary legacy utility.
 
 1. Back up your files and freshly identify the physical card, partition geometry and actual exFAT filesystem. Do not identify a card solely by a cached disk number. macOS may label MBR type `0x07` as `Windows_NTFS` even when the filesystem is exFAT.
 2. Preserve the MBR and all 24 main/backup boot-region sectors before mutation. The reference user had already backed up files and requested no duplicate file backup.

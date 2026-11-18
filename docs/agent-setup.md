@@ -22,7 +22,7 @@ Native exFAT boot and Canon Basic debug export are separate paths. The full-capa
 
 Our earlier host verification confused a read-only mounted volume with physically unwritable media. An agent should distinguish physical-media writability from volume/mount state. If normal unmount/verification is blocked by the macOS login screen, ask for unlock and wait; do not force the unmount or repeat the payload write. A password belongs in the local OS prompt, never in chat.
 
-The public builder writes offline build outputs only. It does not activate the camera's persistent BootDisk flag or install card boot markers. An unknown activation prerequisite remains unknown. Any separately proposed persistent or destructive operation needs the owner's specific authorization.
+The public builder writes offline build outputs only. It does not activate the camera's persistent BootDisk flag or install card boot markers. The build assistant's opt-in [Prepare card](gui.md#5-prepare-card) tab (macOS, prototype, untested on a real card) is the one supported way to write the markers, and the owner runs it. An unknown activation prerequisite remains unknown. Any separately proposed persistent or destructive operation needs the owner's specific authorization.
 
 ## Test one coherent session
 

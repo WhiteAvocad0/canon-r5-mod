@@ -3,7 +3,7 @@
 This guide is for EOS R5 owners who are comfortable copying commands into a terminal but are new to camera modding. It explains what each piece is, walks through **building** the mod on your computer and **installing** it on a prepared card, and tells you how to test it and recover.
 
 > [!IMPORTANT]
-> **What this guide does not cover:** three one-time preparation steps. These are dumping your camera's ROM, enabling the camera's **BootDisk** setting, and making an SD card **bootable**. This guide explains what they are and how to check they're done, and the [Prerequisites](usage.md#1-prerequisites) section points to the background. This project does not provide tools or step-by-step instructions for them. If you haven't done them, stop at [Step 2](#step-2-check-the-one-time-prerequisites).
+> **What this guide does not cover:** two one-time preparation steps. These are dumping your camera's ROM and enabling the camera's **BootDisk** setting. This guide explains what they are and how to check they're done, and the [Prerequisites](usage.md#1-prerequisites) section points to the background. This project does not provide tools or step-by-step instructions for them. If you haven't done them, stop at [Step 2](#step-2-check-the-one-time-prerequisites). Making an SD card **bootable** is a third step: on a Mac, the [build assistant](gui.md#5-prepare-card) can do it for a card you formatted in the camera. That part is a prototype and hasn't yet been tested on a real card.
 
 > [!WARNING]
 > This is **experimental** software for one exact camera and firmware. It can hang the camera, show a Canon error such as `ERR70`, or lose card data. The BootDisk setting is a **permanent** change inside the camera, and there is no uninstaller. The public builds are **hardware-untested**: features marked as working were confirmed on the maintainer's private lab builds. You use this at your own risk.
@@ -40,9 +40,9 @@ Three separate things must all be true before the camera runs this mod:
 | --- | --- |
 | Your own ROM dump | You have a file of exactly **67,108,864 bytes** (64 MiB) from *your* camera, often named `gang100.bin`. Keep it private: never upload or share it. |
 | BootDisk enabled in the camera | Whoever enabled it should have confirmed it with a readback. If you're not sure, assume it is **not** enabled. |
-| A bootable SD card | The card's boot sector carries the `EOS_DEVELOP` and `BOOTDISK` markers (FAT32 cards up to 32 GB, or exFAT with the extra checksum described in [sdxc.md](sdxc.md)). |
+| A bootable SD card | The card's boot sector carries the `EOS_DEVELOP` and `BOOTDISK` markers (FAT32 cards up to 32 GB, or exFAT with the extra checksum described in [sdxc.md](sdxc.md)). On a Mac, format the card in the camera, then use the build assistant's [Prepare card](gui.md#5-prepare-card) tab. It backs up the boot sectors first, writes only the markers, and says "Nothing to write" if they're already there. |
 
-If any row isn't done, stop here. See [usage.md → Prerequisites](usage.md#1-prerequisites) and the community documentation it refers to. This project hasn't verified any third-party card-preparation tool, so check any tool's output yourself and keep backups.
+If the ROM dump or BootDisk row isn't done, stop here. See [usage.md → Prerequisites](usage.md#1-prerequisites) and the community documentation it refers to. For the card, see [usage.md → Card Preparation](usage.md#5-card-preparation). This project hasn't verified any third-party card-preparation tool, so check any tool's output yourself and keep backups. The command-line builder never writes cards.
 
 ## Step 3: Back up
 
@@ -82,7 +82,7 @@ XPan and custom sounds aren't offered together. The XPan profile is silent by de
 ## Step 6: Build
 
 > [!TIP]
-> **Prototype alternative:** the [build assistant](gui.md) (`python3 tools/gui/app.py`) does Steps 5 to 7 in a window. It needs Python with Tkinter, and it uses the same builder and checks. It is a prototype: check its results as described below.
+> **Prototype alternative:** the [build assistant](gui.md) (`python3 tools/gui/app.py`) does Steps 5 to 7 in a window, and on a Mac it can also make a camera-formatted card bootable. It needs Python with Tkinter, and it uses the same builder and checks. It is a prototype: check its results as described below.
 
 Use your own paths for the ROM and the toolchain `bin` folder. For XPan with the record indicator:
 
@@ -117,7 +117,7 @@ The printed `sha256` must equal `format.sha256` in `build/my-r5/build.json`.
    ```
 4. **Eject the card properly** (Finder eject, or "Safely remove" on Windows) before pulling it out.
 
-Don't format the card in the camera afterwards: that usually removes the boot markers.
+Don't format the card in the camera afterwards: that usually removes the boot markers. If you do, prepare the card again before copying `autoexec.bin` back.
 
 ## Step 8: First test
 
@@ -142,7 +142,7 @@ Report what you saw, including what didn't work, using the [XPan test report](ht
 
 **Can I just copy someone else's files to my card?** No. You need BootDisk enabled in your camera, a bootable card, and an `autoexec.bin` built from your own ROM.
 
-**I formatted my card. Do I need to redo everything?** Only the card: the boot markers are usually gone, so the card needs to be made bootable again, and then you copy `autoexec.bin` back. BootDisk stays enabled in the camera.
+**I formatted my card. Do I need to redo everything?** Only the card: the boot markers are usually gone, so the card needs to be made bootable again (on a Mac, with the build assistant's Prepare card tab), and then you copy `autoexec.bin` back. BootDisk stays enabled in the camera.
 
 **Which cards work?** The maintainer's camera worked with a 16 GB FAT32 SDHC card and a full-capacity 128 GB exFAT SDXC card. CFexpress can stay in the other slot, but the mod loads from the SD card.
 
