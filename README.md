@@ -59,7 +59,7 @@ Community ports and firmware-specific validation are welcome. See [docs/porting.
 > [!TIP]
 > **New to this?** Start with the plain-language **[Getting started guide](docs/getting-started.md)**. It explains how the pieces fit together and walks through building, installing on a prepared card, testing and recovery.
 >
-> **Prefer a window to a terminal?** The **[build assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) checks your ROM, lets you pick features, builds, and copies `autoexec.bin` to the card. On a Mac it can also write the boot markers onto a card you formatted in the camera, with a backup first. That step is opt-in and not yet tested on a real card. It runs the same builder and checks.
+> **Prefer a window to a terminal?** The **[build assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) checks your ROM, lets you pick features, builds, and copies `autoexec.bin` to the card. On a Mac it can also prepare a card you formatted in the camera: choose the card, press **Prepare card** and confirm once. The boot sectors are backed up automatically first, and Undo restores them. That step is opt-in and not yet tested on a real card. It runs the same builder and checks.
 
 Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**. For deep XPan internals, see **[docs/xpan.md](docs/xpan.md)**.
 
