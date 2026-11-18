@@ -161,6 +161,19 @@ class Write(Images):
         self.assertEqual(out["written"], [plan.writes[0].offset])
         self.assertEqual(out["possibly_written"], [plan.writes[0].offset, plan.writes[1].offset])
 
+    def test_open_failure_reports_nothing_written(self):
+        """N3: an OSError before any write (EBUSY on open) carries empty written lists."""
+        real_open = os.open
+
+        def busy(path, flags, *args):
+            if flags & os.O_RDWR:
+                raise OSError(16, "Resource busy")
+            return real_open(path, flags, *args)
+        with mock.patch.object(helper.os, "open", busy):
+            out = self.run_helper(*self.write_args(["0:512"], sha(self.area[:512]), b"\x01" * 512))
+        self.assertEqual(out["code"], "os_error")
+        self.assertEqual((out["written"], out["possibly_written"]), ([], []))
+
     def test_fsync_failure_reports_possibly_written(self):
         """F6: the sector was written even though fsync failed."""
         plan = layout.plan_markers(self.disk.read_bytes()[:512], self.area, disk_bytes=ci.LAB_EXFAT["disk_bytes"])

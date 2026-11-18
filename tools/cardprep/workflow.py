@@ -191,22 +191,45 @@ def load_backup(folder: Path) -> Backup:
     return Backup(folder, files["mbr"], files["area"], manifest)
 
 
-def latest_backup(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT) -> Backup | None:
-    """The newest valid backup of this card taken before its markers were written."""
+LATEST = "latest"  # restore_from value for Undo: choose the backup after reading the card
+
+
+def undo_backups(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT):
+    """Valid backups taken before markers were first written to a card in this slot with
+    this size and partition, newest first. Only "before-marking" backups without markers
+    qualify; "before-restore" backups (which may hold half-marked bytes) never do."""
     try:
         folders = sorted((p for p in Path(root).iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True)
     except OSError:
-        return None
+        return
     for folder in folders:
         try:
             backup = load_backup(folder)
         except PrepFailure:
             continue
         card = backup.manifest.get("card") or {}
-        if backup.manifest.get("markers_present") is False and \
-                all(card.get(k) == getattr(cand, k) for k in RESTORE_IDENTITY):
-            return backup
-    return None
+        if backup.manifest.get("purpose") == "before-marking" and backup.manifest.get("markers_present") is False \
+                and all(card.get(k) == getattr(cand, k) for k in RESTORE_IDENTITY):
+            yield backup
+
+
+def latest_backup(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT) -> Backup | None:
+    """The newest candidate for Undo (the final choice is made after reading the card)."""
+    return next(undo_backups(cand, root), None)
+
+
+def _undo_plan(cand: Candidate, mbr: bytes, area: bytes, root: Path) -> tuple[Plan, Backup]:
+    """The newest before-marking backup that is of THIS card (same MBR and boot-area bytes
+    outside the markers, so plan_restore accepts it), with its restore plan."""
+    reasons = []
+    for backup in undo_backups(cand, root):
+        try:
+            return restore_plan(cand, mbr, area, backup), backup
+        except CardPrepError as exc:
+            reasons.append(f"{backup.folder.name}: {exc}")
+    raise CardPrepError("no_backup", "No backup taken before this card was prepared matches it"
+                        + (" (" + "; ".join(reasons[:3]) + ")" if reasons else f" in {root}")
+                        + ". Use 'Restore from a chosen backup...' if you have one.")
 
 
 def _record(backup: Backup, report: Report, extra: dict) -> Path | None:
@@ -239,8 +262,11 @@ def restore_plan(cand: Candidate, mbr: bytes, area: bytes, backup: Backup) -> Pl
 
 
 def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
-          restore_from: Backup | None = None, now: datetime | None = None) -> Session:
+          restore_from: Backup | str | None = None, now: datetime | None = None) -> Session:
     """Read the card, save a verified backup and plan the writes.
+
+    restore_from is None (prepare), a chosen Backup (restore), or LATEST (Undo: the
+    newest before-marking backup that matches the card as read).
 
     Nothing is ever written to the card here. On any failure the card is mounted
     again and the exception says why; a plan that needs writing leaves the card
@@ -260,7 +286,10 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
             # The current boot area need not validate on its own (an interrupted write can
             # leave one exFAT region with a stale checksum); plan_restore checks it byte
             # for byte against the backup and validates the result instead.
-            plan = restore_plan(cand, mbr, area, restore_from)
+            if restore_from == LATEST:
+                plan, restore_from = _undo_plan(cand, mbr, area, Path(backup_root))
+            else:
+                plan = restore_plan(cand, mbr, area, restore_from)
             volume, purpose = plan.volume, "before-restore"
         else:
             volume = layout.inspect(mbr, area, disk_bytes=cand.disk_bytes)
@@ -338,6 +367,11 @@ def write(session: Session, ops) -> Report:
             report.title, report.nothing_written = f"{what}: refused. Nothing was written.", True
             report.lines.append(f"The card's {result.get('mismatch') or 'boot sectors'} changed since it was read, "
                                 "or it is another card. Try again.")
+            return report
+        if not result.get("ok") and "area_hex" not in result and result.get("possibly_written") == []:
+            report.title, report.nothing_written = f"{what}: not written.", True
+            report.lines.append(f"The helper stopped before writing anything: {result.get('error')} "
+                                "Nothing was written.")
             return report
         if not result.get("ok") and "area_hex" not in result:
             report.lines += [f"The helper stopped: {result.get('error')}",

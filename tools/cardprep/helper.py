@@ -200,6 +200,13 @@ def do_write(values: dict, allow_image_files: bool) -> dict:
         at += n
     written: list[int] = []
     started: list[int] = []
+    try:
+        return _write_open(disk, part, ranges, pieces, after, shas, written, started)
+    except OSError as exc:  # e.g. EBUSY on open: report exactly what was (possibly) written
+        raise Refused("os_error", str(exc), written=written, possibly_written=list(started))
+
+
+def _write_open(disk, part, ranges, pieces, after, shas, written, started) -> dict:
     mbr_fd = os.open(disk, os.O_RDONLY)
     try:
         fd = os.open(part, os.O_RDWR)

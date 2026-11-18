@@ -370,12 +370,12 @@ class App:
             return
         cand, source = p.selected, None
         if kind == "undo":
-            source = card_flow.latest_backup(cand, p.backup_root)
-            if source is None:
+            if card_flow.latest_backup(cand, p.backup_root) is None:  # early hint; the choice is made after the read
                 p.failed(f"No backup of this card from before it was prepared was found in {p.backup_root}. "
                          "Use 'Restore from a chosen backup...' instead.")
                 self.refresh()
                 return
+            source = card_flow.LATEST
         elif kind == "restore":
             folder = self.filedialog.askdirectory(title="Choose a card backup folder (it contains manifest.json)",
                                                   initialdir=str(p.backup_root))
@@ -387,7 +387,7 @@ class App:
                 p.failed(str(exc))
                 self.refresh()
                 return
-        p.restore_from = source
+        p.restore_from = source if isinstance(source, card_flow.Backup) else None
         token = p.begin("Reading the card and saving a backup (macOS asks for your password)...")
         ops = card_devices.MacOps()
         self.refresh()

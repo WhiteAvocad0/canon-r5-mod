@@ -309,6 +309,68 @@ class Flow(unittest.TestCase):
         self.assertEqual(ops.part.read_bytes(), original)
         self.assertTrue(ops.mounted)
 
+    def test_undo_after_interrupted_write_then_cancelled_undo(self):
+        """N1: after an interrupted exFAT write and a cancelled Undo, Undo again must still restore
+        (it must not pick the "before-restore" backup of the half-marked card)."""
+        for fail_at, changed in ((3, [12, 23]), (2, [12])):
+            cand, ops = self.card("exFAT")
+            original = ops.part.read_bytes()
+            session = workflow.start(cand, ops, self.backups)
+            with mock.patch.object(helper.os, "pwrite", flaky_pwrite(fail_at)):
+                self.assertFalse(workflow.write(session, ops).ok)
+            first = workflow.start(cand, ops, self.backups, restore_from=workflow.LATEST)
+            self.assertEqual(first.source.folder, session.backup.folder)
+            self.assertEqual([w.sector for w in first.plan.writes], changed)
+            self.assertTrue(workflow.cancel(first, ops).nothing_written)
+            again = workflow.start(cand, ops, self.backups, restore_from=workflow.LATEST)
+            self.assertEqual(again.source.folder, session.backup.folder, (fail_at, again.source.folder))
+            self.assertTrue(again.needs_write)
+            self.assertEqual([w.sector for w in again.plan.writes], changed)
+            self.assertTrue(workflow.write(again, ops).ok)
+            self.assertEqual(ops.part.read_bytes(), original)
+            self.assertEqual(workflow.latest_backup(cand, self.backups).manifest["purpose"], "before-marking")
+            shutil.rmtree(self.backups)
+
+    def test_undo_uses_this_cards_backup_not_a_same_geometry_one(self):
+        """N1: two cards with the same size, slot and model; Undo picks the backup matching the card read."""
+        cand, ops = self.card("exFAT")
+        mine = workflow.start(cand, ops, self.backups)
+        self.assertTrue(workflow.write(mine, ops).ok)
+        # Another card in the same slot with the same geometry (different serial), backed up later.
+        other_mbr, other_area, _ = ci.exfat_card(serial=0x0BADCAFE)
+        other_disk, other_part = self.tmp / "other-disk.img", self.tmp / "other-part.img"
+        other_disk.write_bytes(other_mbr + bytes(8192))
+        other_part.write_bytes(other_area + bytes(1 << 16))
+        theirs = workflow.start(cand, ImageOps(cand, other_disk, other_part), self.backups)
+        self.assertEqual(workflow.latest_backup(cand, self.backups).folder, theirs.backup.folder)
+        undo = workflow.start(cand, ops, self.backups, restore_from=workflow.LATEST)
+        self.assertEqual(undo.source.folder, mine.backup.folder)
+        workflow.cancel(undo, ops)
+        shutil.rmtree(self.backups)
+        self.backups.mkdir()
+        with self.assertRaises(CardPrepError) as ctx:
+            workflow.start(cand, ops, self.backups, restore_from=workflow.LATEST)
+        self.assertEqual(ctx.exception.code, "no_backup")
+        self.assertTrue(ops.mounted)
+
+    def test_failure_before_any_write_says_nothing_was_written(self):
+        """N3: the helper cannot open the partition (EBUSY): nothing was written."""
+        cand, ops = self.card("exFAT")
+        before = ops.part.read_bytes()
+        session = workflow.start(cand, ops, self.backups)
+        real_open = os.open
+
+        def busy(path, flags, *args):
+            if flags & os.O_RDWR:
+                raise OSError(16, "Resource busy")
+            return real_open(path, flags, *args)
+        with mock.patch.object(helper.os, "open", busy):
+            report = workflow.write(session, ops)
+        self.assertTrue(report.nothing_written)
+        self.assertIn("not written", report.title)
+        self.assertNotIn("Do not use the card", "\n".join(report.lines))
+        self.assertEqual(ops.part.read_bytes(), before)
+
     def test_backup_folders_never_collide(self):
         """F9: two backups in the same instant get different folders; none is reused."""
         cand, ops = self.card("FAT32")
