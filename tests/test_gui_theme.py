@@ -1,10 +1,12 @@
-"""Design tokens of the setup assistant."""
+"""Design tokens of the setup assistant, and a headless smoke test of every wizard step."""
 import ast
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -168,6 +170,153 @@ class AppearanceTests(unittest.TestCase):
     @unittest.skipIf(sys.platform.startswith("win"), "winreg exists on Windows")
     def test_windows_without_registry_falls_back_to_light(self):
         self.assertEqual(theme.detect_appearance("win32", environ={}), "light")
+
+
+def make_root():
+    """A hidden Tk root, or None when this Python has no Tk or there is no display."""
+    try:
+        import tkinter as tk
+    except ImportError:
+        return None
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        return None
+    root.withdraw()
+    return root
+
+
+class WindowSmokeTests(unittest.TestCase):
+    """Builds the real window hidden, with saved progress in a temporary folder and no toolchain search."""
+
+    def setUp(self):
+        self.root = make_root()
+        if self.root is None:
+            self.skipTest("Tk is not available here (no tkinter or no display)")
+        import tkinter as tk
+        from tkinter import filedialog, font as tkfont, messagebox, ttk
+        from gui import app as app_mod, checks, wizard
+        self.tk, self.app_mod, self.wizard_mod = tk, app_mod, wizard
+        self.tmp = tempfile.TemporaryDirectory()
+        patches = [mock.patch.object(wizard, "DEFAULT_STATE_FILE", Path(self.tmp.name) / "wizard.json"),
+                   mock.patch.object(checks, "detect_toolchain", lambda: (None, None, []))]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.modules = (tk, ttk, filedialog, messagebox, tkfont)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self._destroy)
+
+    def _destroy(self):
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def build(self, appearance):
+        app = self.app_mod.App(*self.modules, root=self.root, appearance=appearance)
+        self.root.update_idletasks()
+        return app
+
+    def visible_step(self, app):
+        return [step for step, (frame, _check, _canvas) in app.panels.items() if frame.winfo_manager()]
+
+    def test_every_step_builds_in_light_and_dark(self):
+        for appearance in ("light", "dark"):
+            with self.subTest(appearance=appearance):
+                if appearance == "dark":
+                    self._destroy()
+                    self.root = make_root()
+                app = self.build(appearance)
+                self.assertEqual(app.theme.appearance, appearance)
+                self.assertEqual(self.root.cget("background"), theme.PALETTES[appearance].bg)
+                self.assertTrue(app.theme.families["ui"] and app.theme.families["mono"])
+                sizes = {k: abs(int(f.actual("size"))) for k, f in app.theme.fonts.items()}
+                self.assertGreater(sizes["heading"], sizes["body"])
+                self.assertEqual(set(app.panels), {s.id for s in self.wizard_mod.STEPS})
+                for step in self.wizard_mod.STEPS:
+                    app.wizard.saved.current = step.id
+                    app.refresh()
+                    self.root.update_idletasks()
+                    self.assertEqual(self.visible_step(app), [step.id])
+                    packed = [s for s, row in app.side_rows.items() if row["parts"][0].winfo_manager()]
+                    self.assertEqual(packed, app.wizard.path())
+
+    def test_gating_and_controls_are_unchanged(self):
+        app = self.build("light")
+        w = self.wizard_mod
+        self.assertEqual(app.wizard.current, w.CAMERA)
+        self.assertTrue(app.next_button.instate(["disabled"]))
+        self.assertTrue(app.back_button.instate(["disabled"]))
+        app._sidebar_clicked(w.BUILD)  # blocked: the sidebar does not jump there
+        self.assertEqual(app.wizard.current, w.CAMERA)
+        app.camera_var.set(True)
+        app.wizard.set_camera_confirmed(True)
+        app.refresh()
+        self.assertFalse(app.next_button.instate(["disabled"]))
+        app._next()
+        self.assertEqual(app.wizard.current, w.ROM)
+        self.assertEqual(self.visible_step(app), [w.ROM])
+        self.assertEqual(app._side_focus(w.ROM, 1), "break")
+        self.assertTrue(app.update_button.instate(["disabled"]))  # one-time steps are not done
+        self.assertTrue(app.bootdisk_box.instate(["disabled"]))   # needs the acknowledgement first
+        app.bootdisk_ack.set(True)
+        app.refresh()
+        self.assertFalse(app.bootdisk_box.instate(["disabled"]))
+        self.assertTrue(app.build_button.instate(["disabled"]))
+        self.assertTrue(app.copy_button.instate(["disabled"]))
+        self.assertTrue(app.card_confirm_box.instate(["disabled"]))
+        for button in (app.prep_button, app.prep_undo, app.prep_restore):
+            self.assertTrue(button.instate(["disabled"]))
+        self.assertEqual(app.blockers.headline.cget("text"), "Before you can build:")
+
+    def test_results_busy_states_and_details_render(self):
+        from cardprep import workflow
+        app = self.build("light")
+        self.assertFalse(app.prep_title.frame.winfo_manager())  # no result yet
+        app.prep.finished(workflow.Report(True, "Done and verified.", ["Backup: /tmp/backup", "Sectors 12, 23, 0, 11."]))
+        app.refresh()
+        self.assertEqual(app.prep_title.kind, theme.SUCCESS)
+        self.assertIn("Backup: /tmp/backup", app.prep_log.get("1.0", "end"))
+        self.assertTrue(app.prep_log_box.winfo_manager())
+        app.prep.failed("Not prepared: the card was removed.")
+        app.refresh()
+        self.assertEqual(app.prep_title.headline.cget("text"), "Not prepared: the card was removed.")
+        self.assertEqual(app.prep_title.kind, theme.DANGER)
+        self.assertFalse(app.prep_log_box.winfo_manager())
+        app.prep.busy = "Looking for SD cards..."
+        app.refresh()
+        self.assertTrue(app.prep_busy.running)
+        self.assertIn("Wait: Looking for SD cards...", app.prep_blockers.cget("text"))
+        app.prep.busy = None
+        app.refresh()
+        self.assertFalse(app.prep_busy.running)
+        app.state.building = True
+        app.refresh()
+        self.assertTrue(app.build_busy.running)
+        app.state.building = False
+        app.refresh()
+        self.assertFalse(app.build_busy.running)
+        app.result.set(theme.DANGER, "Build refused or failed", "firmware signature mismatch")
+        app.copy_result.set(theme.SUCCESS, "Done", "Copied and verified AUTOEXEC.BIN.")
+        app.card_report.set(theme.WARNING, "Check the warnings before you copy", "Warning: no DCIM folder.")
+        app.copy_result.clear()
+        self.assertFalse(app.copy_result.frame.winfo_manager())
+        frame = app.panels[self.wizard_mod.CAMERA][0]
+        toggles = [w for w in self._descendants(frame) if w.winfo_class() == "TButton"
+                   and "Details" in str(w.cget("text"))]
+        self.assertEqual(len(toggles), 1)
+        toggles[0].invoke()
+        self.assertIn("▾", toggles[0].cget("text"))
+        toggles[0].invoke()
+        self.assertIn("▸", toggles[0].cget("text"))
+        app._set_column(500)  # a narrow window re-wraps the text
+        self.assertTrue(all(int(str(label.cget("wraplength"))) <= 500 for label, _i, _f in app._wrapped))
+
+    def _descendants(self, widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from self._descendants(child)
 
 
 if __name__ == "__main__":

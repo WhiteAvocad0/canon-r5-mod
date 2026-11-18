@@ -8,6 +8,7 @@ tools/cardprep, and the build itself is tools/build.py with all of its checks. I
 never downloads anything, never formats or partitions a card and never contacts a
 camera. Boot sectors are written only by the "Prepare card" tab (issue #16 Phase 2),
 after the person confirms the card, through the operating system's password prompt.
+Its look (fonts, colours, spacing and ttk styles) comes from theme.py.
 """
 from __future__ import annotations
 
@@ -29,9 +30,10 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 from cardprep import devices as card_devices, workflow as card_flow
-from gui import card, checks, runner
+from gui import card, checks, runner, theme
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
+from gui.theme import BUSY, DANGER, INFO, NEUTRAL, SPACE, SUCCESS, WARNING
 from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COMING_SOON, COPY, DONE, FEATURES, GUIDE,
                         NEEDS_ACTION, ROM, SKIPPED, STEP_BY_ID, STEPS, TEST, TEST_CHECKLIST, TOOLCHAIN, Wizard)
 
@@ -52,25 +54,29 @@ DOCS = {
     "About this assistant": ROOT / "docs" / "gui.md",
 }
 CANNOT_DO = """\
-What this assistant does: it builds autoexec.bin on your computer, can write the two
-boot markers onto a card you formatted in the camera (step 7, macOS only, with a backup
+What this assistant does: it builds autoexec.bin on your computer, can write the two \
+boot markers onto a card you formatted in the camera (step 7, macOS only, with a backup \
 first), and copies autoexec.bin to the card. What it never does:
 
-  - change the camera by itself: the ROM dump and BootDisk steps are things you run in
-    the camera (their guided versions are coming soon);
-  - format, partition or erase a card, or write its partition table (MBR);
-  - write anything to a card except the boot-marker sectors shown in step 7;
-  - write the camera's firmware or NVRAM;
-  - download the toolchain (you install it yourself; see step 5);
-  - test anything on the camera, or tell you whether your camera will work.
+  •  change the camera by itself: the ROM dump and BootDisk steps are things you run in \
+the camera (their guided versions are coming soon);
+  •  format, partition or erase a card, or write its partition table (MBR);
+  •  write anything to a card except the boot-marker sectors shown in step 7;
+  •  write the camera's firmware or NVRAM;
+  •  download the toolchain (you install it yourself; see step 5);
+  •  test anything on the camera, or tell you whether your camera will work.
 
-Every build made here is a public repackaged build and is hardware-untested.
-Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an
+Every build made here is a public repackaged build and is hardware-untested. \
+Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an \
 error, remove the battery, then the card; see the Getting started guide.
 """
-WARNING = ("Experimental software for the original EOS R5 on firmware 2.2.1 only. "
-           "Public builds are hardware-untested. Read the Getting started guide first.")
-STATUS_COLOURS = {OK: "#1b7f3b", FAILED: "#b3261e", CHECKING: "#7a5c00"}
+WARNING_TEXT = ("Experimental software for the original EOS R5 on firmware 2.2.1 only. "
+                "Public builds are hardware-untested. Read the Getting started guide first.")
+CHECK_KINDS = {OK: SUCCESS, FAILED: DANGER, CHECKING: BUSY}
+STEP_KINDS = {DONE: SUCCESS, SKIPPED: NEUTRAL, BLOCKED: WARNING, NEEDS_ACTION: INFO}
+STEP_HEADLINES = {DONE: "Check passed", SKIPPED: "Skipped", BLOCKED: "Blocked", NEEDS_ACTION: "To do"}
+XS, S, M, L, XL = (SPACE[k] for k in ("xs", "s", "m", "l", "xl"))
+CARD_INSET = 2 * M + 2  # a card's padding and border, for the width of the text inside it
 
 
 def open_path(path: Path) -> None:
@@ -82,8 +88,119 @@ def open_path(path: Path) -> None:
         subprocess.run(["xdg-open", str(path)], check=False)
 
 
+def bullets(lines) -> str:
+    return "\n".join(f"•  {line}" for line in lines)
+
+
+class Slot:
+    """A place in a layout whose content can be shown or hidden without losing its position."""
+
+    def __init__(self, ttk, parent, fill="x", **pack):
+        self.frame = ttk.Frame(parent)
+        self.frame.pack(fill=fill, anchor="w")
+        self.pack = pack
+
+    def show(self, widget):
+        if not widget.winfo_manager():
+            widget.pack(in_=self.frame, fill="x", **self.pack)
+
+    def hide(self, widget):
+        if widget.winfo_manager():
+            widget.pack_forget()
+            self.frame.configure(height=1)  # Tk keeps an emptied frame's old size otherwise
+
+
+class Callout:
+    """A tinted box with a status icon, a short headline and optional details."""
+
+    def __init__(self, app, parent, *, pady=(M, 0), fill="x"):
+        tk, ttk = app.tk, app.ttk
+        self.app, self.kind = app, NEUTRAL
+        self.slot = Slot(ttk, parent, fill=fill, pady=pady)
+        self.frame = ttk.Frame(self.slot.frame, padding=(M, 12), style=f"Callout.{NEUTRAL}.TFrame")
+        self.icon = tk.Canvas(self.frame, width=20, height=20, highlightthickness=0, borderwidth=0)
+        self.icon.grid(row=0, column=0, sticky="nw", padx=(0, 12), pady=(1, 0))
+        self.headline = ttk.Label(self.frame, justify="left")
+        self.headline.grid(row=0, column=1, sticky="w")
+        self.body = ttk.Label(self.frame, justify="left")
+        self.frame.columnconfigure(1, weight=1)
+        inset = CARD_INSET + 32
+        app.wrap(self.headline, inset, full=True)
+        app.wrap(self.body, inset, full=True)
+
+    def set(self, kind, headline, body="", mono=False):
+        self.kind = kind
+        self.frame.configure(style=f"Callout.{kind}.TFrame")
+        self.headline.configure(text=headline, style=f"Callout.{kind}.Headline.TLabel")
+        self.body.configure(text=body, style=f"Callout.{kind}.Mono.TLabel" if mono else f"Callout.{kind}.TLabel")
+        if body:
+            self.body.grid(row=1, column=1, sticky="w", pady=(XS, 0))
+        else:
+            self.body.grid_remove()
+        if not headline:  # body-only callouts put the text level with the icon
+            self.headline.grid_remove()
+            self.body.grid(row=0, column=1, sticky="w", pady=0)
+        else:
+            self.headline.grid()
+        self.app.draw_mark(self.icon, kind, self.app.theme.colours(kind)[1])
+        self.slot.show(self.frame)
+
+    def clear(self):
+        self.slot.hide(self.frame)
+
+
+class StatusLine:
+    """One status: an icon in the status colour and the message beside it."""
+
+    def __init__(self, app, parent, pady=(S, 0)):
+        ttk = app.ttk
+        self.frame = ttk.Frame(parent)
+        self.frame.pack(fill="x", pady=pady)
+        self.icon = ttk.Label(self.frame, width=2, style=f"Status.{NEUTRAL}.Icon.TLabel")
+        self.icon.pack(side="left", anchor="n")
+        self.text = ttk.Label(self.frame, justify="left", style=f"Status.{NEUTRAL}.TLabel")
+        self.text.pack(side="left", anchor="n", fill="x")
+        app.wrap(self.text, 24, full=True)
+
+    def set(self, kind, text):
+        self.icon.configure(text=theme.GLYPHS[kind], style=f"Status.{kind}.Icon.TLabel")
+        self.text.configure(text=text, style=f"Status.{kind}.TLabel")
+
+    def show_check(self, check):
+        self.set(CHECK_KINDS.get(check.status, NEUTRAL), check.message or "Not checked yet.")
+
+
+class Busy:
+    """An indeterminate progress bar with a caption, shown only while something runs."""
+
+    def __init__(self, app, parent, pady=(12, 0)):
+        ttk = app.ttk
+        self.slot = Slot(ttk, parent, pady=pady)
+        self.frame = ttk.Frame(self.slot.frame)
+        self.bar = ttk.Progressbar(self.frame, mode="indeterminate", length=160,
+                                   style="Accent.Horizontal.TProgressbar")
+        self.bar.pack(side="left")
+        self.label = ttk.Label(self.frame, style="Caption.TLabel", justify="left")
+        self.label.pack(side="left", padx=(12, 0))
+        app.wrap(self.label, 200, full=True)
+        self.running = False
+
+    def set(self, text):
+        if text:
+            self.label.configure(text=text)
+            self.slot.show(self.frame)
+            if not self.running:
+                self.bar.start(12)
+                self.running = True
+        else:
+            if self.running:
+                self.bar.stop()
+                self.running = False
+            self.slot.hide(self.frame)
+
+
 class App:
-    def __init__(self, tk, ttk, filedialog, messagebox, scrolledtext):
+    def __init__(self, tk, ttk, filedialog, messagebox, tkfont, *, root=None, appearance=None):
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
         self.state = AssistantState()
         self.events: queue.Queue = queue.Queue()
@@ -92,39 +209,30 @@ class App:
         self.copying = False
         self.prep = PrepState()
         self.wizard = Wizard(self.state, prep_supported=card_devices.prepare_supported())
+        self._wrapped: list = []
+        self._inners = {}  # step -> the scrolled frame holding its content
+        self._detecting = False  # the toolchain search is running
+        self._column = theme.CONTENT_MAX_WIDTH
 
-        self.root = tk.Tk()
+        self.root = tk.Tk() if root is None else root
+        self.theme = theme.apply(self.root, ttk, tkfont, appearance=appearance)
         self.root.title("Canon R5 mod setup assistant (prototype)")
-        self.root.minsize(900, 620)
-        self.root.geometry("1060x780")
-        outer = ttk.Frame(self.root, padding=10)
-        outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text=WARNING, foreground="#b3261e", wraplength=1000, justify="left").pack(anchor="w")
-        links = ttk.Frame(outer)
-        links.pack(anchor="w", pady=(4, 8))
-        for label, path in DOCS.items():
-            ttk.Button(links, text=label, command=lambda p=path: webbrowser.open(p.as_uri())).pack(side="left", padx=(0, 6))
+        self.root.minsize(*theme.MIN_WINDOW)
+        width = max(theme.MIN_WINDOW[0], min(theme.DEFAULT_WINDOW[0], self.root.winfo_screenwidth() - 80))
+        height = max(theme.MIN_WINDOW[1], min(theme.DEFAULT_WINDOW[1], self.root.winfo_screenheight() - 120))
+        self.root.geometry(f"{width}x{height}")
 
-        body = ttk.Frame(outer)
-        body.pack(fill="both", expand=True)
-        side = ttk.Frame(body, padding=(0, 0, 10, 0))
-        side.pack(side="left", fill="y")
-        ttk.Label(side, text="Steps", font=("TkDefaultFont", 0, "bold")).pack(anchor="w")
-        self.sidebar = tk.Listbox(side, width=36, height=len(STEPS) + 1, activestyle="none", exportselection=False)
-        self.sidebar.pack(fill="y", expand=True)
-        self.sidebar.bind("<<ListboxSelect>>", lambda _e: self._sidebar_clicked())
-        self.mode_label = ttk.Label(side, text="", wraplength=260, justify="left", foreground="#555")
-        self.mode_label.pack(anchor="w", pady=(6, 0))
-        self.content = ttk.Frame(body)
-        self.content.pack(side="left", fill="both", expand=True)
-        nav = ttk.Frame(outer)
-        nav.pack(fill="x", pady=(8, 0))
-        self.back_button = ttk.Button(nav, text="< Back", command=self._back)
-        self.back_button.pack(side="left")
-        self.next_button = ttk.Button(nav, text="Next >", command=self._next)
-        self.next_button.pack(side="right")
-        self.nav_note = ttk.Label(nav, text="", foreground="#7a5c00", wraplength=700, justify="right")
-        self.nav_note.pack(side="right", padx=8)
+        shell = ttk.Frame(self.root)
+        shell.pack(fill="both", expand=True)
+        self._sidebar(shell)
+        ttk.Separator(shell, orient="vertical").pack(side="left", fill="y")
+        main = ttk.Frame(shell)
+        main.pack(side="left", fill="both", expand=True)
+        self._banner(main)
+        footer = self._footer(main)
+        self.content = ttk.Frame(main)
+        self.content.pack(fill="both", expand=True)
+        footer.lift(self.content)  # Tab reaches the step's controls before Back and Next
 
         self.panels = {}
         self._camera_panel()
@@ -132,10 +240,11 @@ class App:
         self._bootdisk_panel()
         self._features_tab()
         self._toolchain_tab()
-        self._build_tab(scrolledtext)
-        self._prep_tab(scrolledtext)
+        self._build_tab()
+        self._prep_tab()
         self._card_tab()
         self._test_panel()
+        self._bind_scrolling()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
@@ -145,48 +254,237 @@ class App:
         self._detect_toolchain()
         self.refresh()
 
-    # -- helpers ------------------------------------------------------------
+    # -- layout helpers ---------------------------------------------------------
+
+    def wrap(self, label, inset=0, full=False):
+        """Keep a label's wrap width in step with the column: body text at about 72 characters,
+        ``full`` text (statuses, callouts, paths) at the column's width less ``inset``."""
+        self._wrapped.append((label, inset, full))
+        label.configure(wraplength=self._wrap_width(inset, full))
+        return label
+
+    def _wrap_width(self, inset, full):
+        width = self._column - inset
+        return max(160, width if full else min(self.theme.text_wrap, width))
+
+    def _set_column(self, width):
+        column = max(320, min(width, theme.CONTENT_MAX_WIDTH + 2 * XL) - 2 * XL)
+        if column == self._column:
+            return
+        self._column = column
+        for label, inset, full in self._wrapped:
+            label.configure(wraplength=self._wrap_width(inset, full))
+        choice_wrap = self._wrap_width(28, False)
+        for name in ("TCheckbutton", "TRadiobutton"):
+            self.ttk.Style(self.root).configure(name, wraplength=choice_wrap)
+
+    def _text(self, parent, text="", style="Body.TLabel", pady=(S, 0), inset=0, full=False):
+        label = self.ttk.Label(parent, text=text, style=style, justify="left")
+        label.pack(anchor="w", fill="x", pady=pady)
+        return self.wrap(label, inset, full)
+
+    def _card(self, parent, title=None, pady=(M, 0), style="Card.TFrame"):
+        box = self.ttk.Frame(parent, style=style, padding=M)
+        box.pack(fill="x", pady=pady)
+        if title:
+            self._text(box, title, "Subheading.TLabel", pady=(0, XS), inset=CARD_INSET)
+        return box
+
+    def _field(self, parent, label, variable, buttons, pady=(M, 0), inset=0):
+        """A caption, a read-only path box (monospace) and its buttons."""
+        if label:
+            self._text(parent, label, "Caption.TLabel", pady=(pady[0], XS), inset=inset)
+            pady = (0, pady[1])
+        row = self.ttk.Frame(parent)
+        row.pack(fill="x", pady=pady)
+        self.ttk.Entry(row, textvariable=variable, state="readonly", style="Mono.TEntry", width=12,
+                       font=self.theme.fonts["mono"]).pack(side="left", fill="x", expand=True)
+        made = []
+        for text, command in buttons:
+            button = self.ttk.Button(row, text=text, command=command)
+            button.pack(side="left", padx=(S, 0))
+            made.append(button)
+        return made
+
+    def _buttons(self, parent, pady=(M, 0)):
+        row = self.ttk.Frame(parent)
+        row.pack(fill="x", pady=pady)
+        return row
+
+    def _button(self, row, text, command=None, primary=False, **kw):
+        """A button at the end of a row; primary for the step's main action."""
+        first = not row.winfo_children()
+        button = self.ttk.Button(row, text=text, command=command, style="Primary.TButton" if primary else "TButton",
+                                 **kw)
+        button.pack(side="left", padx=(0 if first else S, 0))
+        return button
+
+    def _textbox(self, parent, height, pady=(S, 0)):
+        """A read-only, selectable monospace box for logs and reports."""
+        tk, p = self.tk, self.theme.palette
+        box = self.ttk.Frame(parent, style="Details.TFrame", padding=1)
+        box.pack(fill="both", expand=True, pady=pady)
+        text = tk.Text(box, height=height, wrap="word", state="disabled", takefocus=0, relief="flat", borderwidth=0,
+                       highlightthickness=0, padx=12, pady=S, font=self.theme.fonts["mono"], background=p.surface,
+                       foreground=p.text, insertbackground=p.text, selectbackground=p.selection,
+                       selectforeground=p.text, inactiveselectbackground=p.selection)
+        bar = self.ttk.Scrollbar(box, orient="vertical", command=text.yview, style="Thin.Vertical.TScrollbar")
+        text.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+        return text, box
+
+    @staticmethod
+    def _set_text(widget, text):
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("end", text)
+        widget.configure(state="disabled")
+
+    def draw_mark(self, canvas, kind, background, text=None, ring=False, colour=None):
+        """A round status mark: a filled circle with a glyph, or an outlined ring."""
+        p = self.theme.palette
+        fg = colour or (self.theme.colours(kind)[0] if kind not in (NEUTRAL, BUSY) else p.text_muted)
+        size = int(canvas.cget("width"))
+        canvas.configure(background=background)
+        canvas.delete("all")
+        if ring:
+            canvas.create_oval(1, 1, size - 2, size - 2, outline=fg, width=1.5)
+            glyph_colour = fg
+        else:
+            canvas.create_oval(1, 1, size - 2, size - 2, fill=fg, outline=fg)
+            glyph_colour = p.bg
+        canvas.create_text(size / 2, size / 2, text=text or theme.GLYPHS[kind], fill=glyph_colour,
+                           font=self.theme.fonts["eyebrow"])
+
+    # -- frame: sidebar, banner, footer --------------------------------------------
+
+    def _sidebar(self, parent):
+        ttk, tk, p, f = self.ttk, self.tk, self.theme.palette, self.theme.fonts
+        side = ttk.Frame(parent, style="Sidebar.TFrame", padding=(M, L, M, M), width=theme.SIDEBAR_WIDTH)
+        side.pack(side="left", fill="y")
+        side.pack_propagate(False)
+        brand = ttk.Frame(side, style="Sidebar.TFrame")
+        brand.pack(fill="x", padx=S)
+        ttk.Label(brand, text="Canon R5 mod", style="Sidebar.Title.TLabel").pack(side="left")
+        ttk.Label(brand, text="PROTOTYPE", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
+        ttk.Label(side, text="Setup assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
+        ttk.Label(side, text="STEPS", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
+        rows = ttk.Frame(side, style="Sidebar.TFrame")
+        rows.pack(fill="x")
+        self.side_rows = {}
+        for info in STEPS:
+            row = tk.Frame(rows, background=p.surface, highlightthickness=2, highlightbackground=p.surface,
+                           highlightcolor=p.accent, takefocus=1, cursor="hand2")
+            bar = tk.Frame(row, width=3, background=p.surface)
+            bar.grid(row=0, column=0, rowspan=2, sticky="ns")
+            mark = tk.Canvas(row, width=22, height=22, highlightthickness=0, borderwidth=0, background=p.surface)
+            mark.grid(row=0, column=1, rowspan=2, padx=(S, 10), pady=S)
+            title = tk.Label(row, text=info.title, anchor="w", justify="left", background=p.surface,
+                             foreground=p.text, font=f["body"], borderwidth=0, padx=0, pady=0)
+            title.grid(row=0, column=2, sticky="sw", pady=(S, 0))
+            status = tk.Label(row, text="", anchor="w", background=p.surface, foreground=p.text_muted,
+                              font=f["caption"], borderwidth=0, padx=0, pady=0)
+            status.grid(row=1, column=2, sticky="nw", pady=(0, S))
+            row.columnconfigure(2, weight=1)
+            parts = (row, bar, mark, title, status)
+            for widget in parts:
+                widget.bind("<Button-1>", lambda _e, s=info.id: self._sidebar_clicked(s))
+                widget.bind("<Enter>", lambda _e, s=info.id: self._side_hover(s, True))
+                widget.bind("<Leave>", lambda _e, s=info.id: self._side_hover(s, False))
+            for key in ("<Return>", "<KP_Enter>", "<space>"):
+                row.bind(key, lambda _e, s=info.id: self._sidebar_clicked(s))
+            row.bind("<Up>", lambda _e, s=info.id: self._side_focus(s, -1))
+            row.bind("<Down>", lambda _e, s=info.id: self._side_focus(s, 1))
+            self.side_rows[info.id] = {"parts": parts, "hover": False}
+        self._side_path = None
+        self.mode_label = ttk.Label(side, text="", style="Sidebar.Caption.TLabel", justify="left",
+                                    wraplength=theme.SIDEBAR_WIDTH - 2 * M - 2 * S)
+        self.mode_label.pack(anchor="w", padx=S, pady=(M, 0))
+
+    def _banner(self, parent):
+        holder = self.ttk.Frame(parent, padding=(XL, M, XL, 0))
+        holder.pack(fill="x")
+        self.banner = Callout(self, holder, pady=(0, 0), fill=None)
+        self.banner.set(WARNING, "", WARNING_TEXT)
+        links = self.ttk.Frame(self.banner.frame, style="Banner.TFrame")
+        links.grid(row=2, column=1, sticky="w", pady=(XS, 0))
+        for label, path in DOCS.items():
+            self.ttk.Button(links, text=label, style="Banner.Link.TButton", cursor="hand2",
+                            command=lambda p=path: webbrowser.open(p.as_uri())).pack(side="left", padx=(0, M))
+
+    def _footer(self, parent):
+        footer = self.ttk.Frame(parent)
+        footer.pack(side="bottom", fill="x")
+        self.ttk.Separator(footer, orient="horizontal").pack(fill="x")
+        nav = self.ttk.Frame(footer, padding=(XL, M))
+        nav.pack(fill="x")
+        self.back_button = self.ttk.Button(nav, text="←  Back", command=self._back)
+        self.back_button.pack(side="left")
+        self.next_button = self.ttk.Button(nav, text="Next  →", command=self._next, style="Primary.TButton")
+        self.next_button.pack(side="right")
+        self.nav_note = self.ttk.Label(nav, text="", style="Caption.TLabel", wraplength=380, justify="right")
+        self.nav_note.pack(side="right", padx=M)
+        return footer
+
+    # -- steps ---------------------------------------------------------------------
 
     def _panel(self, step_id: str, extra_details: str = ""):
         """A wizard step: its title, what and why, what you do, a body for its controls, the
         app's check of the step, and a Details expander with the technical facts."""
+        tk, ttk, p = self.tk, self.ttk, self.theme.palette
         info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
-        frame = self.ttk.Frame(self.content)
-        canvas = self.tk.Canvas(frame, highlightthickness=0)
-        bar = self.ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-        inner = self.ttk.Frame(canvas, padding=(4, 0, 12, 8))
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        frame = ttk.Frame(self.content)
+        canvas = tk.Canvas(frame, highlightthickness=0, borderwidth=0, background=p.bg, yscrollincrement=1)
+        bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview, style="Thin.Vertical.TScrollbar")
+        inner = ttk.Frame(canvas, padding=(XL, L, XL, XL))
         window = canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+
+        def sync(_e=None):
+            canvas.configure(scrollregion=(0, 0, inner.winfo_reqwidth(), inner.winfo_reqheight()))
+            if inner.winfo_reqheight() > canvas.winfo_height() > 1:
+                if not bar.winfo_manager():
+                    bar.pack(side="right", fill="y", before=canvas)
+            elif bar.winfo_manager():
+                bar.pack_forget()
+                canvas.yview_moveto(0)
+
+        def resize(e):
+            canvas.itemconfigure(window, width=min(e.width, theme.CONTENT_MAX_WIDTH + 2 * XL))
+            self._set_column(e.width)
+            sync()
+        inner.bind("<Configure>", sync)
+        canvas.bind("<Configure>", resize)
         canvas.configure(yscrollcommand=bar.set)
-        bar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        title = f"Step {info.number}. {info.title}" + ("  (one time)" if info.one_time else "")
-        self.ttk.Label(inner, text=title, font=("TkDefaultFont", 16, "bold")).pack(anchor="w")
-        self.ttk.Label(inner, text=guide.why, wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
-        self.ttk.Label(inner, text="What you do", font=("TkDefaultFont", 0, "bold")).pack(anchor="w", pady=(8, 0))
-        self.ttk.Label(inner, text=guide.todo, wraplength=640, justify="left").pack(anchor="w")
+
+        eyebrow = f"STEP {info.number}" + ("   ·   ONE TIME" if info.one_time else "")
+        ttk.Label(inner, text=eyebrow, style="Eyebrow.TLabel").pack(anchor="w")
+        self._text(inner, info.title, "Heading.TLabel", pady=(XS, 0), full=True)
+        self._text(inner, guide.why, pady=(M, 0))
+        self._text(inner, "What you do", "Subheading.TLabel", pady=(L, 0))
+        self._text(inner, guide.todo, pady=(XS, 0))
         if info.placeholder:
-            self.ttk.Label(inner, text=f"{COMING_SOON}: the guided part of this step is being prepared.",
-                           foreground="#7a5c00", wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
-        body = self.ttk.Frame(inner)
-        body.pack(fill="x", pady=(8, 0))
-        check = self.ttk.Label(inner, text="", wraplength=640, justify="left", font=("TkDefaultFont", 0, "bold"))
-        check.pack(anchor="w", pady=(10, 0))
-        details = self.ttk.Label(inner, text="\n\n".join(t for t in (guide.details, extra_details) if t),
-                                 wraplength=640, justify="left", foreground="#555")
-        toggle = self.ttk.Button(inner, text="Details >")
+            Callout(self, inner).set(INFO, COMING_SOON, "The guided part of this step is being prepared.")
+        body = ttk.Frame(inner)
+        body.pack(fill="x", pady=(S, 0))
+        check = Callout(self, inner, pady=(L, 0))
+        details_box = ttk.Frame(inner, style="Details.TFrame", padding=M)
+        self.wrap(ttk.Label(details_box, text="\n\n".join(t for t in (guide.details, extra_details) if t),
+                            style="Details.TLabel", justify="left"), CARD_INSET).pack(anchor="w")
+        toggle = ttk.Button(inner, text="▸  Details", style="Toggle.TButton", cursor="hand2")
 
         def flip():
-            if details.winfo_ismapped():
-                details.pack_forget()
-                toggle.configure(text="Details >")
+            if details_box.winfo_manager():
+                details_box.pack_forget()
+                toggle.configure(text="▸  Details")
             else:
-                details.pack(anchor="w", pady=(4, 0), after=toggle)
-                toggle.configure(text="Details v")
+                details_box.pack(fill="x", pady=(S, 0), after=toggle)
+                toggle.configure(text="▾  Details")
         toggle.configure(command=flip)
-        toggle.pack(anchor="w", pady=(8, 0))
-        self.panels[step_id] = (frame, check)
+        toggle.pack(anchor="w", pady=(M, 0))
+        self.panels[step_id] = (frame, check, canvas)
+        self._inners[step_id] = inner
         return body
 
     def _camera_panel(self):
@@ -194,33 +492,33 @@ class App:
         self.camera_var = self.tk.BooleanVar(value=False)
         self.ttk.Checkbutton(tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
-            text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w")
-        modes = self.ttk.LabelFrame(tab, text="Choose your path", padding=6)
-        modes.pack(fill="x", pady=(10, 0))
-        self.ttk.Button(modes, text="Set up from the start", command=self._full_path).pack(side="left")
-        self.update_button = self.ttk.Button(modes, text="Update my card (Features > Build > Copy)",
-                                             command=self._update_path)
-        self.update_button.pack(side="left", padx=6)
-        self.update_note = self.ttk.Label(tab, text="", foreground="#555", wraplength=640, justify="left")
-        self.update_note.pack(anchor="w", pady=(4, 0))
+            text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
+        modes = self._card(tab, "Choose your path", pady=(L, 0))
+        row = self._buttons(modes, pady=(S, 0))
+        self._button(row, "Set up from the start", self._full_path)
+        self.update_button = self._button(row, "Update my card (Features > Build > Copy)", self._update_path)
+        self.update_note = self._text(modes, "", "Caption.TLabel", pady=(S, 0), inset=CARD_INSET)
 
     def _bootdisk_panel(self):
         tab = self._panel(BOOTDISK)
-        guide = self.ttk.LabelFrame(tab, text=f"Guided BootDisk ({COMING_SOON.lower()})", padding=6)
-        guide.pack(fill="x")
-        self.ttk.Button(guide, text="Prepare the BootDisk card...", state="disabled").pack(side="left")
-        self.ttk.Button(guide, text="Disable BootDisk...", state="disabled").pack(side="left", padx=6)
-        self.ttk.Label(guide, text="Waiting on research into the exact R5 steps; never automatic.",
-                       foreground="#555").pack(side="left", padx=6)
+        guide = self._card(tab, f"Guided BootDisk ({COMING_SOON.lower()})")
+        row = self._buttons(guide, pady=(S, 0))
+        self._button(row, "Prepare the BootDisk card...", state="disabled")
+        self._button(row, "Disable BootDisk...", state="disabled")
+        self._text(guide, "Waiting on research into the exact R5 steps; never automatic.", "Caption.TLabel",
+                   inset=CARD_INSET)
+        Callout(self, tab, pady=(L, 0)).set(
+            WARNING, "BootDisk is permanent",
+            "It stays enabled inside the camera, formatting cards doesn't clear it, and there is no official way back.")
         self.bootdisk_ack = self.tk.BooleanVar(value=False)
         self.ttk.Checkbutton(tab, variable=self.bootdisk_ack, command=self.refresh, text=(
             "I understand that BootDisk is a permanent setting inside the camera, that there is no official way "
-            "back, and that I use this at my own risk.")).pack(anchor="w", pady=(10, 0))
+            "back, and that I use this at my own risk.")).pack(anchor="w", pady=(M, 0))
         self.bootdisk_var = self.tk.BooleanVar(value=False)
         self.bootdisk_box = self.ttk.Checkbutton(tab, variable=self.bootdisk_var, command=self._bootdisk_changed,
                                                  text="BootDisk is already enabled on my camera (it was confirmed "
                                                       "with a readback when it was enabled).")
-        self.bootdisk_box.pack(anchor="w", pady=(4, 0))
+        self.bootdisk_box.pack(anchor="w", pady=(S, 0))
 
     def _bootdisk_changed(self):
         self.wizard.set_bootdisk("confirmed" if self.bootdisk_var.get() else "unknown")
@@ -233,11 +531,11 @@ class App:
             var = self.tk.BooleanVar(value=False)
             box = self.ttk.Checkbutton(tab, variable=var, text=text, command=lambda i=i, v=var: (
                 self.wizard.set_test_item(i, v.get()), self.refresh()))
-            box.pack(anchor="w", pady=1)
+            box.pack(anchor="w", pady=(S, 0))
             self.test_vars.append(var)
             self.test_boxes.append(box)
-        self.ttk.Button(tab, text="Open the test report form",
-                        command=lambda: webbrowser.open(self.wizard.report_url())).pack(anchor="w", pady=(8, 0))
+        row = self._buttons(tab, pady=(L, 0))
+        self._button(row, "Open the test report form  ↗", lambda: webbrowser.open(self.wizard.report_url()))
 
     def _full_path(self):
         self.wizard.start_full()
@@ -249,12 +547,45 @@ class App:
             self.messagebox.showinfo("Update my card", "\n".join(reasons))
         self.refresh()
 
-    def _sidebar_clicked(self):
-        sel = self.sidebar.curselection()
-        path = self.wizard.path()
-        if sel and sel[0] < len(path):
-            self.wizard.goto(path[sel[0]])
+    def _sidebar_clicked(self, step_id):
+        if step_id in self.wizard.path():
+            self.wizard.goto(step_id)
         self.refresh()
+        return "break"
+
+    def _side_focus(self, step_id, delta):
+        path = self.wizard.path()
+        if step_id in path:
+            target = path[max(0, min(len(path) - 1, path.index(step_id) + delta))]
+            self.side_rows[target]["parts"][0].focus_set()
+        return "break"
+
+    def _side_hover(self, step_id, inside):
+        self.side_rows[step_id]["hover"] = inside
+        self._paint_row(step_id)
+
+    def _paint_row(self, step_id):
+        p, f, w = self.theme.palette, self.theme.fonts, self.wizard
+        row, bar, mark, title, status = self.side_rows[step_id]["parts"]
+        st, info = w.status(step_id).status, STEP_BY_ID[step_id]
+        current = step_id == w.current
+        bg = p.accent_subtle if current else (p.hover if self.side_rows[step_id]["hover"] else p.surface)
+        for widget in (row, mark, title, status):
+            widget.configure(background=bg)
+        row.configure(highlightbackground=bg)
+        bar.configure(background=p.accent if current else bg)
+        title.configure(font=f["subheading"] if current else f["body"],
+                        foreground=p.text_disabled if st == BLOCKED else p.text)
+        status.configure(text=st.capitalize())
+        if st == DONE:
+            self.draw_mark(mark, SUCCESS, bg)
+        elif st == SKIPPED:
+            self.draw_mark(mark, NEUTRAL, bg, text="–")
+        elif current:
+            self.draw_mark(mark, INFO, bg, text=str(info.number))
+        else:
+            self.draw_mark(mark, NEUTRAL, bg, text=str(info.number), ring=True,
+                           colour=p.text_disabled if st == BLOCKED else p.text_muted)
 
     def _next(self):
         self.wizard.next()
@@ -267,31 +598,28 @@ class App:
     def _refresh_wizard(self):
         w = self.wizard
         path, current = w.path(), w.current
-        marks = {DONE: "✓", NEEDS_ACTION: "•", SKIPPED: "–", BLOCKED: "✗"}
-        self.sidebar.delete(0, "end")
+        if path != self._side_path:
+            for info in STEPS:
+                self.side_rows[info.id]["parts"][0].pack_forget()
+            for step_id in path:
+                self.side_rows[step_id]["parts"][0].pack(fill="x")
+            self._side_path = list(path)
         for step_id in path:
-            info, st = STEP_BY_ID[step_id], w.status(step_id)
-            self.sidebar.insert("end", f" {marks[st.status]}  {info.number}. {info.title}  ({st.status})")
-            colour = {DONE: "#1b7f3b", BLOCKED: "#888888", SKIPPED: "#555555"}.get(st.status, "#7a5c00")
-            self.sidebar.itemconfigure("end", foreground=colour)
-        self.sidebar.selection_clear(0, "end")
-        self.sidebar.selection_set(path.index(current))
+            self._paint_row(step_id)
         self.mode_label.configure(text="Path: Update my card (one-time steps already done)." if w.saved.mode == "update"
                                   else "Path: full setup. Done one-time steps stay done when you come back.")
-        for step_id, (frame, check) in self.panels.items():
+        for step_id, (frame, check, _canvas) in self.panels.items():
             if step_id == current:
                 st = w.status(step_id)
-                prefix = {DONE: "Check passed: ", SKIPPED: "Skipped: ", BLOCKED: "Blocked: "}.get(st.status, "To do: ")
-                check.configure(text=prefix + st.message.removeprefix("Skipped: "),
-                                foreground={DONE: STATUS_COLOURS[OK], BLOCKED: STATUS_COLOURS[FAILED]}.get(
-                                    st.status, STATUS_COLOURS[CHECKING]))
-                frame.pack(fill="both", expand=True)
-            else:
+                check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: "))
+                if not frame.winfo_manager():
+                    frame.pack(fill="both", expand=True)
+            elif frame.winfo_manager():
                 frame.pack_forget()
         self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled")
         blockers = w.next_blockers()
         last = current == path[-1]
-        self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next >")
+        self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next  →")
         self.nav_note.configure(text="" if not blockers or last else blockers[0])
         self.camera_var.set(w.saved.camera_confirmed)
         missing = w.one_time_done()
@@ -306,14 +634,51 @@ class App:
             var.set(i in w.saved.test_checked)
             box.configure(state="disabled" if test_blocked else "normal")
 
+    def _bind_scrolling(self):
+        """Wheel and trackpad scrolling for the current step (not for logs or drop-downs)."""
+        def target(event):
+            widget = event.widget
+            if not isinstance(widget, self.tk.Misc) or isinstance(widget, (self.tk.Text, self.ttk.Combobox)):
+                return None
+            if not str(widget).startswith(str(self.content)):
+                return None
+            canvas = self.panels[self.wizard.current][2]
+            first, last = canvas.yview()
+            return canvas if (first, last) != (0.0, 1.0) else None
 
-    def _status(self, parent):
-        label = self.ttk.Label(parent, text="", wraplength=700, justify="left")
-        label.pack(anchor="w", pady=(4, 0))
-        return label
+        def scroll(event, pixels):
+            canvas = target(event)
+            if canvas is not None and pixels:
+                canvas.yview_scroll(int(pixels), "units")
 
-    def _show(self, label, check):
-        label.configure(text=check.message or "Not checked yet.", foreground=STATUS_COLOURS.get(check.status, "#444"))
+        def wheel(event):
+            delta = event.delta
+            scroll(event, -delta * 0.4 if abs(delta) >= 120 else -delta * 8)
+
+        def touchpad(event):
+            dy = int(event.delta) & 0xFFFF
+            scroll(event, -(dy - 0x10000 if dy >= 0x8000 else dy))
+        def reveal(event):
+            """Keyboard focus scrolls the focused control into view."""
+            widget, inner = event.widget, self._inners.get(self.wizard.current)
+            if inner is None or not isinstance(widget, self.tk.Misc) or not str(widget).startswith(str(inner) + "."):
+                return
+            canvas = self.panels[self.wizard.current][2]
+            total = max(1, inner.winfo_height())
+            top, height = canvas.canvasy(0), canvas.winfo_height()
+            y = widget.winfo_rooty() - inner.winfo_rooty()
+            if y - M < top:
+                canvas.yview_moveto(max(0, y - M) / total)
+            elif y + widget.winfo_height() + M > top + height:
+                canvas.yview_moveto((y + widget.winfo_height() + M - height) / total)
+        self.root.bind_all("<FocusIn>", reveal, add="+")
+        self.root.bind_all("<MouseWheel>", wheel, add="+")
+        self.root.bind_all("<Button-4>", lambda e: scroll(e, -48), add="+")
+        self.root.bind_all("<Button-5>", lambda e: scroll(e, 48), add="+")
+        try:
+            self.root.bind_all("<TouchpadScroll>", touchpad, add="+")  # Tk 9 trackpads
+        except self.tk.TclError:
+            pass
 
     def _background(self, work, done):
         """Run work() off the UI thread; done(result) runs back on it."""
@@ -349,168 +714,142 @@ class App:
 
     def _rom_tab(self):
         tab = self._panel(ROM)
-        self.ttk.Label(tab, wraplength=700, justify="left", text=(
-            "Pick your own 64 MiB ROM dump (often gang100.bin). It is read on this computer only and never "
-            "copied anywhere. The builder's own strict firmware check runs on it; there is no way to force it."
-        )).pack(anchor="w")
-        row = self.ttk.Frame(tab)
-        row.pack(fill="x", pady=8)
+        self._text(tab, "Pick your own 64 MiB ROM dump (often gang100.bin). It is read on this computer only and never "
+                        "copied anywhere. The builder's own strict firmware check runs on it; there is no way to force it.")
         self.rom_var = self.tk.StringVar()
-        self.ttk.Entry(row, textvariable=self.rom_var, state="readonly").pack(side="left", fill="x", expand=True)
-        self.ttk.Button(row, text="Choose ROM...", command=self._pick_rom).pack(side="left", padx=6)
-        self.rom_status = self._status(tab)
-        guide = self.ttk.LabelFrame(tab, text=f"Make a ROM dump ({COMING_SOON.lower()})", padding=6)
-        guide.pack(fill="x", pady=(10, 0))
-        self.ttk.Button(guide, text="Prepare the ROM-dump card...", state="disabled").pack(side="left")
-        self.ttk.Label(guide, text="The camera saves its ROM to a prepared card; reading only. Waiting on research "
-                                   "into the exact R5 steps.", foreground="#555", wraplength=460,
-                       justify="left").pack(side="left", padx=6)
+        self._field(tab, "ROM dump", self.rom_var, [("Choose ROM...", self._pick_rom)])
+        self.rom_status = StatusLine(self, tab)
+        guide = self._card(tab, f"Make a ROM dump ({COMING_SOON.lower()})", pady=(L, 0))
+        row = self._buttons(guide, pady=(S, 0))
+        self._button(row, "Prepare the ROM-dump card...", state="disabled")
+        self._text(guide, "The camera saves its ROM to a prepared card; reading only. Waiting on research "
+                          "into the exact R5 steps.", "Caption.TLabel", inset=CARD_INSET)
 
     def _features_tab(self):
         tab = self._panel(FEATURES)
-        self.ttk.Label(tab, text=self.state.manifest.profile_exclusivity, wraplength=700).pack(anchor="w")
+        self._text(tab, self.state.manifest.profile_exclusivity, "Muted.TLabel")
         self.profile_var = self.tk.StringVar(value=self.state.profile)
-        self.profile_status = {}
+        self.profile_status, self.profile_cards = {}, {}
         for view in self.state.profile_views():
-            box = self.ttk.Frame(tab)
-            box.pack(fill="x", pady=(8, 0))
+            box = self._card(tab, pady=(M if not self.profile_cards else S, 0))
             self.ttk.Radiobutton(box, text=f"{view.label} ({view.id})", value=view.id, variable=self.profile_var,
-                                 command=self._profile_changed).pack(anchor="w")
-            self.ttk.Label(box, text=view.description, wraplength=680, justify="left").pack(anchor="w", padx=22)
-            self.profile_status[view.id] = self.ttk.Label(box, text=f"Status: {view.status_label}. {view.status_text}",
-                                                          wraplength=680, justify="left", foreground="#555")
-            self.profile_status[view.id].pack(anchor="w", padx=22)
+                                 style="Strong.TRadiobutton", command=self._profile_changed).pack(anchor="w")
+            indent = self.ttk.Frame(box, padding=(26, 0, 0, 0))
+            indent.pack(fill="x")
+            self._text(indent, view.description, pady=(XS, 0), inset=CARD_INSET + 26)
+            self.profile_status[view.id] = self._text(indent, f"Status: {view.status_label}. {view.status_text}",
+                                                      "Caption.TLabel", inset=CARD_INSET + 26)
+            self.profile_cards[view.id] = box
 
         self.option_widgets = {}
         for view in self.state.option_views():
-            box = self.ttk.LabelFrame(tab, text=view.label, padding=6)
-            box.pack(fill="x", pady=(10, 0))
-            self.ttk.Label(box, text=view.description, wraplength=680).pack(anchor="w")
+            box = self._card(tab, view.label, pady=(L, 0))
+            self._text(box, view.description, pady=(0, 0), inset=CARD_INSET)
             var = self.tk.StringVar()
-            combo = self.ttk.Combobox(box, textvariable=var, state="readonly", width=48,
+            combo = self.ttk.Combobox(box, textvariable=var, state="readonly", width=40,
                                       values=[c.label for c in view.choices])
-            combo.pack(anchor="w", pady=4)
+            combo.pack(anchor="w", pady=(S, 0))
             combo.bind("<<ComboboxSelected>>", lambda _e, oid=view.id: self._option_changed(oid))
-            reason = self.ttk.Label(box, text="", wraplength=680, foreground="#555", justify="left")
-            reason.pack(anchor="w")
+            reason = self._text(box, "", "Caption.TLabel", inset=CARD_INSET)
             self.option_widgets[view.id] = (combo, var, reason)
 
         self.input_widgets = {}
-        for view in self.state.input_views():
-            box = self.ttk.LabelFrame(tab, text=view.label, padding=6)
-            box.pack(fill="x", pady=(10, 0))
-            row = self.ttk.Frame(box)
-            row.pack(fill="x")
+        for i, view in enumerate(self.state.input_views()):
+            box = self._card(tab, view.label, pady=(L if i == 0 else S, 0))
             var = self.tk.StringVar()
-            self.ttk.Entry(row, textvariable=var, state="readonly").pack(side="left", fill="x", expand=True)
-            button = self.ttk.Button(row, text="Choose WAV...", command=lambda i=view.id: self._pick_wav(i))
-            button.pack(side="left", padx=6)
-            status = self._status(box)
+            (button,) = self._field(box, None, var, [("Choose WAV...", lambda i=view.id: self._pick_wav(i))],
+                                    pady=(S, 0))
+            status = StatusLine(self, box)
             self.input_widgets[view.id] = (var, button, status)
-        self.ttk.Label(tab, wraplength=700, foreground="#555", justify="left", text=(
-            "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
-            "They are embedded unchanged; nothing is trimmed or normalised.")).pack(anchor="w", pady=(6, 0))
-        self.ttk.Button(tab, text="Use these features", command=lambda: (
-            self.wizard.confirm_features(), self.refresh())).pack(anchor="w", pady=(8, 0))
+        self._text(tab, "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
+                        "They are embedded unchanged; nothing is trimmed or normalised.", "Caption.TLabel")
+        row = self._buttons(tab, pady=(L, 0))
+        self._button(row, "Use these features", lambda: (self.wizard.confirm_features(), self.refresh()), primary=True)
 
     def _toolchain_tab(self):
         tab = self._panel(TOOLCHAIN)
-        self.ttk.Label(tab, text=checks.TOOLCHAIN_INSTRUCTIONS, wraplength=700, justify="left").pack(anchor="w")
-        self.ttk.Button(tab, text="Open the xPack releases page",
-                        command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=6)
-        row = self.ttk.Frame(tab)
-        row.pack(fill="x", pady=4)
+        self._text(tab, checks.TOOLCHAIN_INSTRUCTIONS)
+        self.ttk.Button(tab, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
+                        command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()
-        self.ttk.Entry(row, textvariable=self.tc_var, state="readonly").pack(side="left", fill="x", expand=True)
-        self.ttk.Button(row, text="Choose bin folder...", command=self._pick_toolchain).pack(side="left", padx=6)
-        self.ttk.Button(row, text="Detect again", command=lambda: self._detect_toolchain(explicit=True)).pack(side="left")
-        self.tc_status = self._status(tab)
+        self._field(tab, "Toolchain bin folder", self.tc_var, [
+            ("Choose bin folder...", self._pick_toolchain),
+            ("Detect again", lambda: self._detect_toolchain(explicit=True))])
+        self.tc_status = StatusLine(self, tab)
 
-    def _build_tab(self, scrolledtext):
+    def _build_tab(self):
         tab = self._panel(BUILD)
-        row = self.ttk.Frame(tab)
-        row.pack(fill="x")
-        self.ttk.Label(row, text="Output folder (must be new):").pack(side="left")
         self.out_var = self.tk.StringVar()
-        self.ttk.Entry(row, textvariable=self.out_var, state="readonly").pack(side="left", fill="x", expand=True, padx=6)
-        self.ttk.Button(row, text="Change...", command=self._pick_output).pack(side="left")
-        self.blockers = self.ttk.Label(tab, text="", wraplength=700, justify="left", foreground="#7a5c00")
-        self.blockers.pack(anchor="w", pady=6)
-        self.build_button = self.ttk.Button(tab, text="Build autoexec.bin", command=self._build)
-        self.build_button.pack(anchor="w")
-        self.log = scrolledtext.ScrolledText(tab, height=10, state="disabled", font="TkFixedFont")
-        self.log.pack(fill="both", expand=True, pady=6)
-        self.result = self.ttk.Label(tab, text="", wraplength=700, justify="left")
-        self.result.pack(anchor="w")
-        self.gauge = self.ttk.Progressbar(tab, maximum=100, length=400)
-        self.gauge.pack(anchor="w", pady=4)
-        buttons = self.ttk.Frame(tab)
-        buttons.pack(anchor="w")
-        self.open_out = self.ttk.Button(buttons, text="Open output folder", state="disabled",
-                                        command=lambda: open_path(self.summary.output_dir))
-        self.open_out.pack(side="left")
-        self.open_contents = self.ttk.Button(buttons, text="Open 'what's in this build'", state="disabled",
-                                             command=lambda: open_path(self.summary.output_dir / runner.CONTENTS_NAME))
-        self.open_contents.pack(side="left", padx=6)
+        self._field(tab, "Output folder (must be new)", self.out_var, [("Change...", self._pick_output)])
+        self.blockers = Callout(self, tab)
+        row = self._buttons(tab, pady=(L, 0))
+        self.build_button = self._button(row, "Build autoexec.bin", self._build, primary=True)
+        self.build_busy = Busy(self, tab)
+        self.result = Callout(self, tab)
+        self.memory_slot = Slot(self.ttk, tab, pady=(M, 0))
+        self.memory = self.ttk.Frame(self.memory_slot.frame)
+        self.ttk.Label(self.memory, text="Canon memory left after this build", style="Caption.TLabel").pack(anchor="w")
+        self.gauge = self.ttk.Progressbar(self.memory, maximum=100, style="Accent.Horizontal.TProgressbar")
+        self.gauge.pack(fill="x", pady=(XS, 0))
+        buttons = self._buttons(tab)
+        self.open_out = self._button(buttons, "Open output folder", lambda: open_path(self.summary.output_dir),
+                                     state="disabled")
+        self.open_contents = self._button(buttons, "Open 'what's in this build'",
+                                          lambda: open_path(self.summary.output_dir / runner.CONTENTS_NAME),
+                                          state="disabled")
+        self._text(tab, "Build log", "Caption.TLabel", pady=(L, 0))
+        self.log, _ = self._textbox(tab, height=10, pady=(XS, 0))
 
     def _card_tab(self):
         tab = self._panel(COPY)
-        self.ttk.Label(tab, wraplength=700, justify="left", text=(
-            "Only for a card that is already bootable (step 7, or prepared separately). Choose the card's top folder "
-            "(for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Any existing autoexec.bin is "
-            "backed up to the build folder on this computer first; nothing on the card is deleted and the "
-            "card is never formatted.")).pack(anchor="w")
-        row = self.ttk.Frame(tab)
-        row.pack(fill="x", pady=8)
+        self._text(tab, "Only for a card that is already bootable (step 7, or prepared separately). Choose the card's "
+                        "top folder (for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Any existing "
+                        "autoexec.bin is backed up to the build folder on this computer first; nothing on the card is "
+                        "deleted and the card is never formatted.")
         self.card_var = self.tk.StringVar()
-        self.ttk.Entry(row, textvariable=self.card_var, state="readonly").pack(side="left", fill="x", expand=True)
-        self.ttk.Button(row, text="Choose card folder...", command=self._pick_card).pack(side="left", padx=6)
-        self.card_report = self.ttk.Label(tab, text="", wraplength=700, justify="left")
-        self.card_report.pack(anchor="w")
+        self._field(tab, "Card folder", self.card_var, [("Choose card folder...", self._pick_card)])
+        self.card_report = Callout(self, tab)
         self.card_confirm = self.tk.BooleanVar(value=False)
         self.card_confirm_box = self.ttk.Checkbutton(
             tab, variable=self.card_confirm, command=self.refresh,
             text="I have checked the warnings above and this really is my prepared camera card.")
-        self.card_confirm_box.pack(anchor="w", pady=4)
-        self.copy_button = self.ttk.Button(tab, text="Copy autoexec.bin to card", command=self._copy)
-        self.copy_button.pack(anchor="w")
-        self.copy_result = self.ttk.Label(tab, text="", wraplength=700, justify="left")
-        self.copy_result.pack(anchor="w", pady=6)
+        self.card_confirm_box.pack(anchor="w", pady=(M, 0))
+        row = self._buttons(tab)
+        self.copy_button = self._button(row, "Copy autoexec.bin to card", self._copy, primary=True)
+        self.copy_busy = Busy(self, tab)
+        self.copy_result = Callout(self, tab)
 
-    def _prep_tab(self, scrolledtext):
+    def _prep_tab(self):
         tab = self._panel(BOOTCARD, extra_details=EXPLAIN)
-        self.ttk.Label(tab, text=FORMAT_WARNING, wraplength=740, justify="left", foreground="#b3261e",
-                       font=("TkDefaultFont", 0, "bold")).pack(anchor="w")
-        self.ttk.Label(tab, text=card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."),
-                       foreground="#b3261e", wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
+        Callout(self, tab, pady=(S, 0)).set(
+            DANGER, FORMAT_WARNING, card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."))
+        self._text(tab, "SD card", "Caption.TLabel", pady=(L, XS))
         row = self.ttk.Frame(tab)
-        row.pack(fill="x", pady=(6, 0))
+        row.pack(fill="x")
         self.prep_find = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
         self.prep_find.pack(side="left")
         self.prep_choice = self.tk.StringVar()
-        self.prep_combo = self.ttk.Combobox(row, textvariable=self.prep_choice, state="disabled", width=70)
-        self.prep_combo.pack(side="left", padx=6, fill="x", expand=True)
+        self.prep_combo = self.ttk.Combobox(row, textvariable=self.prep_choice, state="disabled", width=40)
+        self.prep_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
         self.prep_combo.bind("<<ComboboxSelected>>", lambda _e: self._prep_selected())
-        self.prep_details = self.ttk.Label(tab, text="", wraplength=740, justify="left")
-        self.prep_details.pack(anchor="w", pady=(4, 0))
-        buttons = self.ttk.Frame(tab)
-        buttons.pack(anchor="w", pady=4)
-        self.prep_button = self.ttk.Button(buttons, text="Prepare card", command=lambda: self._prep_run("mark"))
-        self.prep_button.pack(side="left")
-        self.prep_undo = self.ttk.Button(buttons, text="Undo (restore the latest backup)",
-                                         command=lambda: self._prep_run("undo"))
-        self.prep_undo.pack(side="left", padx=6)
-        self.prep_restore = self.ttk.Button(buttons, text="Restore from a chosen backup...",
-                                            command=lambda: self._prep_run("restore"))
-        self.prep_restore.pack(side="left")
-        self.prep_blockers = self.ttk.Label(tab, text="", wraplength=740, justify="left", foreground="#7a5c00")
-        self.prep_blockers.pack(anchor="w", pady=2)
-        self.prep_title = self.ttk.Label(tab, text="", wraplength=740, justify="left")
-        self.prep_title.pack(anchor="w")
-        self.prep_log = scrolledtext.ScrolledText(tab, height=9, state="disabled", font="TkFixedFont")
-        self.prep_log.pack(fill="both", expand=True, pady=4)
-        self.ttk.Button(tab, text="My card is already prepared (skip this step)",
-                        command=lambda: (self.wizard.set_card_prepared("elsewhere"), self.refresh())).pack(anchor="w")
+        self.prep_details = self._text(tab, "", "Muted.TLabel", full=True)
+        buttons = self._buttons(tab)
+        self.prep_button = self._button(buttons, "Prepare card", lambda: self._prep_run("mark"), primary=True)
+        self.prep_busy = Busy(self, tab)
+        self.prep_blockers = self._text(tab, "", "Caption.TLabel", full=True)
+        self.prep_title = Callout(self, tab)
+        self.prep_log_slot = Slot(self.ttk, tab, pady=(S, 0))
+        self.prep_log, self.prep_log_box = self._textbox(self.prep_log_slot.frame, height=8, pady=(0, 0))
+        self.prep_log_box.pack_forget()
+        undo = self._card(tab, "Undo a preparation", pady=(L, 0))
+        self._text(undo, "Puts back the boot sectors from a backup, with the same read, backup and confirmation "
+                         "as Prepare.", "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
+        buttons = self._buttons(undo, pady=(S, 0))
+        self.prep_undo = self._button(buttons, "Undo (restore the latest backup)", lambda: self._prep_run("undo"))
+        self.prep_restore = self._button(buttons, "Restore from a chosen backup...", lambda: self._prep_run("restore"))
+        row = self._buttons(tab, pady=(L, 0))
+        self._button(row, "My card is already prepared (skip this step)",
+                     lambda: (self.wizard.set_card_prepared("elsewhere"), self.refresh()))
 
     def _refresh_prep(self):
         p = self.prep
@@ -525,23 +864,27 @@ class App:
             lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
                                                      for c in p.refused))
         self.prep_details.configure(text="\n".join(lines))
+        self.prep_details.pack_configure(pady=(S, 0) if lines else (0, 0))
         blocked = p.blockers()
         self.prep_find.configure(state="disabled" if p.busy or p.session is not None or p.copying else "normal")
         for button in (self.prep_button, self.prep_undo, self.prep_restore):
             button.configure(state="disabled" if blocked else "normal")
-        self.prep_blockers.configure(text="" if not blocked else "Next:\n- " + "\n- ".join(blocked))
+        self.prep_busy.set(p.busy)
+        self.prep_blockers.configure(text="" if not blocked else "Next:\n" + bullets(blocked))
         if p.error:
-            title, body, colour = p.error, [], STATUS_COLOURS[FAILED]
+            self.prep_title.set(DANGER, p.error)
+            body = []
         elif p.report:
-            title, body = p.report.title, p.report.lines
-            colour = STATUS_COLOURS[OK] if p.report.ok else STATUS_COLOURS[FAILED]
+            self.prep_title.set(SUCCESS if p.report.ok else DANGER, p.report.title)
+            body = p.report.lines
         else:
-            title, body, colour = "", [], "#444"
-        self.prep_title.configure(text=title, foreground=colour)
-        self.prep_log.configure(state="normal")
-        self.prep_log.delete("1.0", "end")
-        self.prep_log.insert("end", "\n".join(body))
-        self.prep_log.configure(state="disabled")
+            self.prep_title.clear()
+            body = []
+        self._set_text(self.prep_log, "\n".join(body))
+        if body:
+            self.prep_log_slot.show(self.prep_log_box)
+        else:
+            self.prep_log_slot.hide(self.prep_log_box)
 
     def _prep_find(self):
         self.prep.busy = "Looking for SD cards..."
@@ -659,8 +1002,10 @@ class App:
         s = self.state
         self._refresh_wizard()
         self.rom_var.set(str(s.rom_path or ""))
-        self._show(self.rom_status, s.rom_check())
+        self.rom_status.show_check(s.rom_check())
         self.profile_var.set(s.profile)
+        for profile_id, box in self.profile_cards.items():
+            box.configure(style="Selected.Card.TFrame" if profile_id == s.profile else "Card.TFrame")
         for view in s.option_views():
             combo, var, reason = self.option_widgets[view.id]
             combo.configure(state="readonly" if view.enabled else "disabled")
@@ -677,20 +1022,26 @@ class App:
             var.set(str(view.path or ""))
             button.configure(state="normal" if view.enabled else "disabled")
             if view.enabled:
-                self._show(status, view.check)
+                status.show_check(view.check)
             else:
-                status.configure(text=view.reason, foreground="#555")
+                status.set(NEUTRAL, view.reason)
         self.tc_var.set(str(s.toolchain_path or ""))
-        self._show(self.tc_status, s.toolchain_check())
+        if not self._detecting:
+            self.tc_status.show_check(s.toolchain_check())
         self.out_var.set(str(s.output_dir or ""))
         blockers = s.blockers()
-        self.blockers.configure(text="Ready to build." if not blockers else "Before you can build:\n- " + "\n- ".join(blockers))
+        if blockers:
+            self.blockers.set(NEUTRAL, "Before you can build:", bullets(blockers))
+        else:
+            self.blockers.set(SUCCESS, "Ready to build.")
         self.build_button.configure(state="disabled" if blockers else "normal")
+        self.build_busy.set("Building... this usually takes under a minute." if s.building else None)
         ready_to_copy = self.summary is not None and self.card_info is not None and not self.card_info.errors \
             and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying \
             and not self.prep.blocks_copy
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
+        self.copy_busy.set("Copying..." if self.copying else None)
         self._refresh_prep()
         for what, input_id in s.needs_check():
             self._start_check(what, input_id)
@@ -760,17 +1111,19 @@ class App:
             self.refresh()
 
     def _detect_toolchain(self, explicit=False):
-        self.tc_status.configure(text="Looking for an installed GNU Arm 15.2.1 toolchain...", foreground="#7a5c00")
+        self._detecting = True
+        self.tc_status.set(BUSY, "Looking for an installed GNU Arm 15.2.1 toolchain...")
 
         def done(result):
+            self._detecting = False
             if isinstance(result, Exception):
-                self.tc_status.configure(text=f"Detection failed: {result}", foreground=STATUS_COLOURS[FAILED])
+                self.tc_status.set(DANGER, f"Detection failed: {result}")
                 return
             path, check, notes = result
             if path is None:
                 note = ("\n" + "\n".join(notes)) if notes else ""
-                self.tc_status.configure(text="No GNU Arm 15.2.1 toolchain found. Install it as described above, "
-                                         "then choose its bin folder." + note, foreground=STATUS_COLOURS[FAILED])
+                self.tc_status.set(DANGER, "No GNU Arm 15.2.1 toolchain found. Install it as described above, "
+                                           "then choose its bin folder." + note)
                 return
             self.state.offer_detected_toolchain(path, check.message, check.facts, explicit=explicit)
             self.refresh()
@@ -795,11 +1148,10 @@ class App:
         out = s.output_dir
         s.building = True
         self.summary = None
-        self.result.configure(text="Building... this usually takes under a minute.", foreground="#444")
+        self.result.clear()
+        self.memory_slot.hide(self.memory)
         self.gauge.configure(value=0)
-        self.log.configure(state="normal")
-        self.log.delete("1.0", "end")
-        self.log.configure(state="disabled")
+        self._set_text(self.log, "")
         self._append_log("python3 tools/build.py " + " ".join(argv))
         self.refresh()
 
@@ -809,10 +1161,9 @@ class App:
         def done(outcome):
             s.building = False
             if isinstance(outcome, Exception):
-                self.result.configure(text=f"Build could not run: {outcome}", foreground=STATUS_COLOURS[FAILED])
+                self.result.set(DANGER, "Build could not run", str(outcome))
             elif not outcome.ok:
-                self.result.configure(text="Build refused or failed: " + outcome.error_text(),
-                                      foreground=STATUS_COLOURS[FAILED])
+                self.result.set(DANGER, "Build refused or failed", outcome.error_text())
             else:
                 self._built(out)
             self._new_output()
@@ -824,17 +1175,19 @@ class App:
             summary = runner.summarize(out)
             contents = runner.write_contents(summary, self.state.manifest)
         except (OSError, ValueError, KeyError) as exc:
-            self.result.configure(text=f"Build finished but its record could not be read: {exc}",
-                                  foreground=STATUS_COLOURS[FAILED])
+            self.result.set(DANGER, "Build finished but its record could not be read", str(exc))
             return
         self.summary = summary
         self.wizard.set_build(summary if summary.sha256_matches_build_json else None,
                               note=None if summary.sha256_matches_build_json else "The build does not match build.json.")
-        match = "matches build.json" if summary.sha256_matches_build_json else "DOES NOT MATCH build.json"
-        self.result.configure(foreground=STATUS_COLOURS[OK] if summary.sha256_matches_build_json else STATUS_COLOURS[FAILED],
-                              text=(f"Built: {summary.autoexec}\nSHA-256 {summary.sha256} ({match})\n"
-                                    f"{runner.memory_line(summary)}\nWhat's in this build: {contents}"))
+        matches = summary.sha256_matches_build_json
+        match = "matches build.json" if matches else "DOES NOT MATCH build.json"
+        self.result.set(SUCCESS if matches else DANGER,
+                        "Built and verified" if matches else "Built, but autoexec.bin DOES NOT MATCH build.json",
+                        f"Built: {summary.autoexec}\nSHA-256 {summary.sha256} ({match})\n"
+                        f"{runner.memory_line(summary)}\nWhat's in this build: {contents}", mono=True)
         self.gauge.configure(value=100 * summary.remaining_heap / summary.heap_pool)
+        self.memory_slot.show(self.memory)
         self.open_out.configure(state="normal")
         self.open_contents.configure(state="normal")
         self._append_log(runner.contents_text(summary, self.state.manifest))
@@ -846,7 +1199,7 @@ class App:
         self.card_var.set(path)
         self.card_confirm.set(False)
         self.card_info = None
-        self.card_report.configure(text="Looking at the card...", foreground="#444")
+        self.card_report.set(BUSY, "Looking at the card...")
         self.refresh()
         self._background(lambda: card.inspect_card(Path(path)), lambda info: self._card_inspected(path, info))
 
@@ -854,7 +1207,7 @@ class App:
         if self.card_var.get() != path:
             return  # another folder was chosen meanwhile
         if isinstance(info, Exception):
-            self.card_report.configure(text=f"Could not look at the card: {info}", foreground=STATUS_COLOURS[FAILED])
+            self.card_report.set(DANGER, "Could not look at the card", str(info))
             return
         self.card_info = info
         lines = [f"Folder: {info.root}"]
@@ -865,8 +1218,13 @@ class App:
         lines += ["REFUSED: " + e for e in info.errors] + ["Warning: " + w for w in info.warnings]
         if self.summary is None:
             lines.append("Build autoexec.bin first (step 6).")
-        colour = STATUS_COLOURS[FAILED] if info.errors else (STATUS_COLOURS[CHECKING] if info.warnings else "#444")
-        self.card_report.configure(text="\n".join(lines), foreground=colour)
+        if info.errors:
+            kind, headline = DANGER, "This folder is refused"
+        elif info.warnings:
+            kind, headline = WARNING, "Check the warnings before you copy"
+        else:
+            kind, headline = NEUTRAL, "Card folder checked"
+        self.card_report.set(kind, headline, "\n".join(lines))
         self.refresh()
 
     def _copy(self):
@@ -881,17 +1239,17 @@ class App:
             return  # a card preparation step is running or waiting for confirmation
         confirmed = list(info.warnings) if self.card_confirm.get() else []
         self.copying = self.prep.copying = True
-        self.copy_result.configure(text="Copying...", foreground="#444")
+        self.copy_result.clear()
         self.refresh()
 
         def done(result):
             self.copying = self.prep.copying = False
             if isinstance(result, (card.CardError, OSError)):
-                self.copy_result.configure(text=f"Not copied: {result}", foreground=STATUS_COLOURS[FAILED])
+                self.copy_result.set(DANGER, "Not copied", str(result))
             elif isinstance(result, Exception):
-                self.copy_result.configure(text=f"Copy failed unexpectedly: {result}", foreground=STATUS_COLOURS[FAILED])
+                self.copy_result.set(DANGER, "Copy failed unexpectedly", str(result))
             else:
-                self.copy_result.configure(text="\n".join(result.messages), foreground=STATUS_COLOURS[OK])
+                self.copy_result.set(SUCCESS, "Done", "\n".join(result.messages))
                 try:
                     self.wizard.set_copied(result.sha256)
                 except ValueError:
@@ -905,7 +1263,7 @@ class App:
 def main() -> int:
     try:
         import tkinter as tk
-        from tkinter import filedialog, messagebox, scrolledtext, ttk
+        from tkinter import filedialog, font as tkfont, messagebox, ttk
     except ImportError:
         print(
             "This Python has no Tkinter, which the build assistant needs.\n"
@@ -916,7 +1274,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    app = App(tk, ttk, filedialog, messagebox, scrolledtext)
+    app = App(tk, ttk, filedialog, messagebox, tkfont)
     app.root.mainloop()
     return 0
 
