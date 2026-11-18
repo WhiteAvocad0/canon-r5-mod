@@ -183,6 +183,7 @@
     "frame-native-hooks.json",
     "playback-native-hooks.json",
     "playback-mask-hooks.json",
-    "q-label-hooks.json"
+    "q-label-hooks.json",
+    "xpan-review-hooks.json"
   ]
 }

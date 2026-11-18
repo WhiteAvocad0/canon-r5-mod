@@ -172,6 +172,8 @@ class XPanContractsTests(unittest.TestCase):
             "playback-native-hooks.json",
             "playback-mask-hooks.json",
             "q-label-hooks.json",
+            "xpan-review-hooks.json",
+            "record-indicator-hooks.json",
         ):
             obj = json.loads((tools_dir / name).read_text())
             self.assertNotIn("rom_sha256", obj, name)
@@ -181,7 +183,7 @@ class XPanContractsTests(unittest.TestCase):
         self.assertNotIn("dump_sha256", XPAN_TARGET_CONTRACT)
         self.assertNotIn("rom_sha256", XPAN_TARGET_CONTRACT)
         self.assertEqual(XPAN_TARGET_CONTRACT["admission_mode"], "immutable_code_fingerprints")
-        self.assertEqual(len(XPAN_TARGET_CONTRACT["extra_code_fingerprints"]), 128)
+        self.assertEqual(len(XPAN_TARGET_CONTRACT["extra_code_fingerprints"]), 148)
 
         bad = copy.deepcopy(XPAN_TARGET_CONTRACT)
         bad["dump_sha256"] = "0" * 64

@@ -4,7 +4,8 @@
 > **Experimental Source Preview — Original Canon EOS R5 Firmware `2.2.1` Only**
 > - `--profile xpan-crop` is **silent by default (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged. The only sound it can add is the opt-in [movie record indicator](#4-opt-in-movie-record-indicator---record-indicator) (`--record-indicator`, off by default).
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
-> - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression. **Automatic rear-LCD instant review after a shot still has a brief 16:9-guide flash; the public repackaged build remains hardware-untested.**
+> - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression.
+> - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. **The public repackaged build remains hardware-untested.**
 
 ---
 
@@ -29,7 +30,7 @@ In ExifTool, query **`CroppedImageLeft` / `CroppedImageTop`** for this structure
 
 ```mermaid
 flowchart TD
-    Boot["Boot Handoff @ 0x001994B0<br/>17 Patched 4K Pages, 31 Hooks, 8 L2 Tables, 120 Witnesses"] -->|"Replaces 16:9 (aspect = 7)"| Prop["Aspect Property 0x80040054<br/>Menu Vector 0xE3500000 / 0xE38F614C (getter 0xE026AF47)<br/>Q Label 0xE0B5D22C (item 52, str 271 -> 'XPan')"]
+    Boot["Boot Handoff @ 0x001994B0<br/>20 Patched 4K Pages, 34 Hooks, 10 L2 Tables, 137 Witnesses"] -->|"Replaces 16:9 (aspect = 7)"| Prop["Aspect Property 0x80040054<br/>Menu Vector 0xE3500000 / 0xE38F614C (getter 0xE026AF47)<br/>Q Label 0xE0B5D22C (item 52, str 271 -> 'XPan')"]
     Prop -->|"Live Framing Table 0xE20CFC64"| Live["Live LCD & EVF Framing Bars<br/>frame_native @ 0xE07C3DAA.. / 0xE07F671E / 0xE0392184"]
     Prop -->|"Capture Output"| Saved["Saved Crop & EXIF/IFD<br/>JPEG 0xE0CD98DA / 0xE0CD986C (8192x3024)<br/>ROI 0xE017B61C, AspectRect 0xE098FB2C (0,1220,8192,3024)"]
     Saved -->|"Playback Metadata"| Main["Playback Main 0xE0334E4C & Tags 0xE03141E4 / 0xE0318FD0<br/>Typed IFD [0x44F86000, 0x45003000), O+0x34==0 Ready Guard<br/>Cache 0xE07732BE"]
@@ -57,13 +58,30 @@ flowchart TD
 
 ---
 
-## 3. Hardware Follow-Up and Instant-Review Limit
+## 3. Hardware Follow-Up and Automatic Post-Shot Review
 
 On 17 November 2026, the owner reported that the instructed four-case first-open normal ▶ session worked: rear-LCD landscape and portrait, then EVF portrait and landscape, plus Full-frame/display-switch checks. This is an aggregate visual report, not an instrumented per-case latency measurement. The returned payload was the exact private `4838eb81` image, not public `18f2c774`.
 
 All four complete playback reports show crop projection and guide suppression. Three first-view reports are complete; one is incomplete at the log ring boundary, so its missing detail remains unknown. Two additional portrait RAW/JPEG pairs were returned, with JPEG dimensions 8192×3024 and full RAW dimensions 8192×5464.
 
-**Automatic post-shot instant review is a separate case:** on the rear LCD, the owner sees a 16:9 outline first and XPan black bars about one second later. That estimate has not been instrumented, EVF instant review has not been reported, and no fix is claimed yet. The investigation targets the earliest visible preview and its metadata/readiness ownership while preserving the successful normal ▶ path and its guards.
+**Automatic post-shot review is a separate path from normal ▶ playback.** Without the fix, the rear LCD shows Canon's 16:9 outline first and XPan bars about one second later (owner report on the `4838eb81` reference, not instrumented). The public `xpan-crop` profile now includes the fix below by default; there is no option to turn it off.
+
+```mermaid
+flowchart LR
+    Job["scsVramDevelopComplete handler<br/>0xE054C530 (xpan_authority)"] -->|"per shot: JobID, aspect, flags"| Latest["latest-authority seqlock"]
+    Start["_DrawAspectLine 0xE0A956FE<br/>SR Undisp redraw (review start)"] -->|"exactly one new event?"| Claim["per-review claim<br/>XPan = aspect 7 and flags & 0x101"]
+    Latest --> Claim
+    Claim -->|"fresh XPan claim"| Hide["outline H/V words zeroed<br/>(this call only)"]
+    Claim -->|"fresh XPan claim"| Crop["review descriptor 0xE063FBEE<br/>{0,0,0,0,1024,682} -> {0,152,0,152,1024,378}"]
+    Claim -->|"full frame, burst, stale, none"| Stock["stock review unchanged"]
+```
+
+- **Authority (passive).** `xpan_authority` observes the handler that logs `scsVramDevelopComplete(JobID)` and then permits the simple review. It validates the Job handle signature `0xE2083738`, then reads JobID `[obj+0x3C0]`, aspect `[obj+0x14C0]` and image-type flags `[obj+0x19F0]` inside admitted RAM spans, and publishes them as the single latest record.
+- **Gate.** The review starts at the SR Undisp redraw (`Background_Draw` caller `0xE0A957CB` from `0xE05FDF6D`, SR flag `[0x17268] == 1`, display `0`, force `1`). That review claims the newest event only if exactly one event arrived since the previous review. A burst gives `MULTIPLE` and the stock review. The claim is XPan only for aspect `7` with a Large JPEG (`flags & 0x101`). A newer event during the review revokes it; leaving SR closes it.
+- **Outline.** For an admitted XPan claim, a matching rear-LCD call (GUI aspect `[[0x171DC]+0x18C0] == 7`, Canon's own decision H=1/V=0) gets its two caller-local decision words zeroed, so Canon takes its own no-line path. The 10-byte prologue is replayed exactly.
+- **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
+- **Diagnostics.** Decisions are kept as `.bss` counters only. No report rows are emitted and the lab's per-decision diagnostic records are not ported.
+- **Scope and limits.** Verified on the private lab build only (see the evidence note above). Bursts deliberately keep the stock review (no bars), and an in-review redraw after a newer shot falls back to stock. Other qualities and modes follow the same unverified/declined list as playback. The public repackaging is hardware-untested.
 
 ## 4. Opt-In Movie Record Indicator (`--record-indicator`)
 
@@ -81,7 +99,7 @@ flowchart LR
 - **Cue buffer.** `tone_gen_fill` renders the selected cue once on the first worker tick into a 32-byte-aligned BSS buffer. The buffer is cleaned, then the descriptor pointer is set, and nothing is written again. Any fault leaves the pointer at 0.
 - **Submission.** The preflight is a port of `audio.S`'s readiness and dependency checks with one change: AudioCtrl states 1, 4 and 5 are admitted (5 is audio recording). SE id 2 skips the PCM worker's "Movie Playing" gate. A busy speaker or another AudioCtrl state is retried for up to 10 ticks; then the cue is dropped. A cue still pending outside RecState `{1, 2, 3}` is dropped and never replayed.
 - **Observation.** The step follows ABeep's phase and recognises its own buffer by pointer and byte count: settled, stopped (cut by a Canon sound), rejected (confirmed on a second tick) or timeout after 25 ticks. A timeout disables further cues until power-off.
-- **Capacity.** With the indicator the build has `32` hooks, `18` pages, `8` L2 tables and `122` source witnesses (`MULTI_MAX_PAGES` is `18`; the default build still uses `31/17/8/120`).
+- **Capacity.** With the indicator the build has `35` hooks, `21` pages, `10` L2 tables and `139` source witnesses, the same inventory as the private lab build. The default build has `34/20/10/137`.
 
 Not ported from the private lab build: the 2-cue A/B rotation, the `request`/`confirmed` triggers, per-attempt before/after report rows and the movie-limit diagnostic.
 
@@ -91,13 +109,13 @@ Not ported from the private lab build: the 2-cue A/B rotation, the `request`/`co
 
 - Exact `64 MiB` dump size and `0xE0100000..0xE0140000` word-sum `0x22C94093`
 - All `25` base R5 `2.2.1` code fingerprints + `7` startup patch opcodes
-- All `128` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `31` hook windows, the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
+- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
 
 Only after those immutable checks pass does the builder derive into `--output`:
 - `target-page.bin` (`0xE0100000` virgin boot shadow page)
 - `frame-row/frame_row_constants.h` (projected `1600/2439` display rows from `0xE20CFC64`)
 - `menu-vector.bin` (`680`-byte `"XPan"` OpenVG resource combining stock `0xE38F614C` timeline/style envelope with clean-room `xpan_font.json`)
-- `feature-targets.h` / `feature-config.h` (page checksums and `31` hook patches)
+- `feature-targets.h` / `feature-config.h` (page checksums and `34` hook patches, `35` with the indicator)
 
 After building, you can optionally export and verify all host C models and ELF layouts against your build directory:
 

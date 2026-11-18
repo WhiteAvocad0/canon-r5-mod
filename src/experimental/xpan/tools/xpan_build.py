@@ -60,6 +60,19 @@ FORBIDDEN_AUDIO_SYMBOLS = (
     "sound_worker_play_shutter",
 )
 
+# XPan automatic post-shot review fix (always linked): hook entries and owners.
+REVIEW_FIX_SYMBOLS = (
+    "xpan_review_authority_entry",
+    "xpan_review_authority_observe",
+    "xpan_review_outline_entry",
+    "xpan_review_outline_decide",
+    "xpan_review_gate_crop",
+    "review_crop_entry",
+    "review_crop_original",
+    "review_crop_native_post",
+    "review_crop_apply",
+)
+
 XPAN_RESIDENT_MODULES = (
     "root_plan",
     "root_profile",
@@ -95,6 +108,9 @@ XPAN_C_MODULES = (
     "playback_reject",
     "playback_first_view",
     "ifd_memory",
+    "xpan_authority",
+    "xpan_review_gate",
+    "review_crop",
 )
 
 XPAN_ASM_MODULES = (
@@ -109,6 +125,9 @@ XPAN_ASM_MODULES = (
     ("playback_native_hooks.S", "playback-native-hooks.o"),
     ("playback_mask_hooks.S", "playback-mask-hooks.o"),
     ("q_label_hooks.S", "q-label-hooks.o"),
+    ("xpan_authority_hook.S", "xpan-authority-hook.o"),
+    ("xpan_review_outline_hook.S", "xpan-review-outline-hook.o"),
+    ("review_crop_hook.S", "review-crop-hook.o"),
 )
 
 XPAN_HEADER_NAMES = (
@@ -146,6 +165,9 @@ XPAN_HEADER_NAMES = (
     "playback_reject.h",
     "playback_first_view.h",
     "ifd_memory.h",
+    "xpan_authority.h",
+    "xpan_review_gate.h",
+    "review_crop.h",
 )
 
 
@@ -217,6 +239,7 @@ def _tracked_input_paths() -> list[Path]:
             "playback-native-hooks.json",
             "playback-mask-hooks.json",
             "q-label-hooks.json",
+            "xpan-review-hooks.json",
             "xpan_font.json",
             *ri.TOOL_NAMES,
         )
@@ -323,6 +346,7 @@ def build_xpan_image(
         "native_rear_lcd_trial": True,
         "captured_frame_tags": True,
         "precopy_report_refresh": True,
+        "xpan_instant_review_fix": True,
         "feature_contract": feature,
         "menu_vector_proof": vector_proof,
         "record_indicator": indicator_facts,
@@ -643,6 +667,7 @@ def build_xpan_image(
         "sound_boot_read_hw_context",
         "sound_boot_api",
         "sound_boot_state",
+        *REVIEW_FIX_SYMBOLS,
     ):
         if not symbols["_resident_start"] <= symbols[sym] < symbols["_resident_data_end"]:
             raise ValueError(f"{sym} outside resident initialized section")

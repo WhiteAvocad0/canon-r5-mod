@@ -162,3 +162,21 @@ Linked only when `--record-indicator` is not `off`. The two `0xE0A98000` / `0xE0
 | ABeep `+0x40` last SE id | `0xE08B142E` (store) | Field offset | Read by the record-indicator observer only. |
 | AudioCtrl admitted states | `{1, 4, 5}` | Mask | The indicator's only preflight change from `audio.S` (`5` = audio recording started). |
 | `rec_tone_pcm` / `rec_tone_descriptor` | build-dependent (`symbols.json`) | Private resident symbols | 32-byte-aligned BSS cue buffer (`24,000` B for `ding`) and 64-byte resident descriptor. |
+
+---
+
+## 10. XPan Automatic Post-Shot Review Fix (`--profile xpan-crop`, always on)
+
+All hook pages and source guard pages below are admitted through `extra_code_fingerprints` in `config/xpan_target_contract.json`; the hooks are listed in `src/experimental/xpan/tools/xpan-review-hooks.json`.
+
+| Name | Address / Value | Type | Role |
+| --- | --- | --- | --- |
+| `review_crop_entry` | `0xE063FBEE` (10 bytes `2de9f047174698229846`, resume `0xE063FBF9`) | ROM hook site | Completed copy of the 152-byte review descriptor; only caller LR `0xE063BECF`, slot `0`, destination `caller_sp+16`, source `controller+0x10A0`. |
+| Review descriptor tuple | `+0x1C..+0x30`: `{0,0,0,0,1024,682}` -> `{0,152,0,152,1024,378}` | Field offsets | Exact full-source match only; three words (`+0x20`, `+0x28`, `+0x30`) change. |
+| `xpan_review_authority_entry` | `0xE054C530` (8 bytes `70b504000e461546`, resume `0xE054C539`) | ROM hook site | `scsVramDevelopComplete(JobID)` handler, reached only through dispatch words `0xE0E35C40..0xE0E35C78`. |
+| Job handle / object fields | signature `0xE2083738` (`[0xE0F28178]`); object `[h+4]`; JobID `[obj+0x3C0]`; aspect `[obj+0x14C0]`; image-type flags `[obj+0x19F0]` | ROM word / field offsets | Per-shot authority; XPan = aspect `7` and `(flags & 0x101) != 0` (Large JPEG). |
+| `xpan_review_outline_entry` | `0xE0A956FE` (10 bytes `089a1e21d8f814004446`, resume `0xE0A95709`) | ROM hook site | `_DrawAspectLine` after its H/V decisions; zeroes caller-local `[sp+28]`/`[sp+32]` for an admitted XPan claim only. |
+| Review start | caller `0xE0A957CB` (`Background_Draw`), its caller `0xE05FDF6D` (`SetDisplayDlgLiveView` Undisp), display `[sp+68] == 0`, force `1` | Stack words | Opens one claim per review. |
+| SR flag | `0x00017268` | Fixed RAM slot | `1` while the simple review is shown; any other value closes the claim. |
+| GUI aspect | `[[0x000171DC] + 0x18C0]` (byte) | Fixed RAM slot + offset | Must be `7` (XPan) for the outline hide. |
+| Guard pages | `0xE0190000`, `0xE0191000`, `0xE01BC000`, `0xE01BE000`, `0xE063B000`, `0xE0594000`, `0xE07FA000`, `0xE07FD000`, `0xE0803000`, `0xE0840000`, `0xE0E35000`, `0xE0F28000`, `0xE05FD000`, `0xE05FE000`, `0xE07C3000`, `0xE07D6000`, `0xE0A94000`, `0xE0B20000` | ROM pages | Callers, dispatch words, signature literal and getters the hooks depend on; checksummed again at boot. |

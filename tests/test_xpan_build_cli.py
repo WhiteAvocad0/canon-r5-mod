@@ -74,6 +74,9 @@ def compute_symbols():
         "root_primary_prepare", "root_secondary_take", "root_peer_check",
         "menu_prepare", "menu_install", "menu_image_table_getter",
         "frame_native_admit", "playback_mask_fit_begin", "q_label_entry",
+        "xpan_review_authority_entry", "xpan_review_authority_observe", "xpan_review_outline_entry",
+        "xpan_review_outline_decide", "xpan_review_gate_crop", "review_crop_entry", "review_crop_original",
+        "review_crop_native_post", "review_crop_apply",
     ]
     for p in MANIFEST["patches"]:
         if p["symbol"] not in code_names:

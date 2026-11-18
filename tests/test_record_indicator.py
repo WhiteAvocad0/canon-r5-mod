@@ -792,9 +792,9 @@ class MockBuildTests(unittest.TestCase):
         self.assertNotIn("R5_RECORD_INDICATOR", log)
         self.assertNotIn("rec_state_hook.S", log)
         feature = json.loads((out / "feature-contract.json").read_text())
-        self.assertEqual(len(feature["hooks"]), 31)
-        self.assertEqual(len(feature["pages"]), 17)
-        self.assertEqual(len(feature["source_guard_pages"]), 120)
+        self.assertEqual(len(feature["hooks"]), 34)
+        self.assertEqual(len(feature["pages"]), 20)
+        self.assertEqual(len(feature["source_guard_pages"]), 137)
 
     def test_indicator_build_admits_compiles_and_fails_closed_at_the_linked_check(self):
         call, out = self._build("ding", True)
@@ -806,9 +806,9 @@ class MockBuildTests(unittest.TestCase):
         for name in ("rec_state.c", "tone_gen.c", "rec_tone.c", "rec-tone-bindings.c", "rec_state_hook.S"):
             self.assertIn(name, log)
         feature = json.loads((out / "feature-contract.json").read_text())
-        self.assertEqual(len(feature["hooks"]), 32)
-        self.assertEqual(len(feature["pages"]), 18)
-        self.assertEqual(len(feature["source_guard_pages"]), 122)
+        self.assertEqual(len(feature["hooks"]), 35)
+        self.assertEqual(len(feature["pages"]), 21)
+        self.assertEqual(len(feature["source_guard_pages"]), 139)
         manifest = json.loads((out / "source-manifest.json").read_text())
         self.assertEqual(manifest["configuration"]["record_indicator"]["cue"], "ding")
         self.assertIn("src/experimental/xpan/rec_tone.c", manifest["inputs"])
