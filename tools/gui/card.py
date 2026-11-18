@@ -11,11 +11,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 import secrets
 import shutil
 import stat
 import sys
+from typing import Collection, Mapping
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
@@ -29,6 +30,46 @@ TEMP_SUFFIX = ".TMP"
 MAX_IMAGE_BYTES = 16 * 1024 * 1024  # far above any build (~80 KiB); bounds reads of card files
 MIN_CARD_BYTES = 2 * 1000**3
 MAX_CARD_BYTES = 2 * 1000**4  # SDXC maximum
+
+
+# POSIX folders that are never a camera card: refused exactly, or with everything inside them.
+POSIX_REFUSED = frozenset(map(PurePosixPath, (
+    "/", "/Users", "/home", "/root", "/var", "/private", "/tmp", "/opt", "/srv",
+    "/Volumes", "/media", "/mnt", "/run", "/run/media",
+)))
+POSIX_REFUSED_TREES = tuple(map(PurePosixPath, (
+    "/System", "/Library", "/Applications", "/usr", "/bin", "/sbin", "/etc", "/dev", "/proc", "/sys", "/boot",
+)))
+
+
+def protected_location(path: str | PurePath, *, windows: bool, home: str | PurePath,
+                       environ: Mapping[str, str]) -> str | None:
+    """Why a folder is a system or home location rather than a card, or None.
+
+    Pure path logic, so Windows rules can be tested anywhere. A removable drive root
+    (E:\\, /Volumes/EOS_DIGITAL, /media/me/CARD, /run/media/me/CARD) is allowed; the
+    system drive, the Windows folder, the home folder and its parents are refused."""
+    flavour = PureWindowsPath if windows else PurePosixPath
+    path, home = flavour(path), flavour(home)
+    if windows:
+        system_drives = {home.drive.casefold()} if home.drive else set()
+        windows_dirs = []
+        for var in ("SystemDrive", "SystemRoot", "windir"):
+            value = environ.get(var)
+            if value:
+                system_drives.add(flavour(value).drive.casefold())
+                if var != "SystemDrive":
+                    windows_dirs.append(flavour(value))
+        system_drives.discard("")
+        if path.drive.casefold() in system_drives and path == flavour(path.anchor):
+            return f"{path} is the Windows system drive, not a camera card."
+        if any(path == d or path.is_relative_to(d) for d in windows_dirs):
+            return f"{path} is inside the Windows folder, not a camera card."
+    elif path in POSIX_REFUSED or any(path == t or path.is_relative_to(t) for t in POSIX_REFUSED_TREES):
+        return f"{path} is a system folder, not a camera card."
+    if path == home or home.is_relative_to(path):
+        return f"{path} is your home folder or contains it, not a camera card."
+    return None
 
 
 class CardError(Exception):
@@ -104,8 +145,9 @@ def inspect_card(root: Path) -> CardInspection:
         return info
     resolved = root.resolve()
     info.root = resolved
-    if resolved == Path(resolved.anchor) or resolved == Path.home().resolve():
-        info.errors.append(f"{resolved} is your system drive or home folder, not a camera card.")
+    protected = protected_location(resolved, windows=os.name == "nt", home=Path.home().resolve(), environ=os.environ)
+    if protected:
+        info.errors.append(protected)
     if not os.access(resolved, os.W_OK):
         info.errors.append(f"{resolved} is not writable (is the card's lock switch on?).")
     try:
@@ -162,16 +204,20 @@ def copy_to_card(
     card_root: Path,
     backup_dir: Path,
     *,
-    confirmed: bool = False,
+    confirmed_warnings: Collection[str] = (),
     now: datetime | None = None,
 ) -> CopyResult:
-    """Back up any existing autoexec.bin to the computer, then copy atomically and verify."""
+    """Back up any existing autoexec.bin to the computer, then copy atomically and verify.
+
+    confirmed_warnings are the warnings the person saw and accepted; any other warning
+    found now (for example one that appeared since) stops the copy for confirmation."""
     data = verify_image(image, expected_sha256)
     info = inspect_card(card_root)
     if info.errors:
         raise CardError(" ".join(info.errors))
-    if info.warnings and not confirmed:
-        raise NeedsConfirmation(" ".join(info.warnings))
+    unconfirmed = [w for w in info.warnings if w not in confirmed_warnings]
+    if unconfirmed:
+        raise NeedsConfirmation(" ".join(unconfirmed))
     root = info.root
     messages: list[str] = []
     backup: Path | None = None

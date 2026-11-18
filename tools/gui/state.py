@@ -125,6 +125,17 @@ class AssistantState:
     def set_toolchain(self, path: Path | None) -> None:
         self.toolchain_path = None if path is None else Path(path)
 
+    def offer_detected_toolchain(self, path: Path, message: str, facts: dict | None, *, explicit: bool) -> bool:
+        """Use an auto-detected, already-admitted toolchain unless the person chose one.
+
+        Start-up detection never replaces a folder the person picked; pressing
+        "Detect again" (explicit) may. Returns whether the detection was applied."""
+        if self.toolchain_path is not None and not explicit:
+            return False
+        self.set_toolchain(path)
+        self.finish("toolchain", self.toolchain_key(), True, message, facts)
+        return True
+
     def set_output_dir(self, path: Path | None) -> None:
         self.output_dir = None if path is None else Path(path)
 

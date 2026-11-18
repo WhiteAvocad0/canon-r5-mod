@@ -120,6 +120,17 @@ class StateTests(unittest.TestCase):
         s.set_option("record_indicator", "off")
         self.assertEqual(s.rom_check().status, state.OK)
 
+    def test_startup_toolchain_detection_never_replaces_a_picked_toolchain(self):
+        s = state.AssistantState()
+        self.assertTrue(s.offer_detected_toolchain(self.tmp / "found", "accepted", None, explicit=False))
+        self.assertEqual(s.toolchain_check().status, state.OK)
+        s.set_toolchain(self.tmp / "picked")
+        self.assertFalse(s.offer_detected_toolchain(self.tmp / "found", "accepted", None, explicit=False))
+        self.assertEqual(s.toolchain_path, self.tmp / "picked")
+        self.assertEqual(s.toolchain_check().status, state.UNCHECKED)  # the picked one still gets its own check
+        self.assertTrue(s.offer_detected_toolchain(self.tmp / "found", "accepted", None, explicit=True))
+        self.assertEqual(s.toolchain_path, self.tmp / "found")
+
     def test_blockers_explain_what_is_missing(self):
         s = state.AssistantState()
         s.set_output_dir(None)
@@ -238,7 +249,7 @@ class RunnerTests(unittest.TestCase):
             path = runner.write_contents(s, features.load())
             text = path.read_text()
             for needle in ("hardware-untested", "xpan-crop", "Ding", "Verified on a private lab build", "ab" * 32,
-                           "BootDisk"):
+                           "BootDisk", "extra diagnostics", "compiled images differ"):
                 self.assertIn(needle, text)
             with self.assertRaises(FileExistsError):
                 runner.write_contents(s, features.load())

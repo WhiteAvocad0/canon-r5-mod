@@ -15,6 +15,7 @@ import queue
 import subprocess
 import sys
 import threading
+import traceback
 import webbrowser
 
 if sys.version_info < (3, 11):
@@ -69,6 +70,7 @@ class App:
         self.events: queue.Queue = queue.Queue()
         self.summary: runner.BuildSummary | None = None
         self.card_info: card.CardInspection | None = None
+        self.copying = False
 
         self.root = tk.Tk()
         self.root.title("Canon R5 mod build assistant (prototype)")
@@ -124,13 +126,24 @@ class App:
         threading.Thread(target=target, daemon=True).start()
 
     def _poll(self):
+        """Deliver background results on the UI thread; a failing callback never stops the loop."""
         try:
             while True:
-                done, result = self.events.get_nowait()
-                done(result)
-        except queue.Empty:
-            pass
-        self.root.after(100, self._poll)
+                try:
+                    done, result = self.events.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    done(result)
+                except Exception:
+                    traceback.print_exc()
+                    try:
+                        self._append_log("Internal error (details printed to the terminal):\n"
+                                         + traceback.format_exc(limit=1))
+                    except Exception:
+                        pass
+        finally:
+            self.root.after(100, self._poll)
 
     # -- tabs ---------------------------------------------------------------
 
@@ -202,7 +215,7 @@ class App:
         self.tc_var = self.tk.StringVar()
         self.ttk.Entry(row, textvariable=self.tc_var, state="readonly").pack(side="left", fill="x", expand=True)
         self.ttk.Button(row, text="Choose bin folder...", command=self._pick_toolchain).pack(side="left", padx=6)
-        self.ttk.Button(row, text="Detect again", command=self._detect_toolchain).pack(side="left")
+        self.ttk.Button(row, text="Detect again", command=lambda: self._detect_toolchain(explicit=True)).pack(side="left")
         self.tc_status = self._status(tab)
 
     def _build_tab(self, scrolledtext):
@@ -289,7 +302,7 @@ class App:
         self.blockers.configure(text="Ready to build." if not blockers else "Before you can build:\n- " + "\n- ".join(blockers))
         self.build_button.configure(state="disabled" if blockers else "normal")
         ready_to_copy = self.summary is not None and self.card_info is not None and not self.card_info.errors \
-            and (not self.card_info.warnings or self.card_confirm.get()) and not s.building
+            and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
         for what, input_id in s.needs_check():
@@ -356,7 +369,7 @@ class App:
             self.state.set_toolchain(Path(path))
             self.refresh()
 
-    def _detect_toolchain(self):
+    def _detect_toolchain(self, explicit=False):
         self.tc_status.configure(text="Looking for an installed GNU Arm 15.2.1 toolchain...", foreground="#7a5c00")
 
         def done(result):
@@ -369,9 +382,7 @@ class App:
                 self.tc_status.configure(text="No GNU Arm 15.2.1 toolchain found. Install it as described above, "
                                          "then choose its bin folder." + note, foreground=STATUS_COLOURS[FAILED])
                 return
-            self.state.set_toolchain(path)
-            key = self.state.toolchain_key()
-            self.state.finish("toolchain", key, True, check.message, check.facts)
+            self.state.offer_detected_toolchain(path, check.message, check.facts, explicit=explicit)
             self.refresh()
         self._background(checks.detect_toolchain, done)
 
@@ -442,7 +453,17 @@ class App:
             return
         self.card_var.set(path)
         self.card_confirm.set(False)
-        info = card.inspect_card(Path(path))
+        self.card_info = None
+        self.card_report.configure(text="Looking at the card...", foreground="#444")
+        self.refresh()
+        self._background(lambda: card.inspect_card(Path(path)), lambda info: self._card_inspected(path, info))
+
+    def _card_inspected(self, path, info):
+        if self.card_var.get() != path:
+            return  # another folder was chosen meanwhile
+        if isinstance(info, Exception):
+            self.card_report.configure(text=f"Could not look at the card: {info}", foreground=STATUS_COLOURS[FAILED])
+            return
         self.card_info = info
         lines = [f"Folder: {info.root}"]
         if info.total_bytes is not None:
@@ -464,14 +485,23 @@ class App:
             f"Copy autoexec.bin to {info.root}?\n\nAny existing autoexec.bin is backed up to {backups} first.",
         ):
             return
-        try:
-            result = card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
-                                       confirmed=self.card_confirm.get())
-        except (card.CardError, OSError) as exc:
-            self.copy_result.configure(text=f"Not copied: {exc}", foreground=STATUS_COLOURS[FAILED])
-            return
-        self.copy_result.configure(text="\n".join(result.messages), foreground=STATUS_COLOURS[OK])
-        self.messagebox.showinfo("Done", "\n\n".join(result.messages))
+        confirmed = list(info.warnings) if self.card_confirm.get() else []
+        self.copying = True
+        self.copy_result.configure(text="Copying...", foreground="#444")
+        self.refresh()
+
+        def done(result):
+            self.copying = False
+            if isinstance(result, (card.CardError, OSError)):
+                self.copy_result.configure(text=f"Not copied: {result}", foreground=STATUS_COLOURS[FAILED])
+            elif isinstance(result, Exception):
+                self.copy_result.configure(text=f"Copy failed unexpectedly: {result}", foreground=STATUS_COLOURS[FAILED])
+            else:
+                self.copy_result.configure(text="\n".join(result.messages), foreground=STATUS_COLOURS[OK])
+                self.messagebox.showinfo("Done", "\n\n".join(result.messages))
+            self.refresh()
+        self._background(lambda: card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
+                                                   confirmed_warnings=confirmed), done)
 
 
 def main() -> int:

@@ -22,11 +22,64 @@ def make_image(fill: int = 0x11, size: int = 256) -> bytes:
     return finalize_image(bytes(buf))
 
 
+class _All:
+    """A confirmation set that contains every warning (for tests that fail before warnings matter)."""
+
+    def __contains__(self, item):
+        return True
+
+
+ALL = _All()
+
+
 def snapshot(folder: Path) -> dict[str, bytes | None]:
     return {
         str(p.relative_to(folder)): (p.read_bytes() if p.is_file() else None)
         for p in sorted(folder.rglob("*"))
     }
+
+
+class ProtectedLocationTests(unittest.TestCase):
+    """Pure path rules: removable drive roots are allowed, system and home locations refused."""
+
+    WIN_ENV = {"SystemDrive": "C:", "SystemRoot": "C:\\Windows", "windir": "C:\\WINDOWS"}
+
+    def win(self, path, home="C:\\Users\\me", env=None):
+        return card.protected_location(path, windows=True, home=home, environ=self.WIN_ENV if env is None else env)
+
+    def posix(self, path, home="/Users/me"):
+        return card.protected_location(path, windows=False, home=home, environ={})
+
+    def test_windows_removable_drive_roots_are_allowed(self):
+        for path in ("E:\\", "E:/", "e:\\", "F:\\", "E:\\DCIM", "\\\\server\\share\\", "C:\\cards\\sd"):
+            with self.subTest(path):
+                self.assertIsNone(self.win(path))
+
+    def test_windows_system_drive_windows_folder_and_home_are_refused(self):
+        self.assertIn("system drive", self.win("C:\\"))
+        self.assertIn("system drive", self.win("c:/"))
+        self.assertIn("Windows folder", self.win("C:\\Windows\\Temp"))
+        self.assertIn("Windows folder", self.win("c:\\windows"))
+        self.assertIn("home folder", self.win("C:\\Users"))
+        self.assertIn("home folder", self.win("C:\\Users\\ME"))  # Windows paths are case-insensitive
+        # A system drive other than C: comes from %SystemDrive% / %SystemRoot%, not from a letter guess.
+        env = {"SystemDrive": "D:", "SystemRoot": "D:\\Windows"}
+        self.assertIn("system drive", self.win("D:\\", home="D:\\Users\\me", env=env))
+        self.assertIsNone(self.win("C:\\", home="D:\\Users\\me", env=env))
+        # Without any environment the home folder's drive still counts as the system drive.
+        self.assertIn("system drive", self.win("C:\\", env={}))
+        self.assertIsNone(self.win("E:\\", env={}))
+
+    def test_posix_mounts_allowed_system_and_home_refused(self):
+        for path in ("/Volumes/EOS_DIGITAL", "/media/me/CARD", "/run/media/me/CARD", "/mnt/sd", "/private/tmp/card"):
+            with self.subTest(path):
+                self.assertIsNone(self.posix(path, home="/home/me" if path.startswith(("/media", "/run")) else "/Users/me"))
+        for path in ("/", "/Volumes", "/media", "/run/media", "/usr/local", "/System/Volumes/Data", "/etc"):
+            with self.subTest(path):
+                self.assertIn("system folder", self.posix(path))
+        self.assertIn("home folder", self.posix("/Users/me"))
+        self.assertIsNotNone(self.posix("/home", home="/home/me"))
+        self.assertIsNone(self.posix("/Users/me/Desktop/card"))  # inside home: allowed, with card warnings
 
 
 class CardCopyTests(unittest.TestCase):
@@ -48,7 +101,7 @@ class CardCopyTests(unittest.TestCase):
 
     def copy(self, **kwargs):
         return card.copy_to_card(self.build / "autoexec.bin", self.sha, self.card, self.backups,
-                                 confirmed=kwargs.pop("confirmed", True), now=self.now, **kwargs)
+                                 confirmed_warnings=card.inspect_card(self.card).warnings, now=self.now, **kwargs)
 
     def test_fresh_card_gets_verified_uppercase_copy_and_nothing_else_changes(self):
         before = snapshot(self.card)
@@ -137,13 +190,13 @@ class CardCopyTests(unittest.TestCase):
 
     def test_build_image_must_match_build_json_and_footer(self):
         with self.assertRaisesRegex(card.CardError, "does not match build.json"):
-            card.copy_to_card(self.build / "autoexec.bin", "0" * 64, self.card, self.backups, confirmed=True)
+            card.copy_to_card(self.build / "autoexec.bin", "0" * 64, self.card, self.backups, confirmed_warnings=ALL)
         bad = bytearray(self.image)
         bad[0] ^= 1
         (self.build / "autoexec.bin").write_bytes(bytes(bad))
         with self.assertRaisesRegex(card.CardError, "format check"):
             card.copy_to_card(self.build / "autoexec.bin", hashlib.sha256(bad).hexdigest(), self.card,
-                              self.backups, confirmed=True)
+                              self.backups, confirmed_warnings=ALL)
         self.assertFalse(any(p.name.casefold() == "autoexec.bin" for p in self.card.iterdir()))
 
     def test_unusual_folders_need_confirmation_and_refusals_cannot_be_confirmed(self):
@@ -154,16 +207,28 @@ class CardCopyTests(unittest.TestCase):
         self.assertTrue(any("DCIM" in w for w in info.warnings))
         self.assertTrue(any("root" in w for w in info.warnings))  # a temp folder is not a mount point
         with self.assertRaises(card.NeedsConfirmation):
-            card.copy_to_card(self.build / "autoexec.bin", self.sha, plain, self.backups, confirmed=False)
+            card.copy_to_card(self.build / "autoexec.bin", self.sha, plain, self.backups)
         self.assertEqual(list(plain.iterdir()), [])
 
         (self.card / "AUTOEXEC.BIN").mkdir()
         with self.assertRaisesRegex(card.CardError, "not a regular file"):
             self.copy()
         with self.assertRaisesRegex(card.CardError, "home folder"):
-            card.copy_to_card(self.build / "autoexec.bin", self.sha, Path.home(), self.backups, confirmed=True)
+            card.copy_to_card(self.build / "autoexec.bin", self.sha, Path.home(), self.backups, confirmed_warnings=ALL)
         with self.assertRaisesRegex(card.CardError, "not a folder"):
-            card.copy_to_card(self.build / "autoexec.bin", self.sha, self.tmp / "missing", self.backups, confirmed=True)
+            card.copy_to_card(self.build / "autoexec.bin", self.sha, self.tmp / "missing", self.backups, confirmed_warnings=ALL)
+
+    def test_confirmation_covers_only_the_warnings_that_were_shown(self):
+        plain = self.tmp / "not-a-card"
+        plain.mkdir()
+        shown = card.inspect_card(plain).warnings
+        (plain / "R5GUI-0000.TMP").write_bytes(b"x")  # a new warning appears after the person confirmed
+        with self.assertRaisesRegex(card.NeedsConfirmation, "Leftover"):
+            card.copy_to_card(self.build / "autoexec.bin", self.sha, plain, self.backups, confirmed_warnings=shown)
+        self.assertEqual(sorted(p.name for p in plain.iterdir()), ["R5GUI-0000.TMP"])
+        result = card.copy_to_card(self.build / "autoexec.bin", self.sha, plain, self.backups,
+                                   confirmed_warnings=card.inspect_card(plain).warnings)
+        self.assertEqual(result.target.read_bytes(), self.image)
 
     def test_card_size_warning_and_leftovers_are_reported(self):
         (self.card / "R5GUI-0000.TMP").write_bytes(b"x")
