@@ -179,14 +179,15 @@ def contents_text(s: BuildSummary, manifest: features.FeatureManifest, now: date
         "",
         f"Profile: {s.profile} - {profile.label}",
         f"  {profile.description}",
-        f"  Status: {level.label}. {profile.status_detail}",
+        f"  Status: {level.label}. {level.text} {profile.status_detail}",
     ]
     for oid, value in s.options.items():
         option = manifest.options[oid]
         choice = option.choice(value)
         lines.append(f"Option: {option.label} = {value} ({choice.label})")
         if choice.status:
-            lines.append(f"  Status: {manifest.status_levels[choice.status].label}. {choice.status_detail or ''}".rstrip())
+            clevel = manifest.status_levels[choice.status]
+            lines.append(f"  Status: {clevel.label}. {clevel.text} {choice.status_detail or ''}".rstrip())
     for key, facts in s.wavs.items():
         lines.append(f"{manifest.inputs[key].label}: {facts['caller_input_path']}")
         lines.append(f"  SHA-256 {facts['wav_sha256']}, {facts['embedded_pcm_bytes']:,} bytes embedded")

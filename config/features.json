@@ -6,15 +6,15 @@
   "status_levels": {
     "private-lab-verified": {
       "label": "Verified on a private lab build",
-      "text": "Worked on the maintainer's private lab build of the same source. Your public build is hardware-untested."
+      "text": "Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
     },
     "hardware-untested": {
       "label": "Hardware-untested public build",
-      "text": "Built and host-tested, but no camera has run this feature yet."
+      "text": "Host-tested; no camera has run this feature in this public configuration yet."
     },
     "experimental": {
       "label": "Experimental",
-      "text": "Built and host-tested only. Behaviour on a camera is unknown."
+      "text": "Not confirmed on a camera in this public configuration; any private trial is described in the detail."
     }
   },
   "inputs": {
@@ -30,7 +30,7 @@
     }
   },
   "profile_cli_help": "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
-  "profile_exclusivity": "Profiles are exclusive: XPan and custom sounds together do not fit in the camera's free memory.",
+  "profile_exclusivity": "XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.",
   "profiles": [
     {
       "id": "shutter-feedback",
@@ -75,19 +75,19 @@
           "value": "ding",
           "label": "Ding: struck-bar chime, 250 ms",
           "status": "private-lab-verified",
-          "status_detail": "Tested by the owner on a private lab build on 18 November 2026."
+          "status_detail": "Tested on the REC press by the owner on a private lab build on 18 November 2026."
         },
         {
           "value": "chirp2",
           "label": "Chirp: two rising notes, 120 ms",
           "status": "experimental",
-          "status_detail": "Built and host-tested only."
+          "status_detail": "Ran in a private A/B trial with the same REC-press trigger. It has not run in this public single-cue configuration."
         },
         {
           "value": "2k150loud",
           "label": "Tone: single 2 kHz beep, 150 ms",
           "status": "experimental",
-          "status_detail": "Built and host-tested only."
+          "status_detail": "Ran on an earlier private build that used a later trigger, the start request. It has not run in this public single-cue configuration."
         }
       ]
     }
