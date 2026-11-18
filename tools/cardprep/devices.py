@@ -2,14 +2,15 @@
 
 Only a card in an SD card slot is offered: on macOS ``diskutil`` must report the
 Secure Digital protocol, removable and ejectable physical media, an MBR with one
-FAT32 or exFAT partition that is mounted under /Volumes, 512-byte sectors and a
-size between 2 GB and 2 TiB. Internal and boot disks, disk images, USB devices
+FAT32 or exFAT partition (mounted under /Volumes, or not mounted at all, so that a
+half-written card can still be restored), 512-byte sectors and a size between
+2 GB and 2 TiB. Internal and boot disks, disk images, USB devices
 (including USB card readers, which macOS cannot tell from other USB drives),
 system images and anything else are refused with a reason.
 
 Raw reads and writes go through helper.py, started as root by the macOS password
-prompt (``osascript ... with administrator privileges``). This module never asks
-for, sees or stores a password.
+prompt (``osascript ... with administrator privileges``) with a cleared environment
+and a root-owned interpreter. This module never asks for, sees or stores a password.
 
 Windows and Linux: best-effort enumeration only, **untested**; preparing a card
 is offered on macOS only.
@@ -30,7 +31,7 @@ import tempfile
 from typing import Callable
 
 HELPER_PATH = Path(__file__).resolve().with_name("helper.py")
-HELPER_PROTOCOL = 1
+HELPER_PROTOCOL = 2
 SD_MIN_BYTES = 2 * 1000**3
 SD_MAX_BYTES = 2 * 1024**4
 WHOLE_ID_RE = re.compile(r"disk[0-9]{1,3}")
@@ -83,14 +84,24 @@ class Candidate:
         return f"/dev/r{self.partition_id}"
 
     def identity(self) -> dict:
-        """What must be unchanged between the person's choice and every card step."""
+        """The card as chosen; recorded in backups."""
         return {k: getattr(self, k) for k in ("platform", "whole_id", "partition_id", "model", "bus", "disk_bytes",
                                               "partition_offset", "partition_bytes", "filesystem", "volume_name",
                                               "location")}
 
-    def summary(self) -> str:
+    @property
+    def mounted(self) -> bool:
+        return bool(self.mount_point)
+
+    def label(self) -> str:
+        """For the confirmation dialog, e.g. 'EOS_DIGITAL (126.9 GB exFAT SD card)'."""
         size = f"{self.disk_bytes / 1000**3:,.1f} GB" if self.disk_bytes else "unknown size"
-        return f"{self.volume_name or '(no name)'} - {self.model or 'unknown model'}, {size}, {self.filesystem or '?'} ({self.whole_id})"
+        kind = f"{self.filesystem} SD card" if self.filesystem else "SD card"
+        return f"{self.volume_name or 'Unnamed card'} ({size} {kind})"
+
+    def summary(self) -> str:
+        state = "" if self.mounted else ", not mounted"
+        return f"{self.label()} - {self.model or 'unknown model'}, {self.whole_id}{state}"
 
     def details(self) -> list[str]:
         return [
@@ -101,6 +112,23 @@ class Candidate:
             f"Mounted at: {self.mount_point or '(not mounted)'}",
             f"Device: {self.whole_id}, partition {self.partition_id}",
         ]
+
+
+# Device identity that does not depend on the card being mounted.
+FIXED_IDENTITY = ("platform", "whole_id", "partition_id", "model", "bus", "disk_bytes", "partition_offset",
+                  "partition_bytes", "location")
+
+
+def same_card(chosen: Candidate, now: Candidate) -> bool:
+    """Whether a fresh query still describes the chosen card.
+
+    The whole-disk and partition identity must be equal. The filesystem and volume
+    name are compared only when both queries report them, because an unmounted or
+    half-written card may not report them at all."""
+    if any(getattr(chosen, k) != getattr(now, k) for k in FIXED_IDENTITY):
+        return False
+    return all(not (getattr(chosen, k) and getattr(now, k)) or getattr(chosen, k) == getattr(now, k)
+               for k in ("filesystem", "volume_name"))
 
 
 def _size_ok(size) -> bool:
@@ -175,19 +203,17 @@ def classify_macos(whole: dict, parts: list[dict], boot_wholes: set[str]) -> Can
         if m is None or f"disk{m.group(1)}" != wid or part.get("ParentWholeDisk") != wid \
                 or part.get("WholeDisk") is not False:
             r.append("The partition does not belong to this disk.")
-        if filesystem is None:
+        # The mount state is an observation, not a requirement: an unmounted, half-written or
+        # unmountable card must stay reachable for restore. Its boot sectors are checked later.
+        if filesystem is None and (fs_type or mount):
             r.append(f"The partition is not FAT32 or exFAT ({part.get('FilesystemName') or fs_type or content or 'unknown'}).")
         if mount and mount != "/" and not mount.startswith("/Volumes/"):
             r.append(f"The partition is mounted at {mount}, which is a system location.")
-        elif not mount:
-            r.append("The card is not mounted. Insert it so that macOS shows it in Finder.")
         if part.get("DeviceBlockSize") != 512 or part.get("WritableMedia") is not True:
             r.append("The partition is not writable 512-byte-sector media.")
         if not (isinstance(offset, int) and isinstance(psize, int) and isinstance(size, int)
                 and 0 < offset and offset + psize <= size):
             r.append("The partition position could not be read.")
-        if not name:
-            r.append("The volume has no name to confirm with.")
     return Candidate("darwin", wid, pid, whole.get("MediaName") or whole.get("IORegistryEntryName") or "", bus,
                      size if isinstance(size, int) else None, offset if isinstance(offset, int) else None,
                      psize if isinstance(psize, int) else None, filesystem, name, mount,
@@ -352,15 +378,20 @@ def prepare_supported(platform: str | None = None) -> bool:
 # -- macOS privileged helper and diskutil actions --------------------------------
 
 
+ROOT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+CLT_PYTHON = "/usr/bin/python3"
+
+
 def privileged_script(python: str, helper: Path, helper_sha256: str, args: list[str]) -> str:
-    """The /bin/sh text run as root: copy the helper into a fresh root-owned folder,
-    check its SHA-256, run it isolated, and remove the folder again."""
+    """The /bin/sh text run as root: with a cleared environment, copy the helper into a
+    fresh root-owned folder, check its SHA-256, run it isolated, and remove the folder."""
     q = shlex.quote
-    return ("set -e; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
-            "trap '/bin/rm -rf \"$d\"' EXIT; "
-            f"/bin/cp {q(str(helper))} \"$d/helper.py\"; "
-            f"test \"$(/usr/bin/shasum -a 256 \"$d/helper.py\" | /usr/bin/cut -c1-64)\" = {q(helper_sha256)}; "
-            f"{q(python)} -I -S \"$d/helper.py\" " + " ".join(q(a) for a in args))
+    inner = ("set -e; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
+             "trap '/bin/rm -rf \"$d\"' EXIT; "
+             f"/bin/cp {q(str(helper))} \"$d/helper.py\"; "
+             f"test \"$(/usr/bin/shasum -a 256 \"$d/helper.py\" | /usr/bin/cut -c1-64)\" = {q(helper_sha256)}; "
+             f"{q(python)} -I -S \"$d/helper.py\" " + " ".join(q(a) for a in args))
+    return f"exec /usr/bin/env -i PATH={ROOT_PATH} /bin/sh -c {q(inner)}"
 
 
 def _applescript_string(text: str) -> str:
@@ -372,29 +403,121 @@ def applescript(script: str, prompt: str) -> str:
             "with administrator privileges")
 
 
+def ownership_problem(path: str) -> str | None:
+    """Why a file or folder could be changed by someone other than root, or None.
+
+    Checks the path and every folder above it: each must be owned by root and not
+    writable by its group or by everyone."""
+    current = os.path.realpath(path)
+    while True:
+        try:
+            st = os.lstat(current)
+        except OSError as exc:
+            return f"{current} cannot be checked ({exc.strerror})."
+        if st.st_uid != 0:
+            return f"{current} is not owned by root."
+        if st.st_mode & 0o022:
+            return f"{current} is writable by its group or by everyone."
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+PROBE = "import os,sys;print(os.path.realpath(sys.executable));print(os.path.dirname(os.__file__));print(sys.version_info[0]*100+sys.version_info[1])"
+
+
+def interpreter_problem(python: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> tuple[str | None, str | None]:
+    """(real interpreter path, None) if root may run it, else (None, reason).
+
+    Its executable, standard library and lib-dynload folders must all be root-owned
+    and not group- or world-writable, and it must be Python 3.9 or newer."""
+    try:
+        proc = run([python, "-I", "-S", "-c", PROBE], capture_output=True, text=True, timeout=60,
+                   env={"PATH": ROOT_PATH})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"{python} could not be started ({exc})."
+    lines = proc.stdout.split("\n") if proc.returncode == 0 else []
+    if len(lines) < 3 or not lines[2].strip().isdigit():
+        return None, f"{python} did not report its version."
+    real, stdlib, version = lines[0].strip(), lines[1].strip(), int(lines[2])
+    if version < 309:
+        return None, f"{real} is older than Python 3.9."
+    dynload = os.path.join(stdlib, "lib-dynload")
+    for path in [real, stdlib] + ([dynload] if os.path.isdir(dynload) else []):
+        problem = ownership_problem(path)
+        if problem:
+            return None, problem
+    return real, None
+
+
+ROOT_PYTHON_GUIDANCE = (
+    "Card preparation runs its helper as root with a Python that only root can change. "
+    "Install Apple's Command Line Tools (run 'xcode-select --install' in Terminal), which provide one, "
+    "or start the assistant with a Python whose files are all owned by root and not group-writable.")
+
+
+def select_root_python(run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                       own: str | None = None) -> str:
+    """The interpreter root runs the helper with: Apple's /usr/bin/python3 (Command Line
+    Tools) when installed and root-owned, otherwise the assistant's own Python if it is
+    root-owned; anything else is refused with guidance."""
+    reasons = []
+    try:
+        clt = run(["/usr/bin/xcode-select", "-p"], capture_output=True, text=True, timeout=30,
+                  env={"PATH": ROOT_PATH})
+        have_clt = clt.returncode == 0 and bool(clt.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        have_clt = False
+    candidates = ([CLT_PYTHON] if have_clt and os.path.exists(CLT_PYTHON) else []) + [own or sys.executable]
+    for python in candidates:
+        real, problem = interpreter_problem(python, run)
+        if real:
+            return real
+        reasons.append(problem)
+    raise DeviceError(ROOT_PYTHON_GUIDANCE + " (" + " ".join(r for r in reasons if r) + ")")
+
+
+def _completed(run, argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedProcess:
+    """Run a command; a timeout or start failure becomes a failed result instead of an exception."""
+    try:
+        return run(argv, capture_output=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "" if kwargs.get("text") else b"",
+                                           f"{' '.join(argv)} did not finish within {timeout} s."
+                                           if kwargs.get("text") else b"timed out")
+    except OSError as exc:
+        return subprocess.CompletedProcess(argv, 127, "" if kwargs.get("text") else b"",
+                                           str(exc) if kwargs.get("text") else str(exc).encode())
+
+
 class MacOps:
     """diskutil as the person, raw sector access as root through the password prompt."""
 
     def __init__(self, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
                  python: str | None = None, helper: Path = HELPER_PATH):
         self.run = run
-        self.python = python or os.path.realpath(sys.executable)
+        self.python = python  # chosen on the first privileged call unless given
         self.helper = helper
 
     def _diskutil(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-        return self.run([DISKUTIL, *args], capture_output=True, text=True, timeout=timeout)
+        return _completed(self.run, [DISKUTIL, *args], timeout, text=True)
 
     def _plist(self, *args: str) -> dict:
-        proc = self.run([DISKUTIL, *args], capture_output=True, timeout=60)
+        proc = _completed(self.run, [DISKUTIL, *args], 60)
         if proc.returncode != 0:
             raise DeviceError(f"diskutil {' '.join(args)} failed.")
-        value = plistlib.loads(proc.stdout)
+        try:
+            value = plistlib.loads(proc.stdout)
+        except Exception as exc:
+            raise DeviceError(f"diskutil {' '.join(args)} returned an unreadable plist.") from exc
         if not isinstance(value, dict):
             raise DeviceError(f"diskutil {' '.join(args)} returned no dictionary.")
         return value
 
     def refresh(self, cand: Candidate) -> Candidate:
-        """Query the card again; refuse if it is no longer exactly the card the person chose."""
+        """Query the card again by its whole-disk and partition identity (mounted or not);
+        refuse if it is no longer exactly the card the person chose."""
         boot = boot_wholes_macos(self._plist("info", "-plist", "/"))
         listing = self._plist("list", "-plist", cand.whole_id)
         entries = [e for e in listing.get("AllDisksAndPartitions") or []
@@ -407,7 +530,7 @@ class MacOps:
         now = classify_macos(whole, parts, boot)
         if not now.accepted:
             raise DeviceError("The card is no longer acceptable: " + " ".join(now.refusals))
-        if now.identity() != cand.identity():
+        if not same_card(cand, now):
             raise DeviceError("The card changed since you chose it (another card, or it was reinserted). "
                               "Search for cards again.")
         return now
@@ -427,17 +550,18 @@ class MacOps:
         return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
     def _privileged(self, args: list[str], prompt: str) -> dict:
+        if self.python is None:
+            self.python = select_root_python(self.run)
         helper_sha = hashlib.sha256(self.helper.read_bytes()).hexdigest()
         script = privileged_script(self.python, self.helper, helper_sha, args)
         try:
             proc = self.run([OSASCRIPT, "-e", applescript(script, prompt)], capture_output=True, text=True,
                             timeout=1800)
-        except subprocess.TimeoutExpired as exc:
-            raise DeviceError("The password prompt or the helper did not finish within 30 minutes; "
-                              "the card's state is unknown.") from exc
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DeviceError(f"The password prompt or the helper did not finish ({exc}).") from exc
         if proc.returncode != 0:
             if "-128" in proc.stderr or "User canceled" in proc.stderr:
-                raise Cancelled("The password prompt was cancelled; nothing was read or written.")
+                raise Cancelled("The password prompt was cancelled.")
             raise DeviceError("The privileged helper did not run: " + proc.stderr.strip())
         lines = [line for line in proc.stdout.replace("\r", "\n").splitlines() if line.strip()]
         try:
@@ -453,21 +577,26 @@ class MacOps:
         result = self._privileged(
             ["read", "--disk", cand.raw_disk, "--partition", cand.raw_partition, "--length", str(length)],
             f"The Canon R5 build assistant wants to READ the boot sectors of the SD card "
-            f"“{cand.volume_name}” ({cand.whole_id}). Nothing is written in this step.")
+            f"{cand.label()} ({cand.whole_id}) and back them up. Nothing is written in this step.")
         if not result.get("ok"):
             raise DeviceError(f"Reading the card failed: {result.get('error')}")
-        return bytes.fromhex(result["mbr_hex"]), bytes.fromhex(result["area_hex"])
+        try:
+            return bytes.fromhex(result["mbr_hex"]), bytes.fromhex(result["area_hex"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DeviceError("The privileged helper returned unreadable data.") from exc
 
-    def raw_write(self, cand: Candidate, ranges: list[tuple[int, int]], expect_sha256: str, after: bytes) -> dict:
+    def raw_write(self, cand: Candidate, ranges: list[tuple[int, int]], expect_sha256: str, after: bytes, *,
+                  expect_mbr_sha256: str, expect_area_sha256: str) -> dict:
         with tempfile.TemporaryDirectory(prefix="r5-cardprep-") as tmp:
             path = Path(tmp) / "after.bin"
             path.write_bytes(after)
             args = ["write", "--disk", cand.raw_disk, "--partition", cand.raw_partition]
             for offset, length in ranges:
                 args += ["--range", f"{offset}:{length}"]
-            args += ["--expect-sha", expect_sha256, "--after", str(path),
+            args += ["--expect-sha", expect_sha256, "--expect-mbr-sha", expect_mbr_sha256,
+                     "--expect-area-sha", expect_area_sha256, "--after", str(path),
                      "--after-sha", hashlib.sha256(after).hexdigest()]
             sectors = ", ".join(str(o // 512) for o, _ in ranges)
             return self._privileged(
                 args, f"The Canon R5 build assistant wants to WRITE boot sector(s) {sectors} of the SD card "
-                      f"“{cand.volume_name}” ({cand.whole_id}). Your backup is already saved.")
+                      f"{cand.label()} ({cand.whole_id}). Its backup is already saved.")

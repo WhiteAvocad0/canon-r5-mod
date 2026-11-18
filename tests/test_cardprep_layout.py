@@ -216,6 +216,32 @@ class Restore(unittest.TestCase):
         partial = area[:6144] + marked[6144:6144 + 512] + area[6144 + 512:]  # only sector 12 written
         self.assertEqual(layout.plan_restore(mbr, area, mbr, partial, disk_bytes=disk).after_area, area)
 
+    def test_every_step_keeps_one_exfat_region_valid(self):
+        """F7: from any interrupted marking, the restore order never invalidates both regions."""
+        mbr, area, disk = ci.exfat_card()
+        mark = layout.plan_markers(mbr, area, disk_bytes=disk)
+
+        def valid(buf, base):
+            region = buf[base:base + 6144]
+            return region[5632:] == layout.exfat_checksum_sector(layout.exfat_boot_checksum(region))
+        for k in range(len(mark.writes) + 1):
+            current = bytearray(area)
+            for w in mark.writes[:k]:
+                current[w.offset:w.offset + 512] = w.after
+            self.assertTrue(valid(current, 0) or valid(current, 6144), f"marking prefix {k}")
+            plan = layout.plan_restore(mbr, area, mbr, bytes(current), disk_bytes=disk)
+            state = bytearray(current)
+            for w in plan.writes:
+                state[w.offset:w.offset + 512] = w.after
+                self.assertTrue(valid(state, 0) or valid(state, 6144), (k, w.sector))
+            self.assertEqual(bytes(state), area)
+        # After 3 of 4 marking writes the main region is the invalid one, so it is repaired first.
+        current = bytearray(area)
+        for w in mark.writes[:3]:
+            current[w.offset:w.offset + 512] = w.after
+        self.assertEqual([w.sector for w in layout.plan_restore(mbr, area, mbr, bytes(current),
+                                                                disk_bytes=disk).writes], [0, 12, 23])
+
     def test_nothing_to_restore(self):
         mbr, area, disk = ci.fat32_card()
         self.assertFalse(layout.plan_restore(mbr, area, mbr, area, disk_bytes=disk).writes_needed)

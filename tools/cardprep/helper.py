@@ -8,15 +8,22 @@ handles a password. It is self-contained (standard library only) and accepts onl
   version
   read  --disk /dev/rdiskN --partition /dev/rdiskNsM --length BYTES
   write --disk /dev/rdiskN --partition /dev/rdiskNsM --range OFFSET:LENGTH [--range ...]
-        --expect-sha HEX --after FILE --after-sha HEX
+        --expect-sha HEX --expect-mbr-sha HEX --expect-area-sha HEX --after FILE --after-sha HEX
 
 ``read`` returns the 512-byte MBR of the disk and the first BYTES of the
-partition. ``write`` writes only the listed ranges of the partition, and only if
-the bytes currently there hash to --expect-sha; it then reads back the whole boot
-area and the MBR. The MBR is only ever read. Write ranges are single 512-byte
-sectors chosen from partition sectors 0, 11, 12 and 23, at most four, non-overlapping, and written
-in the order given, each followed by fsync. It prints exactly one JSON line and
-exits 0 for every handled outcome (refusals included); a crash exits non-zero.
+partition. ``write`` first checks, on the open devices, that the MBR, the whole
+24-sector boot area and the target sectors still hash to the values from the
+read the plan was made from (so a swapped or changed card is refused), and only
+then writes the listed ranges; it then reads back the whole boot area and the
+MBR. The MBR is only ever read. Write ranges are single 512-byte sectors chosen
+from partition sectors 0, 11, 12 and 23, at most four, non-overlapping, written
+in the order given, each followed by fsync. A sector whose write was started but
+not confirmed is reported in ``possibly_written``. It prints exactly one JSON
+line and exits 0 for every handled outcome (refusals included); a crash exits
+non-zero. Paths are checked against the whitelist before they are touched.
+
+It must stay runnable by Python 3.9 (the root-owned Python of Apple's Command
+Line Tools), using only the standard library.
 """
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ import re
 import stat
 import sys
 
-PROTOCOL = 1
+PROTOCOL = 2
 SECTOR = 512
 AREA_BYTES = 24 * SECTOR
 MAX_RANGES = 4
@@ -41,7 +48,7 @@ OPTIONS = {
     "version": {},
     "read": {"--disk": "one", "--partition": "one", "--length": "one"},
     "write": {"--disk": "one", "--partition": "one", "--range": "many", "--expect-sha": "one",
-              "--after": "one", "--after-sha": "one"},
+              "--expect-mbr-sha": "one", "--expect-area-sha": "one", "--after": "one", "--after-sha": "one"},
 }
 
 
@@ -77,27 +84,29 @@ def parse_args(argv: list[str]) -> tuple[str, dict]:
     return op, values
 
 
-def _device(path: str, pattern: re.Pattern, allow_image_files: bool) -> str:
-    """A raw disk node matching the whitelist (or, in tests only, a regular image file)."""
+def _stat(path: str) -> os.stat_result:
     try:
-        st = os.stat(path)
+        return os.stat(path)
     except OSError as exc:
         raise Refused("device_missing", f"Cannot open {path}: {exc.strerror}.")
-    if allow_image_files and stat.S_ISREG(st.st_mode) and not os.path.islink(path):
-        return path
-    if not pattern.fullmatch(path):
-        raise Refused("device_not_allowed", f"{path} is not an allowed raw disk node.")
-    if not stat.S_ISCHR(st.st_mode):
-        raise Refused("device_not_allowed", f"{path} is not a raw character device.")
-    return path
 
 
 def _devices(values: dict, allow_image_files: bool) -> tuple[str, str]:
-    disk = _device(values["--disk"], DISK_RE, allow_image_files)
-    part = _device(values["--partition"], PART_RE, allow_image_files)
+    """Raw disk nodes matching the whitelist (or, in tests only, regular image files).
+
+    The names are checked before anything is looked up on disk."""
+    disk, part = values["--disk"], values["--partition"]
+    if allow_image_files and not os.path.islink(disk) and not os.path.islink(part) \
+            and all(stat.S_ISREG(_stat(p).st_mode) for p in (disk, part)):
+        return disk, part
     d, p = DISK_RE.fullmatch(disk), PART_RE.fullmatch(part)
-    if (d is None) != (p is None) or (d and d.group(1) != p.group(1)):
+    if d is None or p is None:
+        raise Refused("device_not_allowed", f"{disk} / {part} are not allowed raw disk nodes.")
+    if d.group(1) != p.group(1):
         raise Refused("device_not_allowed", "The partition does not belong to the given disk.")
+    for path in (disk, part):
+        if not stat.S_ISCHR(_stat(path).st_mode):
+            raise Refused("device_not_allowed", f"{path} is not a raw character device.")
     return disk, part
 
 
@@ -181,46 +190,57 @@ def _after_file(path: str, size: int, expected_sha: str) -> bytes:
 def do_write(values: dict, allow_image_files: bool) -> dict:
     disk, part = _devices(values, allow_image_files)
     ranges = _ranges(values["--range"], WRITABLE_OFFSETS)
-    expect, after_sha = values["--expect-sha"], values["--after-sha"]
-    if not SHA_RE.fullmatch(expect) or not SHA_RE.fullmatch(after_sha):
+    shas = {k: values[k] for k in ("--expect-sha", "--expect-mbr-sha", "--expect-area-sha", "--after-sha")}
+    if not all(SHA_RE.fullmatch(v) for v in shas.values()):
         raise Refused("usage", "SHA-256 values must be 64 lowercase hex digits.")
-    after = _after_file(values["--after"], sum(n for _, n in ranges), after_sha)
+    after = _after_file(values["--after"], sum(n for _, n in ranges), shas["--after-sha"])
     pieces, at = [], 0
     for _, n in ranges:
         pieces.append(after[at:at + n])
         at += n
-    mbr_before = _read_mbr(disk)
     written: list[int] = []
-    fd = os.open(part, os.O_RDWR)
+    started: list[int] = []
+    mbr_fd = os.open(disk, os.O_RDONLY)
     try:
-        current = b"".join(_pread(fd, o, n) for o, n in ranges)
-        if _sha(current) != expect:
-            raise Refused("before_mismatch",
-                          "The card's current bytes differ from what was planned; nothing was written.",
-                          current_sha256=_sha(current), written=[])
-        if current != after:
-            try:
-                for (offset, _), data in zip(ranges, pieces):
-                    _pwrite(fd, offset, data)
-                    os.fsync(fd)
-                    written.append(offset)
-            except OSError as exc:
-                raise Refused("write_failed", f"Writing failed after {len(written)} of {len(ranges)} range(s): {exc}",
-                              written=written)
+        fd = os.open(part, os.O_RDWR)
         try:
-            readback = b"".join(_pread(fd, o, n) for o, n in ranges)
-            area = _pread(fd, 0, AREA_BYTES)
-        except (OSError, Refused) as exc:
-            raise Refused("readback_failed", f"Reading back after the write failed: {exc}", written=written)
+            mbr_before = _pread(mbr_fd, 0, SECTOR)
+            area_before = _pread(fd, 0, AREA_BYTES)
+            current = b"".join(area_before[o:o + n] for o, n in ranges)
+            for name, data, what in (("--expect-mbr-sha", mbr_before, "MBR"),
+                                     ("--expect-area-sha", area_before, "boot area"),
+                                     ("--expect-sha", current, "target sectors")):
+                if _sha(data) != shas[name]:
+                    raise Refused("before_mismatch",
+                                  f"The card's {what} differs from the read the plan was made from; nothing was written.",
+                                  mismatch=what, written=[], possibly_written=[])
+            if current != after:
+                try:
+                    for (offset, _), data in zip(ranges, pieces):
+                        started.append(offset)
+                        _pwrite(fd, offset, data)
+                        os.fsync(fd)
+                        written.append(offset)
+                except OSError as exc:
+                    raise Refused("write_failed",
+                                  f"Writing failed at byte {started[-1]} ({len(written)} of {len(ranges)} sector(s) "
+                                  f"confirmed): {exc}", written=written, possibly_written=started)
+            try:
+                readback = b"".join(_pread(fd, o, n) for o, n in ranges)
+                area = _pread(fd, 0, AREA_BYTES)
+                mbr_after = _pread(mbr_fd, 0, SECTOR)
+            except (OSError, Refused) as exc:
+                raise Refused("readback_failed", f"Reading back after the write failed: {exc}",
+                              written=written, possibly_written=started)
+        finally:
+            os.close(fd)
     finally:
-        os.close(fd)
-    try:
-        mbr_after = _read_mbr(disk)
-    except (OSError, Refused) as exc:
-        raise Refused("readback_failed", f"Reading back the MBR failed: {exc}", written=written)
-    return {"ok": readback == after and mbr_after == mbr_before, "code": None if readback == after else "readback_mismatch",
-            "written": written, "before_sha256": _sha(current), "readback_sha256": _sha(readback),
-            "mbr_unchanged": mbr_after == mbr_before, "mbr_hex": mbr_after.hex(), "area_hex": area.hex()}
+        os.close(mbr_fd)
+    ok = readback == after and mbr_after == mbr_before
+    return {"ok": ok, "code": None if ok else "readback_mismatch",
+            "written": written, "possibly_written": started, "before_sha256": _sha(current),
+            "readback_sha256": _sha(readback), "mbr_unchanged": mbr_after == mbr_before,
+            "mbr_hex": mbr_after.hex(), "area_hex": area.hex()}
 
 
 def main(argv: list[str], *, allow_image_files: bool = False) -> dict:

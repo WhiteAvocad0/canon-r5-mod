@@ -1,10 +1,23 @@
-"""Read, back up, write and verify Canon boot markers, and restore from a backup.
+"""Prepare a card's Canon boot markers, or restore them from a backup, in one session.
 
-The card steps take an ``ops`` object (devices.MacOps on macOS, an image-file fake
-in the tests) with refresh, unmount, mount, verify, raw_read and raw_write. Every
-step re-checks the card's identity first, unmounts only its partition (never
-ejects), and mounts it again before returning, also after a failure or a
-cancelled password prompt.
+``start`` re-checks the chosen card, unmounts its partition if it is mounted (never
+ejects), reads the MBR and the 24-sector boot area as root, makes the plan and saves
+a backup that is verified by re-reading. When nothing needs writing it mounts the
+card again and the session carries the finished report. Otherwise the card stays
+unmounted until ``write`` or ``cancel``, so nothing on the Mac can change the boot
+sectors between the read and the write.
+
+``write`` re-checks the card again, then has root write only the planned sectors,
+and only if the MBR, the whole boot area and the target sectors still hash to the
+read's values. It reads everything back, runs the volume check and mounts the card
+again. ``write`` and ``cancel`` never raise: every outcome is a Report that names
+the backup folder and is saved next to it as result-*.json.
+
+The card is identified by its whole-disk and partition identity, not by a mount,
+so an unmounted, half-written or unmountable card can still be read and restored.
+
+The ``ops`` object is devices.MacOps on macOS, or an image-file stand-in in the tests:
+refresh, unmount, mount, verify, raw_read and raw_write.
 """
 from __future__ import annotations
 
@@ -16,7 +29,7 @@ from pathlib import Path
 import stat
 
 from . import layout
-from .devices import Cancelled, Candidate, DeviceError
+from .devices import Cancelled, Candidate
 from .layout import AREA_BYTES, MBR_BYTES, CardPrepError, Plan, sha256
 
 BACKUP_FORMAT = "r5-cardprep-backup"
@@ -26,6 +39,7 @@ MANIFEST = "manifest.json"
 MBR_FILE = "mbr.bin"
 AREA_FILE = "boot-area.bin"
 MAX_MANIFEST_BYTES = 1024 * 1024
+RESTORE_IDENTITY = ("disk_bytes", "partition_offset", "partition_bytes", "model", "location")
 
 
 class PrepFailure(Exception):
@@ -38,7 +52,6 @@ class Snapshot:
     mbr: bytes
     area: bytes
     volume: layout.VolumeFacts
-    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -56,10 +69,28 @@ class Report:
     lines: list[str] = field(default_factory=list)
     written_sectors: list[int] = field(default_factory=list)
     record: Path | None = None
+    nothing_written: bool = False
+
+
+@dataclass
+class Session:
+    snapshot: Snapshot
+    plan: Plan
+    backup: Backup
+    report: Report | None = None  # set when the session finished without needing a write
+    source: Backup | None = None  # the backup being restored (restore sessions only)
+
+    @property
+    def kind(self) -> str:
+        return self.plan.kind
+
+    @property
+    def needs_write(self) -> bool:
+        return self.report is None
 
 
 def _identity_matches(cand: Candidate, volume: layout.VolumeFacts) -> None:
-    if volume.filesystem != cand.filesystem:
+    if cand.filesystem and volume.filesystem != cand.filesystem:
         raise CardPrepError("geometry_mismatch",
                             f"macOS reports {cand.filesystem}, but the boot sector is {volume.filesystem}.")
     if (volume.mbr.start_bytes, volume.mbr.size_bytes) != (cand.partition_offset, cand.partition_bytes):
@@ -69,53 +100,16 @@ def _identity_matches(cand: Candidate, volume: layout.VolumeFacts) -> None:
                             f"macOS {cand.partition_offset}+{cand.partition_bytes}).")
 
 
-def _raw_read(cand: Candidate, ops) -> tuple[Candidate, bytes, bytes, tuple[str, ...]]:
-    """Unmount, read the MBR and the 24-sector boot area as root, mount again (no validation)."""
-    cand = ops.refresh(cand)
-    ops.unmount(cand)
+def _mount(ops, cand: Candidate) -> tuple[bool, str]:
     try:
-        mbr, area = ops.raw_read(cand, AREA_BYTES)
-    except Exception as exc:
-        mounted, out = ops.mount(cand)
-        if not mounted:
-            raise PrepFailure(f"{exc} The card also could not be mounted again ({out}); remove and reinsert it.") from exc
-        raise
-    mounted, out = ops.mount(cand)
-    warnings = () if mounted else (f"The card could not be mounted again ({out}). Remove and reinsert it.",)
-    if len(mbr) != MBR_BYTES or len(area) != AREA_BYTES:
-        raise PrepFailure("The helper returned the wrong number of bytes; nothing was written." + "".join(
-            " " + w for w in warnings))
-    return cand, mbr, area, warnings
+        return ops.mount(cand)
+    except Exception as exc:  # a mount problem must never hide the outcome of the step
+        return False, str(exc)
 
 
-def _with_warnings(exc: CardPrepError, warnings: tuple[str, ...]) -> CardPrepError:
-    return CardPrepError(exc.code, " ".join((str(exc),) + warnings)) if warnings else exc
-
-
-def read_card(cand: Candidate, ops) -> Snapshot:
-    """Read the card and validate it as a camera-formatted volume (for marking)."""
-    cand, mbr, area, warnings = _raw_read(cand, ops)
-    try:
-        volume = layout.inspect(mbr, area, disk_bytes=cand.disk_bytes)
-        _identity_matches(cand, volume)
-    except CardPrepError as exc:
-        raise _with_warnings(exc, warnings) from exc
-    return Snapshot(cand, mbr, area, volume, warnings)
-
-
-def read_card_for_restore(cand: Candidate, ops, backup: "Backup") -> tuple[Snapshot, Plan]:
-    """Read the card and plan a restore from the backup.
-
-    The current boot area is not required to validate on its own: after an
-    interrupted write one exFAT region may have a stale checksum. restore_plan
-    checks the card against the backup byte for byte instead, and the restored
-    result must validate."""
-    cand, mbr, area, warnings = _raw_read(cand, ops)
-    try:
-        plan = restore_plan(cand, mbr, area, backup)
-    except CardPrepError as exc:
-        raise _with_warnings(exc, warnings) from exc
-    return Snapshot(cand, mbr, area, plan.volume, warnings), plan
+def _mount_line(mounted: bool, out: str) -> str:
+    return "The card is mounted again." if mounted else \
+        f"The card could not be mounted again ({out or 'no details'}). Remove and reinsert it."
 
 
 # -- backups ------------------------------------------------------------------------
@@ -136,13 +130,27 @@ def _read_regular(path: Path, limit: int) -> bytes:
         return f.read(limit + 1)
 
 
+def _new_folder(root: Path, name: str) -> Path:
+    """A folder that did not exist before; a numeric suffix avoids any collision."""
+    root.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        folder = root / (name if n == 1 else f"{name}-{n}")
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            continue
+    raise PrepFailure(f"Could not create a new backup folder in {root}.")
+
+
 def save_backup(snapshot: Snapshot, plan: Plan, root: Path = DEFAULT_BACKUP_ROOT, *,
                 purpose: str = "before-marking", now: datetime | None = None) -> Backup:
-    """Save the MBR and boot area to a new timestamped folder, then verify it by re-reading."""
+    """Save the MBR and boot area to a new timestamped folder, then verify it by re-reading.
+
+    Folders are never reused or deleted by this tool."""
     now = datetime.now().astimezone() if now is None else now
     v = snapshot.volume
-    folder = Path(root) / f"{now.strftime('%Y%m%d-%H%M%S')}-{v.filesystem}-{v.serial_hex}-{purpose}"
-    folder.mkdir(parents=True, exist_ok=False)
+    folder = _new_folder(Path(root), f"{now.strftime('%Y%m%d-%H%M%S-%f')}-{v.filesystem}-{v.serial_hex}-{purpose}")
     _write_new(folder / MBR_FILE, snapshot.mbr)
     _write_new(folder / AREA_FILE, snapshot.area)
     manifest = {
@@ -183,65 +191,164 @@ def load_backup(folder: Path) -> Backup:
     return Backup(folder, files["mbr"], files["area"], manifest)
 
 
+def latest_backup(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT) -> Backup | None:
+    """The newest valid backup of this card taken before its markers were written."""
+    try:
+        folders = sorted((p for p in Path(root).iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True)
+    except OSError:
+        return None
+    for folder in folders:
+        try:
+            backup = load_backup(folder)
+        except PrepFailure:
+            continue
+        card = backup.manifest.get("card") or {}
+        if backup.manifest.get("markers_present") is False and \
+                all(card.get(k) == getattr(cand, k) for k in RESTORE_IDENTITY):
+            return backup
+    return None
+
+
 def _record(backup: Backup, report: Report, extra: dict) -> Path | None:
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f")
     path = backup.folder / f"result-{stamp}.json"
     try:
         _write_new(path, (json.dumps({"ok": report.ok, "title": report.title, "lines": report.lines,
-                                      "written_sectors": report.written_sectors, **extra}, indent=2) + "\n").encode())
+                                      "written_sectors": report.written_sectors,
+                                      "nothing_written": report.nothing_written, **extra}, indent=2) + "\n").encode())
     except OSError:
         return None
     return path
 
 
-# -- write and verify -----------------------------------------------------------------
+# -- plans --------------------------------------------------------------------------
 
 
-def apply_plan(snapshot: Snapshot, plan: Plan, backup: Backup, ops) -> Report:
-    """Write exactly the planned sectors, read everything back, verify the volume, mount again.
+def restore_plan(cand: Candidate, mbr: bytes, area: bytes, backup: Backup) -> Plan:
+    """The writes that put a backup's marker bytes back on the same card."""
+    card = backup.manifest.get("card") or {}
+    for key in RESTORE_IDENTITY + (("filesystem",) if cand.filesystem else ()):
+        if card.get(key) != getattr(cand, key):
+            raise CardPrepError("restore_identity",
+                                f"This backup belongs to another card or slot ({key}: backup {card.get(key)!r}, "
+                                f"card {getattr(cand, key)!r}).")
+    return layout.plan_restore(backup.mbr, backup.area, mbr, area, disk_bytes=cand.disk_bytes)
 
-    Refuses unless the verified backup holds exactly the bytes the plan was made from."""
-    if backup.mbr != snapshot.mbr or backup.area != snapshot.area or plan.before_area != snapshot.area:
-        raise PrepFailure("The backup and plan are not from this read of the card; read the card again.")
-    what = "Boot markers" if plan.kind == "mark" else "Restore"
+
+# -- the session ----------------------------------------------------------------------
+
+
+def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
+          restore_from: Backup | None = None, now: datetime | None = None) -> Session:
+    """Read the card, save a verified backup and plan the writes.
+
+    Nothing is ever written to the card here. On any failure the card is mounted
+    again and the exception says why; a plan that needs writing leaves the card
+    unmounted for write() or cancel()."""
+    cand = ops.refresh(cand)
+    if cand.mounted:
+        try:
+            ops.unmount(cand)
+        except Exception as exc:
+            mounted, out = _mount(ops, cand)
+            raise PrepFailure(f"{exc} Nothing was read or written. " + _mount_line(mounted, out)) from exc
+    try:
+        mbr, area = ops.raw_read(cand, AREA_BYTES)
+        if len(mbr) != MBR_BYTES or len(area) != AREA_BYTES:
+            raise PrepFailure("The helper returned the wrong number of bytes.")
+        if restore_from is not None:
+            # The current boot area need not validate on its own (an interrupted write can
+            # leave one exFAT region with a stale checksum); plan_restore checks it byte
+            # for byte against the backup and validates the result instead.
+            plan = restore_plan(cand, mbr, area, restore_from)
+            volume, purpose = plan.volume, "before-restore"
+        else:
+            volume = layout.inspect(mbr, area, disk_bytes=cand.disk_bytes)
+            _identity_matches(cand, volume)
+            plan = layout.plan_markers(mbr, area, disk_bytes=cand.disk_bytes)
+            purpose = "before-marking"
+        snapshot = Snapshot(cand, mbr, area, volume)
+        backup = save_backup(snapshot, plan, backup_root, purpose=purpose, now=now)
+    except Exception as exc:
+        mounted, out = _mount(ops, cand)
+        note = " Nothing was written. " + _mount_line(mounted, out)
+        if isinstance(exc, CardPrepError):
+            raise CardPrepError(exc.code, str(exc) + note) from exc
+        if isinstance(exc, Cancelled):
+            raise Cancelled(str(exc) + note) from exc
+        raise PrepFailure(str(exc) + note) from exc
+    session = Session(snapshot, plan, backup, source=restore_from)
     if not plan.writes_needed:
-        report = Report(True, f"{what}: nothing to write.", layout.describe_plan(plan))
+        mounted, out = _mount(ops, cand)
+        title = "Already prepared: nothing to write." if plan.kind == "mark" else "Nothing to restore."
+        report = Report(True, title, layout.describe_plan(plan) + [_mount_line(mounted, out),
+                                                                  f"Backup: {backup.folder}"], nothing_written=True)
         report.record = _record(backup, report, {"plan": plan.to_dict()})
-        return report
+        session.report = report
+    return session
 
-    cand = ops.refresh(snapshot.candidate)
-    ops.unmount(cand)
+
+def cancel(session: Session, ops) -> Report:
+    """The person declined the write: mount the card again; nothing was written."""
+    mounted, out = _mount(ops, session.snapshot.candidate)
+    report = Report(False, "Cancelled. Nothing was written.",
+                    [_mount_line(mounted, out), f"Backup: {session.backup.folder}"], nothing_written=True)
+    report.record = _record(session.backup, report, {"plan": session.plan.to_dict()})
+    return report
+
+
+def write(session: Session, ops) -> Report:
+    """Write exactly the planned sectors, read everything back, check the volume, mount again."""
+    snapshot, plan, backup = session.snapshot, session.plan, session.backup
+    what = "Boot markers" if plan.kind == "mark" else "Restore"
     report = Report(False, f"{what}: FAILED.")
     result: dict = {}
+    cand = snapshot.candidate
+    if not session.needs_write or backup.mbr != snapshot.mbr or backup.area != snapshot.area \
+            or plan.before_area != snapshot.area:
+        report.title, report.nothing_written = f"{what}: refused. Nothing was written.", True
+        report.lines.append("The backup and plan are not from this read of the card.")
+        return report
     try:
         try:
+            cand = ops.refresh(snapshot.candidate)
+            if cand.mounted:  # mounted again by someone since the read
+                ops.unmount(cand)
+        except Exception as exc:
+            report.title, report.nothing_written = f"{what}: not written.", True
+            report.lines.append(f"The card could not be re-checked before writing: {exc} Nothing was written.")
+            return report
+        try:
             result = ops.raw_write(cand, [(w.offset, len(w.after)) for w in plan.writes],
-                                   sha256(plan.expected_before), plan.after_bytes)
+                                   sha256(plan.expected_before), plan.after_bytes,
+                                   expect_mbr_sha256=sha256(snapshot.mbr), expect_area_sha256=sha256(snapshot.area))
         except Cancelled:
-            report.title = f"{what}: cancelled. Nothing was written."
+            report.title, report.nothing_written = f"{what}: cancelled. Nothing was written.", True
             report.lines.append("The password prompt was cancelled.")
             return report
-        except DeviceError as exc:
+        except Exception as exc:
+            report.title = f"{what}: card state unknown."
             report.lines += [f"The helper did not report a result: {exc}",
-                             "The card's state is unknown. Read the card again before using it; "
-                             f"if it differs from the plan, restore it from {backup.folder}."]
+                             "Read the card again before using it (Prepare or Undo do that first)."]
             return report
         written = [o // layout.SECTOR for o in result.get("written") or []]
-        report.written_sectors = written
+        possibly = [o // layout.SECTOR for o in result.get("possibly_written") or result.get("written") or []]
+        report.written_sectors = possibly
         if result.get("code") == "before_mismatch":
-            report.title = f"{what}: refused. Nothing was written."
-            report.lines.append("The card changed since it was read (for example a file was copied to it). "
-                                "Read the card again.")
+            report.title, report.nothing_written = f"{what}: refused. Nothing was written.", True
+            report.lines.append(f"The card's {result.get('mismatch') or 'boot sectors'} changed since it was read, "
+                                "or it is another card. Try again.")
             return report
         if not result.get("ok") and "area_hex" not in result:
             report.lines += [f"The helper stopped: {result.get('error')}",
-                             f"Sectors written before it stopped: {written or 'none'}.",
-                             f"Do not use the card yet. Restore it from {backup.folder}."]
+                             f"Sectors written: {written or 'none'}; possibly written (started but not confirmed): "
+                             f"{[s for s in possibly if s not in written] or 'none'}.",
+                             "Do not use the card yet. Undo restores it from the backup below."]
             return report
         try:
             problems = layout.verify_written(plan, snapshot.mbr, bytes.fromhex(result.get("mbr_hex", "")),
                                              bytes.fromhex(result.get("area_hex", "")),
-                                             disk_bytes=snapshot.candidate.disk_bytes)
+                                             disk_bytes=cand.disk_bytes)
         except (TypeError, ValueError) as exc:
             problems = [f"The helper's read-back could not be decoded ({exc})."]
         if not result.get("ok"):
@@ -251,11 +358,11 @@ def apply_plan(snapshot: Snapshot, plan: Plan, backup: Backup, ops) -> Report:
         except Exception as exc:  # a timeout or crash here must not hide what was written
             verified, output = False, f"diskutil verifyVolume did not complete: {exc}"
         last = output.strip().splitlines()[-1] if output.strip() else "(no output)"
-        report.lines.append(f"Sectors written: {', '.join(map(str, written)) or 'none'} "
-                            f"({len(written) * layout.SECTOR:,} bytes).")
+        report.lines.append(f"Sectors written: {', '.join(map(str, possibly)) or 'none'} "
+                            f"({len(possibly) * layout.SECTOR:,} bytes).")
         if problems:
             report.lines += ["Read-back check FAILED:"] + [f"- {p}" for p in problems]
-            report.lines.append(f"Do not use the card yet. Restore it from {backup.folder}.")
+            report.lines.append("Do not use the card yet. Undo restores it from the backup below.")
         else:
             report.lines.append("Read-back check passed: every written byte matches the plan, the MBR is unchanged "
                                 "and the boot area validates.")
@@ -264,24 +371,17 @@ def apply_plan(snapshot: Snapshot, plan: Plan, backup: Backup, ops) -> Report:
         if report.ok:
             report.title = f"{what}: done and verified."
         elif not problems:
-            report.lines.append("The written bytes are correct but the filesystem check did not pass. Check the card "
-                                f"with Disk Utility First Aid, or restore it from {backup.folder}.")
+            report.lines.append("The written bytes are correct but the volume check did not pass. On FAT32 this can "
+                                "be the backup boot sector, which is left unmarked by design. Check the card with "
+                                "Disk Utility First Aid, or use Undo.")
+        return report
+    except Exception as exc:  # never lose the report
+        report.title = f"{what}: card state unknown."
+        report.lines.append(f"Unexpected error: {exc}")
         return report
     finally:
-        mounted, out = ops.mount(cand)
-        report.lines.append("The card is mounted again." if mounted else
-                            f"The card could not be mounted again ({out}). Remove and reinsert it.")
+        mounted, out = _mount(ops, cand)
+        report.lines.append(_mount_line(mounted, out))
+        report.lines.append(f"Backup: {backup.folder}")
         report.record = _record(backup, report, {"plan": plan.to_dict(), "helper": {
             k: v for k, v in result.items() if k not in ("area_hex", "mbr_hex")}})
-
-
-def restore_plan(cand: Candidate, mbr: bytes, area: bytes, backup: Backup) -> Plan:
-    """The writes that put a backup's marker bytes back on the same card."""
-    card = backup.manifest.get("card") or {}
-    now = cand.identity()
-    for key in ("disk_bytes", "partition_offset", "partition_bytes", "filesystem", "model", "location"):
-        if card.get(key) != now.get(key):
-            raise CardPrepError("restore_identity",
-                                f"This backup belongs to another card or slot ({key}: backup {card.get(key)!r}, "
-                                f"card {now.get(key)!r}).")
-    return layout.plan_restore(backup.mbr, backup.area, mbr, area, disk_bytes=cand.disk_bytes)

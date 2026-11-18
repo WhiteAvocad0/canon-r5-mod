@@ -417,9 +417,19 @@ def _sector_writes(before: bytes, after: bytes, order) -> tuple[SectorWrite, ...
                  for s in changed)
 
 
-def _exfat_order(sector: int) -> tuple[int, int]:
-    """Backup region first, and within a region the marker sector before the checksum sector."""
-    return (0 if sector >= EXFAT_REGION_SECTORS else 1, sector)
+def _exfat_order(current: bytes):
+    """Write order for exFAT: a region whose checksum is currently invalid first (so the
+    other, valid region stays valid until it is repaired), otherwise the backup region
+    first; within a region the marker sector before the checksum sector. Each step then
+    leaves at least one region valid."""
+    invalid = {base for _, base in EXFAT_REGIONS
+               if current[base + EXFAT_CHECKSUM_OFFSET:base + EXFAT_REGION_BYTES]
+               != exfat_checksum_sector(exfat_boot_checksum(current[base:base + EXFAT_REGION_BYTES]))}
+
+    def key(sector: int) -> tuple[int, int, int]:
+        base = EXFAT_REGION_BYTES if sector >= EXFAT_REGION_SECTORS else 0
+        return (0 if base in invalid else 1, 0 if base else 1, sector)
+    return key
 
 
 def _label(filesystem: str):
@@ -457,7 +467,7 @@ def plan_markers(mbr: bytes, area: bytes, *, disk_bytes: int) -> Plan:
     """The exact writes that add the boot markers; none if they are already there."""
     volume = inspect(mbr, area, disk_bytes=disk_bytes)
     after = area if volume.markers_present else _mark(area, volume.filesystem)
-    order = _exfat_order if volume.filesystem == EXFAT else (lambda s: s)
+    order = _exfat_order(area) if volume.filesystem == EXFAT else (lambda s: s)
     writes = _sector_writes(area, after, order)
     check = inspect(mbr, after, disk_bytes=disk_bytes)
     _require(check.markers_present and check.identity() == volume.identity(), "plan_self_check",
@@ -524,7 +534,7 @@ def plan_restore(original_mbr: bytes, original_area: bytes, current_mbr: bytes, 
     _require(check.identity() == original.identity() and
              [m.present for m in check.markers] == [m.present for m in original.markers],
              "plan_self_check", "Internal check failed: the restored boot area does not match the backup.")
-    order = _exfat_order if original.filesystem == EXFAT else (lambda s: s)
+    order = _exfat_order(current_area) if original.filesystem == EXFAT else (lambda s: s)
     return Plan("restore", original, current_area, after,
                 _diff(current_area, after, _label(original.filesystem)),
                 _sector_writes(current_area, after, order))

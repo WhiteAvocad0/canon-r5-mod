@@ -76,7 +76,6 @@ class MacClassify(unittest.TestCase):
         self.refusal(ci.mac_whole(size=1_000_000_000), [ci.mac_part(size=990_000_000)], "outside the SD card range")
         self.refusal(ci.mac_whole(size=4 * 1024**4), [ci.mac_part()], "outside the SD card range")
         self.refusal(ci.mac_whole(WritableMedia=False), [ci.mac_part()], "write-protected")
-        self.refusal(ci.mac_whole(), [ci.mac_part(mount="")], "not mounted")
         self.refusal(ci.mac_whole(), [ci.mac_part(mount="/")], "running system")
         self.refusal(ci.mac_whole(), [ci.mac_part(mount="/private/var/x")], "system location")
         self.refusal(ci.mac_whole(), [ci.mac_part(fs="hfs", content="Apple_HFS")], "not FAT32 or exFAT")
@@ -85,7 +84,28 @@ class MacClassify(unittest.TestCase):
         self.refusal(ci.mac_whole(Removable=False), [ci.mac_part()], "removable")
         self.refusal(ci.mac_whole(SystemImage=True), [ci.mac_part()], "system media")
         self.refusal(ci.mac_whole(), [ci.mac_part(ParentWholeDisk="disk9")], "does not belong")
-        self.refusal(ci.mac_whole(), [ci.mac_part(name="")], "no name")
+
+    def test_unmounted_card_stays_reachable(self):
+        """F1: the mount state is an observation; an unmounted or unrecognised card is still offered."""
+        cand = devices.classify_macos(ci.mac_whole(), [ci.mac_part(mount="", name="", fs=None, content="DOS_FAT_32")],
+                                      BOOT)
+        self.assertTrue(cand.accepted, cand.refusals)
+        self.assertFalse(cand.mounted)
+        self.assertIsNone(cand.filesystem)
+        self.assertIn("not mounted", cand.summary())
+        chosen = devices.classify_macos(ci.mac_whole(), [ci.mac_part()], BOOT)
+        self.assertTrue(devices.same_card(chosen, cand))
+        self.assertTrue(devices.same_card(cand, chosen))
+        other = devices.classify_macos(ci.mac_whole(), [ci.mac_part(size=ci.LAB_FAT32["sectors"] * 512 - 512)], BOOT)
+        self.assertFalse(devices.same_card(chosen, other))
+        renamed = devices.classify_macos(ci.mac_whole(), [ci.mac_part(name="OTHER")], BOOT)
+        self.assertFalse(devices.same_card(chosen, renamed))
+        moved = devices.classify_macos(ci.mac_whole("disk5"), [ci.mac_part("disk5")], BOOT)
+        self.assertFalse(devices.same_card(chosen, moved))
+
+    def test_label_for_the_dialog(self):
+        ex = devices.classify_macos(ci.mac_whole(size=ci.LAB_EXFAT["disk_bytes"]), [ci.mac_exfat_part()], BOOT)
+        self.assertEqual(ex.label(), "EOS_DIGITAL (126.9 GB exFAT SD card)")
 
     def test_boot_disk_detection(self):
         self.assertEqual(BOOT, {"disk0", "disk3"})

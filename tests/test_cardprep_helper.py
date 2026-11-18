@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -38,13 +39,17 @@ class Images(unittest.TestCase):
     def run_helper(self, *argv):
         return helper.main(list(argv), allow_image_files=True)
 
-    def write_args(self, ranges, expect, after: bytes, after_sha=None):
+    def write_args(self, ranges, expect, after: bytes, after_sha=None, mbr_sha=None, area_sha=None):
+        """Write arguments; the MBR and whole-area hashes default to the image's current bytes."""
         path = self.tmp / "after.bin"
         path.write_bytes(after)
         args = ["write", "--disk", str(self.disk), "--partition", str(self.part)]
         for r in ranges:
             args += ["--range", r]
-        return args + ["--expect-sha", expect, "--after", str(path), "--after-sha", after_sha or sha(after)]
+        return args + ["--expect-sha", expect,
+                       "--expect-mbr-sha", mbr_sha or sha(self.disk.read_bytes()[:512]),
+                       "--expect-area-sha", area_sha or sha(self.part.read_bytes()[:12288]),
+                       "--after", str(path), "--after-sha", after_sha or sha(after)]
 
 
 class Read(Images):
@@ -82,10 +87,26 @@ class Write(Images):
 
     def test_refuses_before_sha_mismatch_without_writing(self):
         before = self.part.read_bytes()
-        out = self.run_helper(*self.write_args(["0:512"], "0" * 64, b"\x01" * 512))
-        self.assertFalse(out["ok"])
-        self.assertEqual(out["code"], "before_mismatch")
-        self.assertEqual(out["written"], [])
+        current = sha(self.area[:512])
+        for kwargs, what in (({"expect": "0" * 64}, "target sectors"), ({"mbr_sha": "0" * 64}, "MBR"),
+                             ({"area_sha": "0" * 64}, "boot area")):
+            args = dict(ranges=["0:512"], expect=current, after=b"\x01" * 512)
+            args.update(kwargs)
+            out = self.run_helper(*self.write_args(**args))
+            self.assertFalse(out["ok"])
+            self.assertEqual((out["code"], out["mismatch"]), ("before_mismatch", what))
+            self.assertEqual((out["written"], out["possibly_written"]), ([], []))
+            self.assertEqual(self.part.read_bytes(), before)
+
+    def test_swapped_card_with_identical_target_sector_is_refused(self):
+        """F4: same sector 0 but a different MBR (another card) must not be written."""
+        current, mbr_planned = sha(self.area[:512]), sha(self.disk.read_bytes()[:512])
+        other = bytearray(self.disk.read_bytes())
+        other[446 + 12] ^= 1  # a different partition size
+        self.disk.write_bytes(bytes(other))
+        before = self.part.read_bytes()
+        out = self.run_helper(*self.write_args(["0:512"], current, b"\x01" * 512, mbr_sha=mbr_planned))
+        self.assertEqual((out["code"], out["mismatch"]), ("before_mismatch", "MBR"))
         self.assertEqual(self.part.read_bytes(), before)
 
     def test_refuses_ranges_outside_the_whitelist(self):
@@ -138,6 +159,21 @@ class Write(Images):
         self.assertFalse(out["ok"])
         self.assertEqual(out["code"], "write_failed")
         self.assertEqual(out["written"], [plan.writes[0].offset])
+        self.assertEqual(out["possibly_written"], [plan.writes[0].offset, plan.writes[1].offset])
+
+    def test_fsync_failure_reports_possibly_written(self):
+        """F6: the sector was written even though fsync failed."""
+        plan = layout.plan_markers(self.disk.read_bytes()[:512], self.area, disk_bytes=ci.LAB_EXFAT["disk_bytes"])
+
+        def failing_fsync(fd):
+            raise OSError(5, "Input/output error")
+        with mock.patch.object(helper.os, "fsync", failing_fsync):
+            out = self.run_helper(*self.write_args([f"{w.offset}:512" for w in plan.writes],
+                                                   sha(plan.expected_before), plan.after_bytes))
+        self.assertEqual(out["code"], "write_failed")
+        self.assertEqual(out["written"], [])
+        self.assertEqual(out["possibly_written"], [plan.writes[0].offset])
+        self.assertEqual(self.part.read_bytes()[6144:6656], plan.writes[0].after)
 
 
 class Devices(unittest.TestCase):
@@ -145,13 +181,28 @@ class Devices(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as f:
             f.write(bytes(12288))
             f.flush()
-            for disk, part in ((f.name, f.name), ("/dev/disk0", "/dev/disk0s1"), ("/dev/rdisk0", "/dev/rdisk1s1")):
+            for disk, part in ((f.name, f.name), ("/dev/disk999", "/dev/disk999s1"),
+                               ("/dev/rdisk998", "/dev/rdisk999s1"), ("/dev/rdisk999", "/dev/rdisk999s1")):
                 proc = subprocess.run([sys.executable, "-I", "-S", str(HELPER), "read", "--disk", disk,
                                        "--partition", part, "--length", "512"], capture_output=True, text=True)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 out = json.loads(proc.stdout)
                 self.assertFalse(out["ok"])
                 self.assertIn(out["code"], ("device_not_allowed", "device_missing"), out)
+
+    def test_names_are_checked_before_any_lookup(self):
+        """Nothing under /dev is looked at unless the names pass the whitelist."""
+        with mock.patch.object(helper.os, "stat", side_effect=AssertionError("stat called")):
+            for disk, part in (("/dev/disk4", "/dev/disk4s1"), ("/dev/rdisk4", "/dev/rdisk5s1"),
+                               ("/tmp/x", "/tmp/y"), ("/dev/rdisk4", "/dev/rdisk4")):
+                with self.assertRaises(helper.Refused) as ctx:
+                    helper._devices({"--disk": disk, "--partition": part}, False)
+                self.assertEqual(ctx.exception.code, "device_not_allowed")
+
+    def test_helper_runs_on_python_3_9(self):
+        """Root runs it with Apple's Command Line Tools Python (3.9)."""
+        import ast
+        ast.parse(HELPER.read_text(), feature_version=(3, 9))
 
     def test_partition_must_belong_to_disk(self):
         chr_stat = os.stat_result((0o20640, 0, 0, 1, 0, 0, 0, 0, 0, 0))
@@ -185,11 +236,17 @@ class Wrapper(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "")
 
+    def test_root_command_has_a_cleared_environment(self):
+        script = devices.privileged_script("/usr/bin/python3", HELPER, "f" * 64, ["version"])
+        self.assertTrue(script.startswith(f"exec /usr/bin/env -i PATH={devices.ROOT_PATH} /bin/sh -c "))
+        self.assertIn("-I -S", script)
+
     def test_arguments_are_quoted(self):
         script = devices.privileged_script("/py thon", Path("/a b/helper.py"), "f" * 64,
                                            ["write", "--after", "/tmp/x y'; rm -rf /"])
-        self.assertIn("'/py thon' -I -S", script)
-        self.assertIn("'/tmp/x y'\"'\"'; rm -rf /'", script)
+        inner = shlex.split(script)[-1]  # the text /bin/sh -c runs
+        self.assertIn("'/py thon' -I -S", inner)
+        self.assertEqual(shlex.split(inner.split(" -I -S ", 1)[1])[-1], "/tmp/x y'; rm -rf /")
 
     @unittest.skipUnless(sys.platform == "darwin" and Path(devices.OSASCRIPT).exists(), "needs macOS osascript")
     def test_applescript_string_round_trips(self):
@@ -207,7 +264,7 @@ class Wrapper(unittest.TestCase):
 
         def fake_run(argv, **kwargs):
             seen.append(argv)
-            out = json.dumps({"helper": "r5-cardprep", "protocol": 1, "op": "read", "ok": True,
+            out = json.dumps({"helper": "r5-cardprep", "protocol": 2, "op": "read", "ok": True,
                               "mbr_hex": mbr.hex(), "area_hex": area.hex()})
             return subprocess.CompletedProcess(argv, 0, out + "\n", "")
         ops = devices.MacOps(run=fake_run, python="/usr/bin/python3")
@@ -223,12 +280,12 @@ class Wrapper(unittest.TestCase):
         def cancelled(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 1, "", "execution error: User canceled. (-128)")
         with self.assertRaises(devices.Cancelled):
-            devices.MacOps(run=cancelled).raw_read(cand, 12288)
+            devices.MacOps(run=cancelled, python="/usr/bin/python3").raw_read(cand, 12288)
 
         def foreign(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 0, '{"ok": true}', "")
         with self.assertRaises(devices.DeviceError):
-            devices.MacOps(run=foreign).raw_read(cand, 12288)
+            devices.MacOps(run=foreign, python="/usr/bin/python3").raw_read(cand, 12288)
 
     def test_macops_unmounts_rather_than_ejects(self):
         cand = devices.Candidate("darwin", "disk4", "disk4s1", "", "", 1, 2, 3, "FAT32", "N", "/Volumes/N")
@@ -243,6 +300,67 @@ class Wrapper(unittest.TestCase):
         ops.verify(cand)
         self.assertEqual(seen, [[devices.DISKUTIL, "unmount", "disk4s1"], [devices.DISKUTIL, "mount", "disk4s1"],
                                 [devices.DISKUTIL, "verifyVolume", "disk4s1"]])
+
+
+class RootInterpreter(unittest.TestCase):
+    def test_ownership(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNotNone(devices.ownership_problem(tmp))  # owned by the test user
+        if os.stat("/").st_uid == 0 and not os.stat("/").st_mode & 0o022:
+            self.assertIsNone(devices.ownership_problem("/"))
+
+    def test_user_owned_interpreter_is_refused(self):
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        real, problem = devices.interpreter_problem(sys.executable)
+        if real is None:
+            self.assertTrue(problem)
+        else:  # a root-owned interpreter (for example a system Python on CI) is fine
+            self.assertIsNone(devices.ownership_problem(real))
+
+    def test_selection_prefers_command_line_tools_and_refuses_otherwise(self):
+        def run(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, "/Library/Developer/CommandLineTools\n", "")
+        with mock.patch.object(devices, "interpreter_problem",
+                               side_effect=lambda py, run: ("/clt/python3.9", None) if py == devices.CLT_PYTHON
+                               else (None, "not root-owned")), \
+                mock.patch.object(devices.os.path, "exists", return_value=True):
+            self.assertEqual(devices.select_root_python(run, own="/home/me/python"), "/clt/python3.9")
+        with mock.patch.object(devices, "interpreter_problem", return_value=(None, "not root-owned")), \
+                mock.patch.object(devices.os.path, "exists", return_value=True):
+            with self.assertRaises(devices.DeviceError) as ctx:
+                devices.select_root_python(run, own="/home/me/python")
+            self.assertIn("xcode-select --install", str(ctx.exception))
+
+    def test_no_command_line_tools_means_no_probe_of_usr_bin_python3(self):
+        probed = []
+
+        def run(argv, **kwargs):
+            probed.append(argv[0])
+            return subprocess.CompletedProcess(argv, 2, "", "no developer tools")
+        with mock.patch.object(devices, "interpreter_problem", side_effect=lambda py, run: (probed.append(py), (None, "x"))[1]):
+            with self.assertRaises(devices.DeviceError):
+                devices.select_root_python(run, own="/home/me/python")
+        self.assertNotIn(devices.CLT_PYTHON, probed)
+
+
+class DiskutilFailures(unittest.TestCase):
+    """F2: a hanging or missing diskutil never raises out of mount/verify."""
+
+    def test_timeouts(self):
+        cand = devices.Candidate("darwin", "disk4", "disk4s1", "", "", 1, 2, 3, "FAT32", "N", "/Volumes/N")
+
+        def hang(argv, **kwargs):
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+        ops = devices.MacOps(run=hang, python="/usr/bin/python3")
+        mounted, out = ops.mount(cand)
+        self.assertFalse(mounted)
+        self.assertIn("did not finish", out)
+        self.assertFalse(ops.verify(cand)[0])
+        with self.assertRaises(devices.DeviceError):
+            ops.unmount(cand)
+        with self.assertRaises(devices.DeviceError):
+            ops.refresh(cand)
 
 
 if __name__ == "__main__":
