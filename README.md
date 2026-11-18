@@ -17,16 +17,14 @@ This repository provides two separate offline-buildable profiles for `BOOTDISK`-
 
 ## Feature Status
 
-### Working on private lab builds (user-confirmed)
+### Working (confirmed on the owner's private lab builds)
 
-These were confirmed by the owner on private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. The closest public counterpart to the tested build is `--profile xpan-crop --record-indicator ding`. **The public repackaged images are hardware-untested.**
+- [x] **XPan `2.71:1` crop mode** (`xpan-crop`): an XPan option replacing 16:9, with live LCD/EVF framing, immediate review bars, playback masking and saved XPan JPEG/RAW. See [docs/xpan.md](docs/xpan.md).
+- [x] **Startup and shutter sounds** (`shutter-feedback`): your own clips through the camera speaker.
+- [x] **Movie record indicator** ([#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)): a short `ding` when you press Movie REC (opt-in `--record-indicator ding`).
+- [x] **Cards**: `16 GB` SDHC and `128 GB` SDXC exFAT, with CFexpress in the other slot.
 
-- [x] **Startup and shutter sounds** (`shutter-feedback`): private `build36` played the Startup clip and the Shutter clip on single shots, with normal photo capture.
-- [x] **XPan `2.71:1` crop** (`xpan-crop`): menu and Q `"XPan"` label, live LCD/EVF framing bars, and saved `8192x3024` JPEG / cropped CR3 output.
-- [x] **XPan ▶ playback masking**: rear LCD and EVF, landscape and portrait (four-case session on 17 November 2026; effective auto-rotation `r7=0`).
-- [x] **Cards**: `128 GB` SDXC exFAT, and XPan alongside CFexpress (see [docs/sdxc.md](docs/sdxc.md)).
-- [x] **XPan automatic post-shot review**: immediate XPan bars with the 16:9 outline hidden for XPan shots only; Full-frame shots and bursts keep the stock review. Verified on 18 November 2026 on a private lab build and now part of the public `xpan-crop` profile. The public repackaging is hardware-untested.
-- [x] **Movie record indicator** ([#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)): a `ding` on the Movie REC press, verified on the same private build. It is quiet in the recorded clip (about −32 dBFS). In this repository it is the opt-in `--record-indicator ding`; the public build is hardware-untested.
+The public repackaged builds are hardware-untested; see the [Support & Proof Matrix](#support--proof-matrix) for evidence.
 
 ### Planned / in progress
 
