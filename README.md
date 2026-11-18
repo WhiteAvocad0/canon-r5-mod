@@ -11,7 +11,7 @@ This repository provides two separate offline-buildable profiles for `BOOTDISK`-
 > **Source / Developer Preview — Not a Turnkey Installer or Full Magic Lantern Port**
 > - This repository distributes **source code and documentation only** — no prebuilt binaries, no Canon ROM/FIR files, and no copyrighted audio/font/photo assets.
 > - You must supply your own `64 MiB` EOS R5 `2.2.1` ROM dump and a camera whose persistent `BootDisk` flag is already enabled.
-> - **The public `shutter-feedback` build is hardware-untested.** The public `xpan-crop` build with `--record-indicator ding` passed a short owner check on 18 November 2026. Other "working" items below were observed on the owner's private lab builds (see the Proof Matrix).
+> - **The public `shutter-feedback` build is hardware-untested.** The public `xpan-crop` build with `--record-indicator ding` (image `0adff001`) passed a short owner check on 18 November 2026; public builds with the stop cue are hardware-untested. Other "working" items below were observed on the owner's private lab builds (see the Proof Matrix).
 
 ---
 
@@ -21,7 +21,7 @@ This repository provides two separate offline-buildable profiles for `BOOTDISK`-
 
 - [x] **XPan `2.71:1` crop mode** (`xpan-crop`): an XPan option replacing 16:9, with live LCD/EVF framing, immediate review bars, playback masking and saved XPan JPEG/RAW. See [docs/xpan.md](docs/xpan.md).
 - [x] **Startup and shutter sounds** (`shutter-feedback`): your own clips through the camera speaker.
-- [x] **Movie record indicator** ([#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)): a short `ding` when you press Movie REC (opt-in `--record-indicator ding`).
+- [x] **Movie record indicator** ([#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)): start + stop cues, a short `ding` when you press Movie REC and a `dong` when the take ends (opt-in `--record-indicator ding`, `--record-stop-indicator dong`).
 - [x] **Cards**: `16 GB` SDHC and `128 GB` SDXC exFAT, with CFexpress in the other slot.
 
 Only a short check of the public `xpan-crop` + `ding` build has run on hardware; see the [Support & Proof Matrix](#support--proof-matrix) for evidence.
@@ -102,7 +102,7 @@ python3 tools/build.py \
   --output build/my-r5-xpan
 ```
 
-Add `--record-indicator ding` to the same command for the opt-in movie record indicator (no WAV files needed; default `off`). See [docs/usage.md](docs/usage.md#movie-record-indicator---record-indicator).
+Add `--record-indicator ding` to the same command for the opt-in movie record start cue, and `--record-stop-indicator dong` for the stop cue (no WAV files needed; both default `off`). See [docs/usage.md](docs/usage.md#movie-record-indicator---record-indicator).
 
 > [!NOTE]
 > `--profile xpan-crop` is **silent by default (no audio)** and rejects `--startup-wav` / `--shutter-wav`. It derives `target-page.bin`, `frame_row_constants.h`, `menu-vector.bin`, and `feature-targets.h` into `--output` **only after** strict verification of R5 `2.2.1` immutable code, table, and vector resource fingerprints (`tools/contracts.py`), while admitting per-camera settings variance outside immutable code and recording your actual ROM SHA-256 as provenance.
@@ -189,7 +189,7 @@ flowchart TD
 
 ### `xpan-crop` Drawing, File, and Playback Pipeline
 
-For `--profile xpan-crop`, the primary/secondary boot handoff places resident code at `0x001994B0` and constructs a build-dependent private MMU `TTBR1` root (`20` 4 KiB pages, `34` code patches, `10` L2 tables, `137` witness pages; `21/35/10/139` with `--record-indicator`) and routes aspect `7` (`16:9` -> `XPan`, `512:189`) across property `0x80040054`, menu vector `0xE38F614C`, Q label `0xE0B5D22C`, live framing `0xE20CFC64`, JPEG/RAW crop (`0xE0CD98DA`, `0xE017B61C`, `0xE098FB2C`), playback Main/tags/cache (`0xE0334E4C`, `0xE03141E4`, `0xE07732BE`, `O+0x34==0`), `fit` (`0xE0710D04`), native `Trim` (`0xE078DE84`), `guide` (`0xE06CBFD6` -> bail `0xE06CC061`), and the automatic-review fix (authority `0xE054C530`, outline `0xE0A956FE`, review descriptor `0xE063FBEE`). The opt-in record indicator adds one counter-only hook at `GUI_SetRecordingState` (`0xE07C6FBC`) and a worker step that submits a generated cue through `SE_BeepStart`. See the complete diagram and invariants in **[docs/xpan.md](docs/xpan.md)** and typed table in **[docs/addresses.md](docs/addresses.md)**.
+For `--profile xpan-crop`, the primary/secondary boot handoff places resident code at `0x001994B0` and constructs a build-dependent private MMU `TTBR1` root (`20` 4 KiB pages, `34` code patches, `10` L2 tables, `137` witness pages; `21/35/10/139` with either record indicator option) and routes aspect `7` (`16:9` -> `XPan`, `512:189`) across property `0x80040054`, menu vector `0xE38F614C`, Q label `0xE0B5D22C`, live framing `0xE20CFC64`, JPEG/RAW crop (`0xE0CD98DA`, `0xE017B61C`, `0xE098FB2C`), playback Main/tags/cache (`0xE0334E4C`, `0xE03141E4`, `0xE07732BE`, `O+0x34==0`), `fit` (`0xE0710D04`), native `Trim` (`0xE078DE84`), `guide` (`0xE06CBFD6` -> bail `0xE06CC061`), and the automatic-review fix (authority `0xE054C530`, outline `0xE0A956FE`, review descriptor `0xE063FBEE`). The opt-in record indicator adds one counter-only hook at `GUI_SetRecordingState` (`0xE07C6FBC`) and a worker step that submits a generated start and/or stop cue through `SE_BeepStart`. See the complete diagram and invariants in **[docs/xpan.md](docs/xpan.md)** and typed table in **[docs/addresses.md](docs/addresses.md)**.
 
 ---
 
@@ -222,4 +222,4 @@ Original EOS R5 `2.2.1` owners who meet the boot-enabled prerequisites can submi
 - **No warranty & no Canon affiliation**: Provided under `GPL-2.0-or-later` (see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) without warranty of any kind. Not affiliated with, endorsed by, or supported by Canon Inc.
 - **Persistent `BootDisk` flag**: The camera's internal `BootDisk` flag persists across card formatting and card removal. This repository provides **no** turnkey bootflag activator, uninstaller, or flash/NVRAM writer.
 - **Recovery scope**: On the reference R5 `2.2.1` body, removing the experimental card and power-cycling without it restored normal camera startup (user-confirmed), but that observation is **not** a brick-proof guarantee for every failure mode.
-- **Unverified areas**: The public `shutter-feedback` build is hardware-untested. The public `xpan-crop` + `ding` build passed only the short 18 November 2026 check (boot, live XPan framing, immediate XPan bars in automatic review, a Full-frame control and the REC `ding`). For `shutter-feedback`: burst, movie, blocked shots, card errors, physical latency, shutdown margin, and immediate mute are unverified. For `xpan-crop`: private `4838eb81` normal ▶ playback passed the owner's four-case session, and private `a7e92a3d` passed the owner's automatic-review and REC-press `ding` checks; bursts deliberately keep the stock review, and the record indicator is quiet in recorded clips. Other qualities/modes (M/S/C-RAW/burst/movie), active auto-rotation (`r7 != 0`), and cached orientation values outside `{0, 2}` remain unverified or declined.
+- **Unverified areas**: The public `shutter-feedback` build is hardware-untested. The public `xpan-crop` + `ding` image `0adff001` passed only the short 18 November 2026 check (boot, live XPan framing, immediate XPan bars in automatic review, a Full-frame control and the REC `ding`). Public builds with the record-stop `dong` (and indicator builds from the same version) are hardware-untested; the `dong` was verified on private lab build `fbf31293`. For `shutter-feedback`: burst, movie, blocked shots, card errors, physical latency, shutdown margin, and immediate mute are unverified. For `xpan-crop`: private `4838eb81` normal ▶ playback passed the owner's four-case session, and private `a7e92a3d` passed the owner's automatic-review and REC-press `ding` checks; bursts deliberately keep the stock review, and the record indicator is quiet in recorded clips. Other qualities/modes (M/S/C-RAW/burst/movie), active auto-rotation (`r7 != 0`), and cached orientation values outside `{0, 2}` remain unverified or declined.
