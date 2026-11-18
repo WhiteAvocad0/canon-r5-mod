@@ -19,7 +19,7 @@ This repository provides two separate offline-buildable profiles for `BOOTDISK`-
 
 ### Working on private lab builds (user-confirmed)
 
-These were confirmed by the owner on private lab builds of the same source. **The public repackaged images are hardware-untested.**
+These were confirmed by the owner on private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. The closest public counterpart to the tested build is `--profile xpan-crop --record-indicator ding`. **The public repackaged images are hardware-untested.**
 
 - [x] **Startup and shutter sounds** (`shutter-feedback`): private `build36` played the Startup clip and the Shutter clip on single shots, with normal photo capture.
 - [x] **XPan `2.71:1` crop** (`xpan-crop`): menu and Q `"XPan"` label, live LCD/EVF framing bars, and saved `8192x3024` JPEG / cropped CR3 output.
@@ -31,7 +31,7 @@ These were confirmed by the owner on private lab builds of the same source. **Th
 ### Planned / in progress
 
 - [ ] [#12 29:59 recording-limit removal](https://github.com/WhiteAvocad0/canon-r5-mod/issues/12): a private build showed that the limit getter controls the auto-stop; a 59:59 test is pending.
-- [ ] [#15 Screenshots](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15): playback-overlay capture looks feasible through Canon's stock SaveVRAM event procedure; capturing during recording is not feasible on camera.
+- [ ] [#15 Screenshots](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15): playback-overlay capture looks feasible through Canon's stock SaveVRAM event procedure (GUI layer only); full-frame-rate screen recording isn't feasible on camera, but the R5's HDMI output to an external recorder is a practical route.
 - [ ] [#13 Live Photos](https://github.com/WhiteAvocad0/canon-r5-mod/issues/13): a host-side packager works on the Mac; the iPhone check is pending. Not in this repository.
 - [ ] [#7 Sound packs, volume and quick mute](https://github.com/WhiteAvocad0/canon-r5-mod/issues/7): host prototype only.
 - [ ] Research only: [#5 anamorphic desqueeze](https://github.com/WhiteAvocad0/canon-r5-mod/issues/5), [#6 still-photo zebras/false colour/waveform](https://github.com/WhiteAvocad0/canon-r5-mod/issues/6), [#8 preset libraries](https://github.com/WhiteAvocad0/canon-r5-mod/issues/8), [#9 JSON colour recipes](https://github.com/WhiteAvocad0/canon-r5-mod/issues/9), [#10 exposure sequences](https://github.com/WhiteAvocad0/canon-r5-mod/issues/10), [#11 M-Film](https://github.com/WhiteAvocad0/canon-r5-mod/issues/11), [#4 HNCS-inspired profiles](https://github.com/WhiteAvocad0/canon-r5-mod/issues/4).
@@ -212,7 +212,7 @@ Original EOS R5 `2.2.1` owners who meet the boot-enabled prerequisites can submi
 - **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM provenance rules, audio conversion, offline build (`shutter-feedback` & `xpan-crop`), card preparation, and recovery.
 - **[docs/addresses.md](docs/addresses.md)** — Complete typed R5 `2.2.1` address reference for boot, audio, observer, worker, and experimental XPan hooks/slots.
 - **[docs/sdxc.md](docs/sdxc.md)** — `128 GB` SDXC / exFAT trial evidence, native marker/checksum derivation, and remaining validation.
-- **[docs/research.md](docs/research.md)** — Open feasibility questions (#3 XPan, #4–#10, #11 MFilm, #12 29:59 record limit, #13 Live Photos, #14 movie record indicator).
+- **[docs/research.md](docs/research.md)** — Open feasibility questions (#3 XPan, #4–#10, #11 MFilm, #12 29:59 record limit, #13 Live Photos, #14 movie record indicator, #15 screenshots).
 - **[docs/porting.md](docs/porting.md)** — Requirements for porting to other firmware versions or Canon models.
 - **[.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)** — Structured templates for XPan test reports, R5 `2.2.1` test reports, and port requests.
 

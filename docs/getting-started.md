@@ -77,7 +77,7 @@ If any row isn't done, stop here. See [usage.md → Prerequisites](usage.md#1-pr
 | `xpan-crop` + `--record-indicator ding` | All of the above, plus a short **ding when you press movie REC** | The cue is generated in the camera; no audio files needed |
 | `shutter-feedback` | Your own **startup** and **shutter** sounds through the speaker | Needs two WAV files; no XPan |
 
-You can't combine XPan and custom sounds in one build: together they don't fit in the camera's free memory.
+XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.
 
 ## Step 6: Build
 
