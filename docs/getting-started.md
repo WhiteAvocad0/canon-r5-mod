@@ -81,6 +81,9 @@ XPan and custom sounds aren't offered together. The XPan profile is silent by de
 
 ## Step 6: Build
 
+> [!TIP]
+> **Prototype alternative:** the [build assistant](gui.md) (`python3 tools/gui/app.py`) does Steps 5 to 7 in a window. It needs Python with Tkinter, and it uses the same builder and checks. It is a prototype: check its results as described below.
+
 Use your own paths for the ROM and the toolchain `bin` folder. For XPan with the record indicator:
 
 ```sh

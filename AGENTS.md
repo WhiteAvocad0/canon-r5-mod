@@ -23,4 +23,5 @@ Preserve native baseline C/ASM/linker behavior across both profiles and clearly 
   - Silent XPan: `python3 tools/build.py --profile xpan-crop --rom PATH --toolchain DIR --output DIR`
   - XPan + record indicator: add `--record-indicator ding`
   Outputs ignored under `build/` by convention. CLI never contacts camera/media.
+- `config/features.json` (`tools/features.py`) is the single feature manifest: profiles, WAV input policies, options, profile dependencies and per-feature status. `tools/build.py` derives its selection CLI and rules from it, and the prototype build assistant (`tools/gui/`, standard-library Tkinter, issue #16 Phase 1) derives its checklist from it. The assistant builds through the CLI and copies only to an already-prepared card's folder (backup, temp-then-rename, SHA-256 readback). It never formats, writes boot sectors or deletes anything but its own temp file.
 - Host tests must run without private lab paths/assets or ARM toolchain. Real-ROM cross-build verification is separately opt-in and reported distinctly. Do not install unrelated software or dependencies automatically.
