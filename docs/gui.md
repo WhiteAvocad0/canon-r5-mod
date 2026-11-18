@@ -67,10 +67,10 @@ This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that 
 1. **Format in the camera first.** The warning at the top says so. The assistant never formats, partitions or erases anything; the owner decided formatting stays out of the tool. The warning is advice. The real check is the boot-sector layout: on FAT32 the boot code where `BOOTDISK` goes must be empty, and on exFAT it must be the `F4` fill. A card formatted by Windows, or a FAT32 card formatted on a Mac, is refused. A card formatted as exFAT by macOS can't be told apart from a camera-formatted one (both use `F4`), which is another reason to format in the camera. Formatting removes the markers, so prepare the card again after every format.
 2. **Choose the card.** **Find SD cards** lists only cards in an SD card slot (macOS reports the *Secure Digital* protocol). The card must be removable, ejectable, physical media with 512-byte sectors and an MBR with exactly one FAT32 or exFAT partition, writable, and between 2 GB and 2 TiB. The disk macOS runs from, internal disks, disk images, system media, partitions mounted outside `/Volumes` and USB devices are refused with their reason. That includes USB card readers, because macOS can't tell them from other USB drives. An unmounted card is still listed (marked *not mounted*), so a half-written card can be undone.
 3. **Prepare card.** One button does the rest:
-   - **Read and back up, automatically.** The macOS password window opens and says the assistant will *read* the boot sectors. The assistant checks that it is still the chosen card, unmounts its partition (`diskutil unmount diskNsM`; it never ejects), and reads the 512-byte MBR and the partition's first 24 sectors (12,288 bytes). It checks that the MBR has one partition whose position and size match macOS's report, the boot sector's own geometry, and the exFAT boot checksums. It saves `mbr.bin`, `boot-area.bin` and `manifest.json` to a new folder, `~/R5-card-backups/<date>-<time>-<microseconds>-<FAT32|exFAT>-<serial>-before-marking/`, and reads them back to compare. A backup folder is never reused (a `-2` suffix avoids any collision) and never deleted by the assistant. The backup path appears in the result details.
+   - **Read and back up, automatically.** The assistant checks that it is still the chosen card and unmounts its partition (`diskutil unmount diskNsM`; it never ejects). macOS's authorization window opens for read-only access to the card's whole-disk device, through `authopen` (see below). The assistant reads the 512-byte MBR and the partition's first 24 sectors (12,288 bytes). It checks that the partition start agrees between the MBR, macOS's report and the boot sector itself, the boot sector's own geometry, and the exFAT boot checksums. It saves `mbr.bin`, `boot-area.bin` and `manifest.json` to a new folder, `~/R5-card-backups/<date>-<time>-<microseconds>-<FAT32|exFAT>-<serial>-before-marking/`, and reads them back to compare. A backup folder is never reused (a `-2` suffix avoids any collision) and never deleted by the assistant. The backup path appears in the result details.
    - **Already prepared?** If valid markers are already there, the card is mounted again and the result says **Already prepared: nothing to write**. There is no dialog and no second password prompt.
    - **Confirm.** Otherwise one dialog names the card from that read, for example "Prepare EOS_DIGITAL (126.9 GB exFAT SD card)?", with the model, the device, the sectors to write and the backup folder. The card stays unmounted while the dialog is open, so nothing on the Mac can change its boot sectors between the read and the write. **Cancel** mounts it again and reports *Cancelled. Nothing was written.*
-   - **Write and verify.** After **OK** the assistant checks that the confirmed read is still the current one and that it is still the same card. The password window opens again and says the assistant will *write*. Root writes only if the MBR, the whole 24-sector boot area and the target sectors still hash to the values from the read. Otherwise it reports *refused. Nothing was written*. It writes the sectors in the planned order with an `fsync` after each, and reads back the whole boot area and the MBR. The assistant compares every written byte, checks that the MBR is unchanged and that the boot area validates with the markers present, runs `diskutil verifyVolume diskNsM` and mounts the card again. It records the outcome in `result-<time>.json` in the backup folder.
+   - **Write and verify.** After **OK** the assistant checks that the confirmed read is still the current one and that it is still the same card. macOS's authorization window opens again, this time for read/write access. The assistant writes only if the MBR, the whole 24-sector boot area and the target sectors still hash to the values from the read. Otherwise it reports *refused. Nothing was written*. It writes the sectors in the planned order with a flush after each, and reads back the whole boot area and the MBR. The assistant compares every written byte, checks that the MBR is unchanged and that the boot area validates with the markers present, runs `diskutil verifyVolume diskNsM` and mounts the card again. It records the outcome in `result-<time>.json` in the backup folder.
 
    On FAT32 one sector is written. `EOS_DEVELOP` replaces the boot-sector volume label field at byte 71 (`0x47`); Finder's volume name, which lives in the root directory, doesn't change. `BOOTDISK` goes at byte 92 (`0x5C`). The backup boot sector is left unchanged, as on the lab card that booted. Disk Utility's check may therefore report that the backup boot sector differs; that is by design, and the result says so. exFAT uses different offsets: `BOOTDISK` at byte 122 and `EOS_DEVELOP` at byte 130 of both boot regions, plus both checksum sectors. That makes four sectors, 12, 23, 0 and 11: the backup region first, and a region with a currently invalid checksum before the other. Every intermediate state keeps at least one valid exFAT boot region.
 4. **Undo or restore.** **Undo** reads the card first, then uses the newest backup taken before its markers were written (`...-before-marking`, never `...-before-restore`) whose MBR and boot-area bytes outside the markers match the card as read, so it can't pick another card's backup or a half-marked state. **Restore from a chosen backup...** uses a backup folder you choose; its files are checked against its manifest. Both work like Prepare: read (also from an unmounted, half-written or unmountable card, identified by its disk and partition, not by a mount), an automatic backup of the current state (`...-before-restore`), one confirmation dialog, then write and verify. The card must be the backed-up one: same size, partition, slot and model, the same MBR, and every boot-area byte outside the marker ranges unchanged. The exFAT `VolumeFlags` and `PercentInUse` bytes are exempt and kept as they are now. Each marker range must hold either the original or the prepared bytes.
@@ -78,35 +78,32 @@ This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that 
 
 Only one card operation runs at a time. While one runs, or while the confirmation is open, the [Copy to card](#6-copy-to-card) tab is blocked, and the other way round.
 
-**What runs, exactly (macOS).** As you: `diskutil info -plist /`, `diskutil list -plist physical` and `diskutil info -plist diskN` / `diskNsM` to find and re-check cards, then `diskutil unmount diskNsM`, `diskutil mount diskNsM` and `diskutil verifyVolume diskNsM`. Every `diskutil` call has a timeout. Root needs a Python that only root can change, so the assistant picks one before the first prompt:
+**What runs, exactly (macOS).** As you: `diskutil info -plist /`, `diskutil list -plist physical` and `diskutil info -plist diskN` / `diskNsM` to find and re-check cards, then `diskutil unmount diskNsM`, `diskutil mount diskNsM` and `diskutil verifyVolume diskNsM`. Every `diskutil` call has a timeout.
 
-- If Apple's Command Line Tools are installed (`xcode-select -p` succeeds), it probes `/usr/bin/python3` as you. On this kind of Mac that reports, for example, `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9`. That interpreter, its standard library and `lib-dynload` folder, and every folder above them must be owned by root and not group- or world-writable.
-- Otherwise the assistant's own Python is checked the same way.
-- If neither passes, card preparation is refused with guidance (install the Command Line Tools with `xcode-select --install`). Homebrew, pyenv and python.org interpreters normally fail this check, because your account or the admin group can change them.
-
-Then, as root, `/usr/bin/osascript -e 'do shell script "..." with prompt "..." with administrator privileges'` runs:
+Raw access uses macOS's own `authopen`, the method Raspberry Pi Imager uses. **No code runs as root**, and the assistant never sees your password. For each step the assistant starts:
 
 ```text
-exec /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/sh -c '
-  set -e; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); trap ... EXIT
-  /bin/cp <repo>/tools/cardprep/helper.py "$d/helper.py"
-  test "$(/usr/bin/shasum -a 256 "$d/helper.py" | /usr/bin/cut -c1-64)" = <SHA-256 the assistant just computed>
-  <root-owned python3.9> -I -S "$d/helper.py" <arguments>'
+/usr/libexec/authopen -stdoutpipe -o 0 /dev/rdiskN     # read step  (open(2) flags O_RDONLY)
+/usr/libexec/authopen -stdoutpipe -o 2 /dev/rdiskN     # write step (open(2) flags O_RDWR)
 ```
 
-The environment is cleared, the helper is copied into a new root-owned folder and its SHA-256 is checked there, and Python runs isolated (`-I -S`); the folder is removed afterwards. The helper accepts only:
+`authopen` asks macOS for the right to open exactly that whole-disk device (`sys.openfile.readonly./dev/rdiskN` or `sys.openfile.readwrite./dev/rdiskN`). macOS shows its own authorization window. `authopen` then opens only that device and passes the open file descriptor back to the assistant over a UNIX socket (`SCM_RIGHTS`); its standard output is one end of a socket pair. The assistant then checks the descriptor:
 
-```text
-helper.py version
-helper.py read  --disk /dev/rdiskN --partition /dev/rdiskNsM --length 12288
-helper.py write --disk /dev/rdiskN --partition /dev/rdiskNsM --range OFFSET:LENGTH [...]
-                --expect-sha SHA256 --expect-mbr-sha SHA256 --expect-area-sha SHA256
-                --after FILE --after-sha SHA256
-```
+- it must be a character device whose device number (`st_rdev`) equals that of `/dev/rdiskN` for the card you chose (diskutil identity is re-checked too);
+- its access mode must be the one requested.
 
-The device names are checked before anything is looked up. They must be raw nodes `/dev/rdiskN` and `/dev/rdiskNsM` of the same disk. Write ranges must be single 512-byte sectors chosen from partition sectors 0, 11, 12 and 23 (the only sectors any plan touches), at most four and non-overlapping. Reads cover at most the first 24 sectors. The MBR is only ever read. For the lab's 128 GB exFAT layout the write is `--range 6144:512 --range 11776:512 --range 0:512 --range 5632:512` (sectors 12, 23, 0, 11); for FAT32 it is `--range 0:512`. The assistant never asks for, sees or stores your password: macOS's own window handles it.
+All reads and writes happen in the assistant's own process on that descriptor, at absolute offsets: the MBR at byte 0 and the boot area at the partition start. The descriptor is always closed at the end of the step. The partition start must agree three ways: the MBR entry's LBA × 512, diskutil's `PartitionMapPartitionOffset`, and the boot sector's own field (exFAT PartitionOffset at byte 64, FAT32 HiddenSectors at byte 28, in sectors). Any disagreement is refused.
 
-**Residual limit.** These checks stop other programs from changing what root runs between the prompt and the write, as long as your account isn't compromised. They can't protect against malware already running as you. Such malware could show its own fake password prompt or change the assistant itself.
+Writes keep the rules the earlier root helper enforced:
+
+- only single 512-byte sectors chosen from partition sectors 0, 11, 12 and 23 (the only sectors any plan touches), at most four, written in the planned order;
+- and only if the MBR, the whole 24-sector boot area and the target sectors still hash to the values from the planning read.
+
+Each sector is flushed with `F_FULLFSYNC` (falling back to `fsync` where the device doesn't support it). Then the target sectors, the whole boot area and the MBR are read back. A sector whose write was started but not confirmed is reported as *possibly written*. The MBR is only ever read. For the lab's 128 GB exFAT layout the four writes go to partition sectors 12, 23, 0 and 11; for FAT32 it is sector 0.
+
+**What macOS grants.** The right covers only the one device named, for one open. The authorization window is macOS's own and names `authopen`, not this assistant.
+
+**Residual limit.** Malware already running as you could show its own fake password window or change the assistant itself. These checks can't protect against that.
 
 **Windows and Linux:** **Find SD cards** lists cards on a best-effort basis (PowerShell `Get-Disk` / `lsblk`), **untested**. Preparing a card is offered on macOS only.
 
@@ -148,9 +145,8 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - **Prepare card is untested on a real card.** Its host tests use image files only: synthetic FAT32 and exFAT boot areas, including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums, plus `fsck_msdos` on a real FAT32 image file. No raw device has been read or written by this code yet, and the camera hasn't booted a card prepared this way.
 - Only the Mac's built-in SD slot is offered. USB card readers are refused.
 - "Camera-formatted" is checked from the boot sectors, not proven. A FAT32 card formatted on a computer usually has boot code where the markers go and is refused. An exFAT card formatted by macOS looks the same as a camera-formatted one and is accepted, which is why the warning says to format in the camera.
-- The privileged helper needs a root-owned Python, normally the one from Apple's Command Line Tools. Without them, card preparation is refused with guidance.
-- Each Prepare or Undo asks for the administrator password twice (once to read, once to write) unless nothing needs writing.
-- Real-device behaviour still to observe on the first run: the password prompt and its cancel text, root access to `/dev/rdisk*` (macOS privacy settings could still deny it), `diskutil unmount`/`mount`/`verifyVolume` on a card, whether Disk Utility flags the unmarked FAT32 backup boot sector, and `fsync` on a raw device.
+- Each Prepare or Undo opens macOS's authorization window twice (once to read, once to write) unless nothing needs writing. Whether macOS remembers the first authorization for the second is not known yet.
+- Real-device behaviour still to observe on the first run: `authopen`'s exit status and message when the window is cancelled, whether it grants read/write on the whole-disk node while the card's partition is unmounted, `F_FULLFSYNC` on a raw disk descriptor, `diskutil unmount`/`mount`/`verifyVolume` on a card, and whether Disk Utility flags the unmarked FAT32 backup boot sector. On the owner's Mac (macOS 27.3), `authopen` was already shown to read `/dev/rdisk6` after its window. A root shell started by `osascript` was denied the same device, which is why the assistant now uses `authopen`.
 
 ## Troubleshooting
 
@@ -160,5 +156,5 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - **Prepare card refuses the card** ("unexpected bytes where BOOTDISK goes", "geometry mismatch", "not an MBR partition table"): format the card in the camera and try again. These checks protect cards the tool doesn't understand.
 - **"refused. Nothing was written" / "changed since it was read, or it is another card"**: the MBR or boot sectors differ from the read the plan was made from (the card was swapped, reinserted or changed). Nothing was written; press Prepare again.
 - **Password prompt or confirmation cancelled**: nothing was written, and the card is mounted again.
-- **"Card preparation runs its helper as root with a Python that only root can change"**: install Apple's Command Line Tools (`xcode-select --install`), then try again.
+- **"authopen could not open /dev/rdiskN"**: macOS refused access to the device; the message gives authopen's own reason. Nothing was written.
 - **The card won't mount after a failed write**: it is still listed (*not mounted*). Choose it and press **Undo**.
