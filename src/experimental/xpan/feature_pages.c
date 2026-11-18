@@ -10,6 +10,9 @@
 #include "playback_mask_native.h"
 #include "q_label.h"
 #include "export_refresh.h"
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+#include "rec_state.h"
+#endif
 #define CODE __attribute__((section(".resident_text")))
 #define DATA __attribute__((section(".resident_rodata")))
 extern uint32_t boot_shadow_page[];

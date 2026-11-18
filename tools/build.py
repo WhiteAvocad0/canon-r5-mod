@@ -203,8 +203,11 @@ def build_image(
     xpan_hooks: list[dict] | None = None,
     policy_path: Path = POLICY_PATH,
     schema: dict = AUDIO_LOG_SCHEMA,
+    record_indicator: str | None = None,
 ) -> dict:
     """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
+    if profile != "xpan-crop" and record_indicator not in (None, "off"):
+        raise ValueError("--record-indicator requires --profile xpan-crop")
     if profile == "xpan-crop":
         if startup_wav is not None or shutter_wav is not None:
             raise ValueError("--profile xpan-crop forbids --startup-wav and --shutter-wav")
@@ -225,6 +228,7 @@ def build_image(
             xpan_contract=xpan_contract,
             xpan_hooks=xpan_hooks,
             policy_path=policy_path,
+            record_indicator=record_indicator,
         )
     if profile != "shutter-feedback":
         raise ValueError(f"Unsupported build profile: {profile!r}")
@@ -786,19 +790,34 @@ def main(argv: list[str] | None = None) -> int:
         "--profile",
         choices=("shutter-feedback", "xpan-crop"),
         default="shutter-feedback",
-        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (silent, no WAVs)",
+        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
     )
     ap.add_argument("--rom", type=Path, required=True, help="Path to user's 64 MiB Canon EOS R5 2.2.1 ROM dump")
     ap.add_argument("--startup-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
     ap.add_argument("--shutter-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE shutter clip")
     ap.add_argument("--toolchain", type=Path, required=True, help="Directory containing arm-none-eabi GCC 15.2.1 binaries")
     ap.add_argument("--output", type=Path, required=True, help="New output directory for autoexec.bin and build artifacts")
+    if str(XPAN_TOOLS_DIR) not in sys.path:
+        sys.path.insert(0, str(XPAN_TOOLS_DIR))
+    import record_indicator
+
+    ap.add_argument(
+        "--record-indicator",
+        choices=record_indicator.CHOICES,
+        default=None,
+        help=(
+            "xpan-crop only: opt-in movie record indicator cue played on the Movie REC button press "
+            "(default off; 'ding' is the cue tested on a private lab build)"
+        ),
+    )
     args = ap.parse_args(argv)
 
     if args.profile == "xpan-crop":
         if args.startup_wav is not None or args.shutter_wav is not None:
             ap.error("--profile xpan-crop is silent and forbids --startup-wav / --shutter-wav")
     else:
+        if args.record_indicator is not None:
+            ap.error("--record-indicator requires --profile xpan-crop")
         missing = [
             flag
             for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
@@ -814,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
         toolchain_dir=args.toolchain,
         output_dir=args.output,
         profile=args.profile,
+        record_indicator=args.record_indicator,
     )
     print(
         json.dumps(
@@ -825,6 +845,9 @@ def main(argv: list[str] | None = None) -> int:
                 "sha256": record["format"]["sha256"],
                 "rom_sha256": record["caller_input_hashes"]["rom"]["sha256"],
                 "reservation": record["reservation"],
+                "record_indicator": (record.get("record_indicator") or {}).get("cue", "off")
+                if args.profile == "xpan-crop"
+                else None,
             }
         )
     )
