@@ -1,5 +1,6 @@
 """Host-only offline builder for Canon EOS R5 (2.2.1) shutter-feedback sound mod.
 
+Profiles, WAV input rules and opt-in options come from config/features.json (tools/features.py).
 Reads selected regular input files and writes the selected output directory only.
 Never contacts a camera, modifies raw card sectors, mutates source files, or installs tools.
 Requires explicit 64 MiB R5 2.2.1 ROM dump, 48 kHz mono 16-bit PCM WAVE files, and GCC 15.2.1 toolchain.
@@ -263,13 +264,19 @@ def verify_linked_audio_role(
         raise ValueError(f"linked {desc_symbol} mismatch")
 
 
-def _validate_output_dir(output_dir: Path) -> Path:
-    out = output_dir.resolve()
+def check_output_dir(output_dir: Path) -> Path:
+    """Refuse output locations inside the repository's source directories, without creating anything."""
+    out = Path(output_dir).resolve()
     if out == ROOT.resolve():
         raise ValueError("refusing to use repository root as --output directory")
     for protected in _PROTECTED_SOURCE_DIRS:
         if out == protected or out.is_relative_to(protected):
             raise ValueError(f"refusing to write build output inside source directory: {out}")
+    return out
+
+
+def _validate_output_dir(output_dir: Path) -> Path:
+    out = check_output_dir(output_dir)
     out.mkdir(exist_ok=False, parents=True)
     return out
 
