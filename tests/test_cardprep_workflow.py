@@ -367,8 +367,12 @@ class Fat32FilesystemCheck(unittest.TestCase):
         sectors, start = 98304, 8192
         with open(part, "wb") as f:
             f.truncate(sectors * 512)
-        subprocess.run(["/sbin/newfs_msdos", "-F", "32", "-c", "1", "-S", "512", "-s", str(sectors), "-o", str(start),
-                        "-h", "16", "-u", "63", "-v", "EOS_DIGITAL", str(part)], check=True, capture_output=True)
+        made = subprocess.run(["/sbin/newfs_msdos", "-F", "32", "-c", "1", "-S", "512", "-s", str(sectors), "-o",
+                               str(start), "-h", "16", "-u", "63", "-v", "EOS_DIGITAL", str(part)],
+                              capture_output=True, text=True)
+        if made.returncode != 0:  # some macOS versions refuse to format a regular file
+            self.skipTest("newfs_msdos cannot format an image file here: "
+                          + (made.stderr or made.stdout).strip()[-200:])
         with open(part, "r+b") as f:  # camera-style: no x86 boot code in either boot sector
             for base in (0, 6 * 512):
                 f.seek(base + 0x5A)
