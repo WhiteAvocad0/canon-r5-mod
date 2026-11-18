@@ -1,0 +1,472 @@
+"""Find removable SD cards, and run diskutil and the privileged helper (macOS).
+
+Only a card in an SD card slot is offered: on macOS ``diskutil`` must report the
+Secure Digital protocol, removable and ejectable physical media, an MBR with one
+FAT32 or exFAT partition that is mounted under /Volumes, 512-byte sectors and a
+size between 2 GB and 2 TiB. Internal and boot disks, disk images, USB devices
+(including USB card readers, which macOS cannot tell from other USB drives),
+system images and anything else are refused with a reason.
+
+Raw reads and writes go through helper.py, started as root by the macOS password
+prompt (``osascript ... with administrator privileges``). This module never asks
+for, sees or stores a password.
+
+Windows and Linux: best-effort enumeration only, **untested**; preparing a card
+is offered on macOS only.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+from typing import Callable
+
+HELPER_PATH = Path(__file__).resolve().with_name("helper.py")
+HELPER_PROTOCOL = 1
+SD_MIN_BYTES = 2 * 1000**3
+SD_MAX_BYTES = 2 * 1024**4
+WHOLE_ID_RE = re.compile(r"disk[0-9]{1,3}")
+PART_ID_RE = re.compile(r"disk([0-9]{1,3})s([0-9]{1,2})")
+MAC_FAT32_CONTENT = frozenset({"Windows_FAT_32", "DOS_FAT_32"})
+DISKUTIL = "/usr/sbin/diskutil"
+OSASCRIPT = "/usr/bin/osascript"
+
+UNTESTED_NOTE = {
+    "darwin": "macOS: the real-device path is untested until the owner's first verification.",
+    "linux": "Linux: detection only, untested. Preparing a card is offered on macOS only.",
+    "win32": "Windows: detection only, untested. Preparing a card is offered on macOS only.",
+}
+
+
+class DeviceError(Exception):
+    """A device query or helper run failed, or the card changed."""
+
+
+class Cancelled(DeviceError):
+    """The person cancelled the password prompt."""
+
+
+@dataclass(frozen=True)
+class Candidate:
+    platform: str
+    whole_id: str
+    partition_id: str
+    model: str
+    bus: str
+    disk_bytes: int | None
+    partition_offset: int | None
+    partition_bytes: int | None
+    filesystem: str | None
+    volume_name: str
+    mount_point: str
+    location: str = ""
+    refusals: tuple[str, ...] = ()
+
+    @property
+    def accepted(self) -> bool:
+        return not self.refusals
+
+    @property
+    def raw_disk(self) -> str:
+        return f"/dev/r{self.whole_id}"
+
+    @property
+    def raw_partition(self) -> str:
+        return f"/dev/r{self.partition_id}"
+
+    def identity(self) -> dict:
+        """What must be unchanged between the person's choice and every card step."""
+        return {k: getattr(self, k) for k in ("platform", "whole_id", "partition_id", "model", "bus", "disk_bytes",
+                                              "partition_offset", "partition_bytes", "filesystem", "volume_name",
+                                              "location")}
+
+    def summary(self) -> str:
+        size = f"{self.disk_bytes / 1000**3:,.1f} GB" if self.disk_bytes else "unknown size"
+        return f"{self.volume_name or '(no name)'} - {self.model or 'unknown model'}, {size}, {self.filesystem or '?'} ({self.whole_id})"
+
+    def details(self) -> list[str]:
+        return [
+            f"Model: {self.model or 'unknown'} ({self.bus or 'unknown connection'})",
+            "Size: " + (f"{self.disk_bytes / 1000**3:,.2f} GB ({self.disk_bytes:,} bytes)" if self.disk_bytes else "unknown"),
+            f"Filesystem: {self.filesystem or 'unknown'}",
+            f"Volume name: {self.volume_name or '(none)'}",
+            f"Mounted at: {self.mount_point or '(not mounted)'}",
+            f"Device: {self.whole_id}, partition {self.partition_id}",
+        ]
+
+
+def _size_ok(size) -> bool:
+    return isinstance(size, int) and not isinstance(size, bool) and SD_MIN_BYTES <= size <= SD_MAX_BYTES
+
+
+def _size_reason(size) -> str:
+    if not isinstance(size, int):
+        return "The size could not be read."
+    return f"The size ({size / 1000**3:,.1f} GB) is outside the SD card range (2 GB to 2 TiB)."
+
+
+# -- macOS ----------------------------------------------------------------------
+
+
+def boot_wholes_macos(root_info: dict) -> set[str]:
+    """Whole disks that hold the running system (from ``diskutil info -plist /``)."""
+    wholes = set()
+    for value in [root_info.get("ParentWholeDisk"), root_info.get("APFSContainerReference")] + [
+            s.get("APFSPhysicalStore") for s in root_info.get("APFSPhysicalStores") or [] if isinstance(s, dict)]:
+        if isinstance(value, str):
+            m = re.match(r"(disk[0-9]+)", value)
+            if m:
+                wholes.add(m.group(1))
+    if not wholes:
+        raise DeviceError("Could not tell which disk macOS is running from; refusing to list cards.")
+    return wholes
+
+
+def classify_macos(whole: dict, parts: list[dict], boot_wholes: set[str]) -> Candidate:
+    """Accept only a camera-style SD card in an SD slot; otherwise list every reason."""
+    r: list[str] = []
+    wid = whole.get("DeviceIdentifier") if isinstance(whole.get("DeviceIdentifier"), str) else ""
+    bus = whole.get("BusProtocol") or ""
+    size = whole.get("Size")
+    if not WHOLE_ID_RE.fullmatch(wid) or whole.get("WholeDisk") is not True:
+        r.append("Not a whole disk.")
+    if wid in boot_wholes:
+        r.append("This is the disk macOS is running from.")
+    if whole.get("VirtualOrPhysical") == "Virtual" or bus == "Disk Image":
+        r.append("This is a disk image or virtual disk, not a card.")
+    elif whole.get("VirtualOrPhysical") != "Physical":
+        r.append("macOS does not report this as a physical disk.")
+    if bus != "Secure Digital":
+        r.append(f"Connected over {bus or 'an unknown bus'}, not an SD card slot. USB card readers are not "
+                 "offered because macOS cannot tell them from other USB drives.")
+    if not (whole.get("Removable") is True and whole.get("RemovableMedia") is True and whole.get("Ejectable") is True):
+        r.append("Not removable, ejectable media.")
+    if whole.get("SystemImage") is not False or whole.get("OSInternalMedia") is True:
+        r.append("macOS marks this as system media.")
+    if whole.get("DeviceBlockSize") != 512:
+        r.append(f"Sector size {whole.get('DeviceBlockSize')} is not 512 bytes.")
+    if whole.get("Content") != "FDisk_partition_scheme":
+        r.append(f"Not an MBR partition table ({whole.get('Content') or 'none'}); format the card in the camera.")
+    if whole.get("WritableMedia") is not True:
+        r.append("The card is write-protected (check its lock switch).")
+    if not _size_ok(size):
+        r.append(_size_reason(size))
+    part: dict = parts[0] if len(parts) == 1 else {}
+    if len(parts) != 1:
+        r.append(f"The card has {len(parts)} partitions; a card formatted in the camera has one.")
+    pid = part.get("DeviceIdentifier") if isinstance(part.get("DeviceIdentifier"), str) else ""
+    fs_type, content = part.get("FilesystemType"), part.get("Content")
+    filesystem = "FAT32" if fs_type == "msdos" and content in MAC_FAT32_CONTENT else "exFAT" if fs_type == "exfat" else None
+    mount = part.get("MountPoint") or ""
+    offset, psize = part.get("PartitionMapPartitionOffset"), part.get("Size")
+    name = part.get("VolumeName") or ""
+    if any((p.get("MountPoint") or "") == "/" for p in parts if isinstance(p, dict)):
+        r.append("A partition is mounted at /, the running system.")
+    if part:  # the remaining checks describe the single partition
+        m = PART_ID_RE.fullmatch(pid)
+        if m is None or f"disk{m.group(1)}" != wid or part.get("ParentWholeDisk") != wid \
+                or part.get("WholeDisk") is not False:
+            r.append("The partition does not belong to this disk.")
+        if filesystem is None:
+            r.append(f"The partition is not FAT32 or exFAT ({part.get('FilesystemName') or fs_type or content or 'unknown'}).")
+        if mount and mount != "/" and not mount.startswith("/Volumes/"):
+            r.append(f"The partition is mounted at {mount}, which is a system location.")
+        elif not mount:
+            r.append("The card is not mounted. Insert it so that macOS shows it in Finder.")
+        if part.get("DeviceBlockSize") != 512 or part.get("WritableMedia") is not True:
+            r.append("The partition is not writable 512-byte-sector media.")
+        if not (isinstance(offset, int) and isinstance(psize, int) and isinstance(size, int)
+                and 0 < offset and offset + psize <= size):
+            r.append("The partition position could not be read.")
+        if not name:
+            r.append("The volume has no name to confirm with.")
+    return Candidate("darwin", wid, pid, whole.get("MediaName") or whole.get("IORegistryEntryName") or "", bus,
+                     size if isinstance(size, int) else None, offset if isinstance(offset, int) else None,
+                     psize if isinstance(psize, int) else None, filesystem, name, mount,
+                     whole.get("DeviceTreePath") or "", tuple(r))
+
+
+def run_plist(argv: list[str]) -> dict:
+    proc = subprocess.run(argv, capture_output=True, timeout=60)
+    if proc.returncode != 0:
+        raise DeviceError(f"{' '.join(argv)} failed: {proc.stderr.decode(errors='replace').strip()}")
+    try:
+        value = plistlib.loads(proc.stdout)
+    except Exception as exc:  # malformed plist is a device-query failure, not a crash
+        raise DeviceError(f"{' '.join(argv)} returned an unreadable plist: {exc}") from exc
+    if not isinstance(value, dict):
+        raise DeviceError(f"{' '.join(argv)} did not return a dictionary.")
+    return value
+
+
+def enumerate_macos(run: Callable[[list[str]], dict] = run_plist) -> list[Candidate]:
+    boot = boot_wholes_macos(run([DISKUTIL, "info", "-plist", "/"]))
+    listing = run([DISKUTIL, "list", "-plist", "physical"])
+    found = []
+    for entry in listing.get("AllDisksAndPartitions") or []:
+        wid = entry.get("DeviceIdentifier") if isinstance(entry, dict) else None
+        if not isinstance(wid, str) or not WHOLE_ID_RE.fullmatch(wid):
+            continue
+        whole = run([DISKUTIL, "info", "-plist", wid])
+        parts = [run([DISKUTIL, "info", "-plist", p["DeviceIdentifier"]])
+                 for p in entry.get("Partitions") or [] if isinstance(p, dict) and isinstance(p.get("DeviceIdentifier"), str)]
+        found.append(classify_macos(whole, parts, boot))
+    return found
+
+
+# -- Linux (untested) -------------------------------------------------------------
+
+LINUX_SYSTEM_MOUNTS = ("/", "/boot", "/boot/efi", "/efi", "/usr", "/var", "/home", "[SWAP]")
+
+
+def _mounts(dev: dict) -> list[str]:
+    value = dev.get("mountpoints", dev.get("mountpoint"))
+    values = value if isinstance(value, list) else [value]
+    return [v for v in values if isinstance(v, str) and v]
+
+
+def classify_linux(dev: dict) -> Candidate:
+    """One lsblk --json --bytes disk entry. Best effort, untested."""
+    r: list[str] = []
+    name = dev.get("name") or ""
+    size = dev.get("size")
+    size = int(size) if isinstance(size, str) and size.isdigit() else size
+    children = dev.get("children") or []
+    if dev.get("type") != "disk":
+        r.append("Not a whole disk.")
+    if not re.fullmatch(r"mmcblk[0-9]+", name):
+        r.append(f"Not an SD card slot (connected over {dev.get('tran') or 'an unknown bus'}).")
+    if not (dev.get("rm") in (True, "1", 1) or dev.get("hotplug") in (True, "1", 1)):
+        r.append("Not removable media.")
+    if dev.get("ro") in (True, "1", 1):
+        r.append("The card is write-protected.")
+    if str(dev.get("log-sec", "512")) != "512":
+        r.append("Sector size is not 512 bytes.")
+    if dev.get("pttype") != "dos":
+        r.append("Not an MBR partition table.")
+    if not _size_ok(size):
+        r.append(_size_reason(size))
+    every = _mounts(dev) + [m for c in children for m in _mounts(c)]
+    if any(m in LINUX_SYSTEM_MOUNTS for m in every):
+        r.append("It holds a system mount.")
+    part = children[0] if len(children) == 1 else {}
+    if len(children) != 1:
+        r.append(f"The card has {len(children)} partitions; a card formatted in the camera has one.")
+    fs = {"vfat": "FAT32", "exfat": "exFAT"}.get(part.get("fstype"))
+    if children and fs is None:
+        r.append("The partition is not FAT32 or exFAT.")
+    mounts = _mounts(part)
+    return Candidate("linux", name, part.get("name") or "", (dev.get("model") or "").strip(), dev.get("tran") or "mmc",
+                     size if isinstance(size, int) else None, None, None, fs, part.get("label") or "",
+                     mounts[0] if mounts else "", dev.get("path") or "", tuple(r))
+
+
+def enumerate_linux(run_json: Callable[[list[str]], dict] | None = None) -> list[Candidate]:
+    def default(argv):
+        return json.loads(subprocess.run(argv, capture_output=True, check=True, timeout=60, text=True).stdout)
+    data = (run_json or default)(["lsblk", "--json", "--bytes", "--output",
+                                  "NAME,PATH,TYPE,SIZE,RM,HOTPLUG,RO,TRAN,MODEL,FSTYPE,LABEL,MOUNTPOINT,LOG-SEC,PTTYPE"])
+    return [classify_linux(d) for d in data.get("blockdevices") or [] if isinstance(d, dict) and d.get("type") == "disk"]
+
+
+# -- Windows (untested) -----------------------------------------------------------
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else [] if value is None else [value]
+
+
+def classify_windows(disk: dict, partitions: list[dict], volumes: list[dict], system_drive: str) -> Candidate:
+    """One Get-Disk entry with its Get-Partition / Get-Volume rows. Best effort, untested."""
+    r: list[str] = []
+    number = disk.get("Number")
+    size = disk.get("Size")
+    bus = str(disk.get("BusType") or "")
+    if bus not in ("SD", "MMC"):
+        r.append(f"Connected over {bus or 'an unknown bus'}, not an SD card slot.")
+    if disk.get("IsSystem") or disk.get("IsBoot"):
+        r.append("This is the disk Windows is running from.")
+    if disk.get("IsReadOnly"):
+        r.append("The card is write-protected.")
+    if disk.get("PartitionStyle") != "MBR":
+        r.append("Not an MBR partition table.")
+    if disk.get("LogicalSectorSize") != 512:
+        r.append("Sector size is not 512 bytes.")
+    if not _size_ok(size):
+        r.append(_size_reason(size))
+    parts = [p for p in partitions if p.get("DiskNumber") == number]
+    if len(parts) != 1:
+        r.append(f"The card has {len(parts)} partitions; a card formatted in the camera has one.")
+    part = parts[0] if len(parts) == 1 else {}
+    letter = str(part.get("DriveLetter") or "").strip("\x00 ")
+    volume = next((v for v in volumes if letter and str(v.get("DriveLetter") or "") == letter), {})
+    fs = {"FAT32": "FAT32", "exFAT": "exFAT"}.get(volume.get("FileSystem"))
+    if parts and fs is None:
+        r.append("The partition is not FAT32 or exFAT.")
+    if parts and not letter:
+        r.append("The card has no drive letter.")
+    if letter and system_drive.upper().startswith(letter.upper() + ":"):
+        r.append("This is the Windows system drive.")
+    return Candidate("win32", f"PhysicalDrive{number}", f"{letter}:" if letter else "", disk.get("FriendlyName") or "",
+                     bus, size if isinstance(size, int) else None, part.get("Offset"), part.get("Size"), fs,
+                     volume.get("FileSystemLabel") or "", f"{letter}:\\" if letter else "", "", tuple(r))
+
+
+def enumerate_windows(run_json: Callable[[str], object] | None = None) -> list[Candidate]:
+    def default(command):
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                             capture_output=True, check=True, timeout=60, text=True).stdout
+        return json.loads(out) if out.strip() else None
+    run = run_json or default
+    disks = _as_list(run("Get-Disk | Select-Object Number,FriendlyName,BusType,Size,IsSystem,IsBoot,IsReadOnly,"
+                         "PartitionStyle,LogicalSectorSize | ConvertTo-Json -Depth 3"))
+    parts = _as_list(run("Get-Partition | Select-Object DiskNumber,PartitionNumber,Offset,Size,DriveLetter | ConvertTo-Json"))
+    vols = _as_list(run("Get-Volume | Select-Object DriveLetter,FileSystem,FileSystemLabel | ConvertTo-Json"))
+    drive = os.environ.get("SystemDrive", "C:")
+    return [classify_windows(d, parts, vols, drive) for d in disks if isinstance(d, dict)]
+
+
+def enumerate_candidates(platform: str | None = None) -> list[Candidate]:
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        return enumerate_macos()
+    if platform.startswith("linux"):
+        return enumerate_linux()
+    if platform.startswith("win"):
+        return enumerate_windows()
+    return []
+
+
+def prepare_supported(platform: str | None = None) -> bool:
+    return (sys.platform if platform is None else platform) == "darwin"
+
+
+# -- macOS privileged helper and diskutil actions --------------------------------
+
+
+def privileged_script(python: str, helper: Path, helper_sha256: str, args: list[str]) -> str:
+    """The /bin/sh text run as root: copy the helper into a fresh root-owned folder,
+    check its SHA-256, run it isolated, and remove the folder again."""
+    q = shlex.quote
+    return ("set -e; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
+            "trap '/bin/rm -rf \"$d\"' EXIT; "
+            f"/bin/cp {q(str(helper))} \"$d/helper.py\"; "
+            f"test \"$(/usr/bin/shasum -a 256 \"$d/helper.py\" | /usr/bin/cut -c1-64)\" = {q(helper_sha256)}; "
+            f"{q(python)} -I -S \"$d/helper.py\" " + " ".join(q(a) for a in args))
+
+
+def _applescript_string(text: str) -> str:
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def applescript(script: str, prompt: str) -> str:
+    return (f"do shell script {_applescript_string(script)} with prompt {_applescript_string(prompt)} "
+            "with administrator privileges")
+
+
+class MacOps:
+    """diskutil as the person, raw sector access as root through the password prompt."""
+
+    def __init__(self, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                 python: str | None = None, helper: Path = HELPER_PATH):
+        self.run = run
+        self.python = python or os.path.realpath(sys.executable)
+        self.helper = helper
+
+    def _diskutil(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+        return self.run([DISKUTIL, *args], capture_output=True, text=True, timeout=timeout)
+
+    def _plist(self, *args: str) -> dict:
+        proc = self.run([DISKUTIL, *args], capture_output=True, timeout=60)
+        if proc.returncode != 0:
+            raise DeviceError(f"diskutil {' '.join(args)} failed.")
+        value = plistlib.loads(proc.stdout)
+        if not isinstance(value, dict):
+            raise DeviceError(f"diskutil {' '.join(args)} returned no dictionary.")
+        return value
+
+    def refresh(self, cand: Candidate) -> Candidate:
+        """Query the card again; refuse if it is no longer exactly the card the person chose."""
+        boot = boot_wholes_macos(self._plist("info", "-plist", "/"))
+        listing = self._plist("list", "-plist", cand.whole_id)
+        entries = [e for e in listing.get("AllDisksAndPartitions") or []
+                   if isinstance(e, dict) and e.get("DeviceIdentifier") == cand.whole_id]
+        if len(entries) != 1:
+            raise DeviceError(f"{cand.whole_id} is gone. Was the card removed? Search for cards again.")
+        whole = self._plist("info", "-plist", cand.whole_id)
+        parts = [self._plist("info", "-plist", p["DeviceIdentifier"]) for p in entries[0].get("Partitions") or []
+                 if isinstance(p, dict) and isinstance(p.get("DeviceIdentifier"), str)]
+        now = classify_macos(whole, parts, boot)
+        if not now.accepted:
+            raise DeviceError("The card is no longer acceptable: " + " ".join(now.refusals))
+        if now.identity() != cand.identity():
+            raise DeviceError("The card changed since you chose it (another card, or it was reinserted). "
+                              "Search for cards again.")
+        return now
+
+    def unmount(self, cand: Candidate) -> None:
+        proc = self._diskutil("unmount", cand.partition_id)
+        if proc.returncode != 0:
+            raise DeviceError(f"Could not unmount {cand.partition_id}: {(proc.stdout + proc.stderr).strip()} "
+                              "Close any files or windows using the card and try again.")
+
+    def mount(self, cand: Candidate) -> tuple[bool, str]:
+        proc = self._diskutil("mount", cand.partition_id)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+    def verify(self, cand: Candidate) -> tuple[bool, str]:
+        proc = self._diskutil("verifyVolume", cand.partition_id, timeout=1800)
+        return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+
+    def _privileged(self, args: list[str], prompt: str) -> dict:
+        helper_sha = hashlib.sha256(self.helper.read_bytes()).hexdigest()
+        script = privileged_script(self.python, self.helper, helper_sha, args)
+        try:
+            proc = self.run([OSASCRIPT, "-e", applescript(script, prompt)], capture_output=True, text=True,
+                            timeout=1800)
+        except subprocess.TimeoutExpired as exc:
+            raise DeviceError("The password prompt or the helper did not finish within 30 minutes; "
+                              "the card's state is unknown.") from exc
+        if proc.returncode != 0:
+            if "-128" in proc.stderr or "User canceled" in proc.stderr:
+                raise Cancelled("The password prompt was cancelled; nothing was read or written.")
+            raise DeviceError("The privileged helper did not run: " + proc.stderr.strip())
+        lines = [line for line in proc.stdout.replace("\r", "\n").splitlines() if line.strip()]
+        try:
+            result = json.loads(lines[-1])
+        except (IndexError, json.JSONDecodeError) as exc:
+            raise DeviceError("The privileged helper returned no result.") from exc
+        if result.get("helper") != "r5-cardprep" or result.get("protocol") != HELPER_PROTOCOL:
+            raise DeviceError("The privileged helper returned an unexpected result.")
+        return result
+
+    def raw_read(self, cand: Candidate, length: int) -> tuple[bytes, bytes]:
+        result = self._privileged(
+            ["read", "--disk", cand.raw_disk, "--partition", cand.raw_partition, "--length", str(length)],
+            f"The Canon R5 build assistant wants to READ the boot sectors of the SD card "
+            f"“{cand.volume_name}” ({cand.whole_id}). Nothing is written in this step.")
+        if not result.get("ok"):
+            raise DeviceError(f"Reading the card failed: {result.get('error')}")
+        return bytes.fromhex(result["mbr_hex"]), bytes.fromhex(result["area_hex"])
+
+    def raw_write(self, cand: Candidate, ranges: list[tuple[int, int]], expect_sha256: str, after: bytes) -> dict:
+        with tempfile.TemporaryDirectory(prefix="r5-cardprep-") as tmp:
+            path = Path(tmp) / "after.bin"
+            path.write_bytes(after)
+            args = ["write", "--disk", cand.raw_disk, "--partition", cand.raw_partition]
+            for offset, length in ranges:
+                args += ["--range", f"{offset}:{length}"]
+            args += ["--expect-sha", expect_sha256, "--after", str(path),
+                     "--after-sha", hashlib.sha256(after).hexdigest()]
+            sectors = ", ".join(str(o // 512) for o, _ in ranges)
+            return self._privileged(
+                args, f"The Canon R5 build assistant wants to WRITE boot sector(s) {sectors} of the SD card "
+                      f"“{cand.volume_name}” ({cand.whole_id}). Your backup is already saved.")
