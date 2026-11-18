@@ -1,7 +1,7 @@
 # Build assistant (prototype)
 
 > [!WARNING]
-> **Prototype.** This is Phases 1 and 2 of [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16). It builds `autoexec.bin` on your computer, can write the two boot markers onto a card you formatted in the camera (macOS only, **not yet tested on a real card**), and copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
+> **Prototype.** This is Phases 1 and 2 of [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16). It builds `autoexec.bin` on your computer, can write the two boot markers onto a card you formatted in the camera (macOS only; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested), and copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
 
 The build assistant is a small desktop window for owners of an original Canon EOS R5 on firmware `2.2.1` who would rather not use a terminal to build. You still need the [one-time prerequisites](usage.md#1-prerequisites): your own ROM dump and BootDisk enabled in the camera. On a Mac the assistant can make a camera-formatted SD card bootable ([Prepare card](#5-prepare-card)); elsewhere you need an already bootable card.
 
@@ -58,7 +58,7 @@ At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It l
 ### 5. Prepare card
 
 > [!CAUTION]
-> **Writes raw boot sectors. Prototype, macOS only, not yet tested on a real card.** The owner decided on 18 November 2026 to offer this step in the assistant. Its real-device path stays untested until the owner's first verification. The command-line builder still never writes cards.
+> **Writes raw boot sectors. Prototype, macOS only.** The owner decided on 18 November 2026 to offer this step in the assistant. The exFAT path was verified on 18 November 2026 on the owner's Mac (macOS 27.3) with a camera-formatted 128 GB exFAT card, which the camera then booted; FAT32 cards, Windows and Linux are untested. On that run sectors 12, 23, 0 and 11 were written, the read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted the card and ran a private lab build. The command-line builder still never writes cards.
 
 *Screenshot, described:* a bold red warning, "Format this card IN THE CAMERA first. Formatting erases everything on the card — copy your photos and videos to your computer before formatting.", then a short explanation and a red line saying the real-device path is untested. Below them are a **Find SD cards** button with a drop-down of the cards found, the chosen card's details (model, size, filesystem, volume name, mount state, device), and a "Not offered:" line naming every other disk with its reason. Then come the **Prepare card**, **Undo (restore the latest backup)** and **Restore from a chosen backup...** buttons, a yellow "Next:" list, the result line and a box with its details.
 
@@ -142,11 +142,11 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - Copying needs a build from the current session; it can't pick an older build folder.
 - No consented toolchain download yet. You install the toolchain yourself.
 - The assistant can't tell whether BootDisk is enabled in the camera.
-- **Prepare card is untested on a real card.** Its host tests use image files only: synthetic FAT32 and exFAT boot areas, including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums, plus `fsck_msdos` on a real FAT32 image file. No raw device has been read or written by this code yet, and the camera hasn't booted a card prepared this way.
+- **Prepare card: verified for exFAT on one Mac and camera only.** On 18 November 2026 the owner's Mac (macOS 27.3) prepared a camera-formatted 128 GB exFAT card through `authopen`. The read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted it. FAT32 cards, other Macs and macOS versions, Windows and Linux are untested. The host tests use image files only: synthetic FAT32 and exFAT boot areas (including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums), plus `fsck_msdos` on a real FAT32 image file.
 - Only the Mac's built-in SD slot is offered. USB card readers are refused.
 - "Camera-formatted" is checked from the boot sectors, not proven. A FAT32 card formatted on a computer usually has boot code where the markers go and is refused. An exFAT card formatted by macOS looks the same as a camera-formatted one and is accepted, which is why the warning says to format in the camera.
 - Each Prepare or Undo opens macOS's authorization window twice (once to read, once to write) unless nothing needs writing. Whether macOS remembers the first authorization for the second is not known yet.
-- Real-device behaviour still to observe on the first run: `authopen`'s exit status and message when the window is cancelled, whether it grants read/write on the whole-disk node while the card's partition is unmounted, `F_FULLFSYNC` on a raw disk descriptor, `diskutil unmount`/`mount`/`verifyVolume` on a card, and whether Disk Utility flags the unmarked FAT32 backup boot sector. On the owner's Mac (macOS 27.3), `authopen` was already shown to read `/dev/rdisk6` after its window. A root shell started by `osascript` was denied the same device, which is why the assistant now uses `authopen`.
+- Still to observe: `authopen`'s exit status and message when its window is cancelled, and whether Disk Utility flags the unmarked FAT32 backup boot sector. On the owner's Mac a root shell started by `osascript` was denied raw access to the card, which is why the assistant uses `authopen`.
 
 ## Troubleshooting
 
