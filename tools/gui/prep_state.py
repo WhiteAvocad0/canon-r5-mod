@@ -13,7 +13,7 @@ Invariants kept here (tested in tests/test_gui_prep_state.py):
   attempt discards the session (read, plan and backup handle);
 - a read that finishes after the choice changed is thrown away (generation counter);
 - after OK, the write starts only if the confirmed session is still the current one;
-- one card operation at a time, and none while tab 6 copies to the card (and tab 6
+- one card operation at a time, and none while step 8 copies to the card (and step 8
   is blocked while a card operation or a confirmation is pending);
 - every report names the backup folder (workflow adds it).
 """
@@ -54,7 +54,7 @@ class PrepState:
         self.selected: devices.Candidate | None = None
         self.generation = 0
         self.busy: str | None = None
-        self.copying = False  # tab 6 is copying to a card
+        self.copying = False  # step 8 is copying to a card
         self.session: workflow.Session | None = None  # read and backed up, waiting for confirmation
         self.restore_from: workflow.Backup | None = None  # a chosen backup; None means the latest one
         self.report: workflow.Report | None = None
@@ -122,7 +122,7 @@ class PrepState:
         if self.busy:
             reasons.append(f"Wait: {self.busy}")
         if self.copying:
-            reasons.append("Wait: autoexec.bin is being copied to a card (tab 6).")
+            reasons.append("Wait: autoexec.bin is being copied to a card (step 8).")
         if self.session is not None:
             reasons.append("Answer the confirmation first.")
         if not self.supported:

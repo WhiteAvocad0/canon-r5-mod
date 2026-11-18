@@ -32,6 +32,19 @@ from cardprep import devices as card_devices, workflow as card_flow
 from gui import card, checks, runner
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
+from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COMING_SOON, COPY, DONE, FEATURES, GUIDE,
+                        NEEDS_ACTION, ROM, SKIPPED, STEP_BY_ID, STEPS, TEST, TEST_CHECKLIST, TOOLCHAIN, Wizard)
+
+
+def verify_build(out: Path):
+    """On resume: the last build counts only if autoexec.bin still matches its build.json."""
+    try:
+        summary = runner.summarize(out)
+    except (OSError, ValueError, KeyError):
+        return None, f"The previous build in {out} can't be read any more; build again."
+    if not summary.sha256_matches_build_json:
+        return None, f"The previous build in {out} no longer matches its build.json; build again."
+    return summary, None
 
 DOCS = {
     "Getting started guide": ROOT / "docs" / "getting-started.md",
@@ -39,16 +52,16 @@ DOCS = {
     "About this assistant": ROOT / "docs" / "gui.md",
 }
 CANNOT_DO = """\
-This assistant builds autoexec.bin on your computer, can write the two boot
-markers onto a card you formatted in the camera (tab 5, macOS only, with a backup
-first), and copies autoexec.bin to the card. It cannot, and will not try to:
+What this assistant does: it builds autoexec.bin on your computer, can write the two
+boot markers onto a card you formatted in the camera (step 7, macOS only, with a backup
+first), and copies autoexec.bin to the card. What it never does:
 
-  - dump your camera's ROM (you need your own 64 MiB gang100.bin first);
-  - enable the camera's BootDisk setting (a permanent change inside the camera);
+  - change the camera by itself: the ROM dump and BootDisk steps are things you run in
+    the camera (their guided versions are coming soon);
   - format, partition or erase a card, or write its partition table (MBR);
-  - write anything to a card except the boot-marker sectors shown in tab 5;
+  - write anything to a card except the boot-marker sectors shown in step 7;
   - write the camera's firmware or NVRAM;
-  - download the toolchain (you install it yourself; see the Toolchain tab);
+  - download the toolchain (you install it yourself; see step 5);
   - test anything on the camera, or tell you whether your camera will work.
 
 Every build made here is a public repackaged build and is hardware-untested.
@@ -78,43 +91,221 @@ class App:
         self.card_info: card.CardInspection | None = None
         self.copying = False
         self.prep = PrepState()
+        self.wizard = Wizard(self.state, prep_supported=card_devices.prepare_supported())
 
         self.root = tk.Tk()
-        self.root.title("Canon R5 mod build assistant (prototype)")
-        self.root.minsize(760, 560)
-        self.root.geometry("860x760")
+        self.root.title("Canon R5 mod setup assistant (prototype)")
+        self.root.minsize(900, 620)
+        self.root.geometry("1060x780")
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text=WARNING, foreground="#b3261e", wraplength=720, justify="left").pack(anchor="w")
+        ttk.Label(outer, text=WARNING, foreground="#b3261e", wraplength=1000, justify="left").pack(anchor="w")
         links = ttk.Frame(outer)
         links.pack(anchor="w", pady=(4, 8))
         for label, path in DOCS.items():
             ttk.Button(links, text=label, command=lambda p=path: webbrowser.open(p.as_uri())).pack(side="left", padx=(0, 6))
 
-        self.notebook = ttk.Notebook(outer)
-        self.notebook.pack(fill="both", expand=True)
+        body = ttk.Frame(outer)
+        body.pack(fill="both", expand=True)
+        side = ttk.Frame(body, padding=(0, 0, 10, 0))
+        side.pack(side="left", fill="y")
+        ttk.Label(side, text="Steps", font=("TkDefaultFont", 0, "bold")).pack(anchor="w")
+        self.sidebar = tk.Listbox(side, width=36, height=len(STEPS) + 1, activestyle="none", exportselection=False)
+        self.sidebar.pack(fill="y", expand=True)
+        self.sidebar.bind("<<ListboxSelect>>", lambda _e: self._sidebar_clicked())
+        self.mode_label = ttk.Label(side, text="", wraplength=260, justify="left", foreground="#555")
+        self.mode_label.pack(anchor="w", pady=(6, 0))
+        self.content = ttk.Frame(body)
+        self.content.pack(side="left", fill="both", expand=True)
+        nav = ttk.Frame(outer)
+        nav.pack(fill="x", pady=(8, 0))
+        self.back_button = ttk.Button(nav, text="< Back", command=self._back)
+        self.back_button.pack(side="left")
+        self.next_button = ttk.Button(nav, text="Next >", command=self._next)
+        self.next_button.pack(side="right")
+        self.nav_note = ttk.Label(nav, text="", foreground="#7a5c00", wraplength=700, justify="right")
+        self.nav_note.pack(side="right", padx=8)
+
+        self.panels = {}
+        self._camera_panel()
         self._rom_tab()
+        self._bootdisk_panel()
         self._features_tab()
         self._toolchain_tab()
         self._build_tab(scrolledtext)
         self._prep_tab(scrolledtext)
         self._card_tab()
-        cannot = ttk.Frame(self.notebook, padding=10)
-        ttk.Label(cannot, text=CANNOT_DO, justify="left").pack(anchor="w")
-        self.notebook.add(cannot, text="What this tool cannot do")
+        self._test_panel()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
+        self.wizard.load(verify_build=verify_build)
+        self.summary = self.wizard.build_summary
         self.root.after(100, self._poll)
         self._detect_toolchain()
         self.refresh()
 
     # -- helpers ------------------------------------------------------------
 
-    def _tab(self, title: str):
-        frame = self.ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(frame, text=title)
-        return frame
+    def _panel(self, step_id: str, extra_details: str = ""):
+        """A wizard step: its title, what and why, what you do, a body for its controls, the
+        app's check of the step, and a Details expander with the technical facts."""
+        info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
+        frame = self.ttk.Frame(self.content)
+        canvas = self.tk.Canvas(frame, highlightthickness=0)
+        bar = self.ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        inner = self.ttk.Frame(canvas, padding=(4, 0, 12, 8))
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        title = f"Step {info.number}. {info.title}" + ("  (one time)" if info.one_time else "")
+        self.ttk.Label(inner, text=title, font=("TkDefaultFont", 16, "bold")).pack(anchor="w")
+        self.ttk.Label(inner, text=guide.why, wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
+        self.ttk.Label(inner, text="What you do", font=("TkDefaultFont", 0, "bold")).pack(anchor="w", pady=(8, 0))
+        self.ttk.Label(inner, text=guide.todo, wraplength=640, justify="left").pack(anchor="w")
+        if info.placeholder:
+            self.ttk.Label(inner, text=f"{COMING_SOON}: the guided part of this step is being prepared.",
+                           foreground="#7a5c00", wraplength=640, justify="left").pack(anchor="w", pady=(6, 0))
+        body = self.ttk.Frame(inner)
+        body.pack(fill="x", pady=(8, 0))
+        check = self.ttk.Label(inner, text="", wraplength=640, justify="left", font=("TkDefaultFont", 0, "bold"))
+        check.pack(anchor="w", pady=(10, 0))
+        details = self.ttk.Label(inner, text="\n\n".join(t for t in (guide.details, extra_details) if t),
+                                 wraplength=640, justify="left", foreground="#555")
+        toggle = self.ttk.Button(inner, text="Details >")
+
+        def flip():
+            if details.winfo_ismapped():
+                details.pack_forget()
+                toggle.configure(text="Details >")
+            else:
+                details.pack(anchor="w", pady=(4, 0), after=toggle)
+                toggle.configure(text="Details v")
+        toggle.configure(command=flip)
+        toggle.pack(anchor="w", pady=(8, 0))
+        self.panels[step_id] = (frame, check)
+        return body
+
+    def _camera_panel(self):
+        tab = self._panel(CAMERA, extra_details=CANNOT_DO)
+        self.camera_var = self.tk.BooleanVar(value=False)
+        self.ttk.Checkbutton(tab, variable=self.camera_var, command=lambda: (
+            self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
+            text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w")
+        modes = self.ttk.LabelFrame(tab, text="Choose your path", padding=6)
+        modes.pack(fill="x", pady=(10, 0))
+        self.ttk.Button(modes, text="Set up from the start", command=self._full_path).pack(side="left")
+        self.update_button = self.ttk.Button(modes, text="Update my card (Features > Build > Copy)",
+                                             command=self._update_path)
+        self.update_button.pack(side="left", padx=6)
+        self.update_note = self.ttk.Label(tab, text="", foreground="#555", wraplength=640, justify="left")
+        self.update_note.pack(anchor="w", pady=(4, 0))
+
+    def _bootdisk_panel(self):
+        tab = self._panel(BOOTDISK)
+        guide = self.ttk.LabelFrame(tab, text=f"Guided BootDisk ({COMING_SOON.lower()})", padding=6)
+        guide.pack(fill="x")
+        self.ttk.Button(guide, text="Prepare the BootDisk card...", state="disabled").pack(side="left")
+        self.ttk.Button(guide, text="Disable BootDisk...", state="disabled").pack(side="left", padx=6)
+        self.ttk.Label(guide, text="Waiting on research into the exact R5 steps; never automatic.",
+                       foreground="#555").pack(side="left", padx=6)
+        self.bootdisk_ack = self.tk.BooleanVar(value=False)
+        self.ttk.Checkbutton(tab, variable=self.bootdisk_ack, command=self.refresh, text=(
+            "I understand that BootDisk is a permanent setting inside the camera, that there is no official way "
+            "back, and that I use this at my own risk.")).pack(anchor="w", pady=(10, 0))
+        self.bootdisk_var = self.tk.BooleanVar(value=False)
+        self.bootdisk_box = self.ttk.Checkbutton(tab, variable=self.bootdisk_var, command=self._bootdisk_changed,
+                                                 text="BootDisk is already enabled on my camera (it was confirmed "
+                                                      "with a readback when it was enabled).")
+        self.bootdisk_box.pack(anchor="w", pady=(4, 0))
+
+    def _bootdisk_changed(self):
+        self.wizard.set_bootdisk("confirmed" if self.bootdisk_var.get() else "unknown")
+        self.refresh()
+
+    def _test_panel(self):
+        tab = self._panel(TEST)
+        self.test_vars, self.test_boxes = [], []
+        for i, text in enumerate(TEST_CHECKLIST):
+            var = self.tk.BooleanVar(value=False)
+            box = self.ttk.Checkbutton(tab, variable=var, text=text, command=lambda i=i, v=var: (
+                self.wizard.set_test_item(i, v.get()), self.refresh()))
+            box.pack(anchor="w", pady=1)
+            self.test_vars.append(var)
+            self.test_boxes.append(box)
+        self.ttk.Button(tab, text="Open the test report form",
+                        command=lambda: webbrowser.open(self.wizard.report_url())).pack(anchor="w", pady=(8, 0))
+
+    def _full_path(self):
+        self.wizard.start_full()
+        self.refresh()
+
+    def _update_path(self):
+        reasons = self.wizard.start_update()
+        if reasons:
+            self.messagebox.showinfo("Update my card", "\n".join(reasons))
+        self.refresh()
+
+    def _sidebar_clicked(self):
+        sel = self.sidebar.curselection()
+        path = self.wizard.path()
+        if sel and sel[0] < len(path):
+            self.wizard.goto(path[sel[0]])
+        self.refresh()
+
+    def _next(self):
+        self.wizard.next()
+        self.refresh()
+
+    def _back(self):
+        self.wizard.back()
+        self.refresh()
+
+    def _refresh_wizard(self):
+        w = self.wizard
+        path, current = w.path(), w.current
+        marks = {DONE: "✓", NEEDS_ACTION: "•", SKIPPED: "–", BLOCKED: "✗"}
+        self.sidebar.delete(0, "end")
+        for step_id in path:
+            info, st = STEP_BY_ID[step_id], w.status(step_id)
+            self.sidebar.insert("end", f" {marks[st.status]}  {info.number}. {info.title}  ({st.status})")
+            colour = {DONE: "#1b7f3b", BLOCKED: "#888888", SKIPPED: "#555555"}.get(st.status, "#7a5c00")
+            self.sidebar.itemconfigure("end", foreground=colour)
+        self.sidebar.selection_clear(0, "end")
+        self.sidebar.selection_set(path.index(current))
+        self.mode_label.configure(text="Path: Update my card (one-time steps already done)." if w.saved.mode == "update"
+                                  else "Path: full setup. Done one-time steps stay done when you come back.")
+        for step_id, (frame, check) in self.panels.items():
+            if step_id == current:
+                st = w.status(step_id)
+                prefix = {DONE: "Check passed: ", SKIPPED: "Skipped: ", BLOCKED: "Blocked: "}.get(st.status, "To do: ")
+                check.configure(text=prefix + st.message.removeprefix("Skipped: "),
+                                foreground={DONE: STATUS_COLOURS[OK], BLOCKED: STATUS_COLOURS[FAILED]}.get(
+                                    st.status, STATUS_COLOURS[CHECKING]))
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled")
+        blockers = w.next_blockers()
+        last = current == path[-1]
+        self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next >")
+        self.nav_note.configure(text="" if not blockers or last else blockers[0])
+        self.camera_var.set(w.saved.camera_confirmed)
+        missing = w.one_time_done()
+        self.update_button.configure(state="disabled" if missing else "normal")
+        self.update_note.configure(text=("For returning owners, after the one-time steps: "
+                                         + ", ".join(missing) + " still to do.") if missing else
+                                   "One-time steps are done: 'Update my card' takes you straight to Features.")
+        self.bootdisk_var.set(w.saved.bootdisk in ("confirmed", "verified"))
+        self.bootdisk_box.configure(state="normal" if self.bootdisk_ack.get() or self.bootdisk_var.get() else "disabled")
+        test_blocked = w.status(TEST).status == BLOCKED
+        for i, (var, box) in enumerate(zip(self.test_vars, self.test_boxes)):
+            var.set(i in w.saved.test_checked)
+            box.configure(state="disabled" if test_blocked else "normal")
+
 
     def _status(self, parent):
         label = self.ttk.Label(parent, text="", wraplength=700, justify="left")
@@ -157,7 +348,7 @@ class App:
     # -- tabs ---------------------------------------------------------------
 
     def _rom_tab(self):
-        tab = self._tab("1. ROM")
+        tab = self._panel(ROM)
         self.ttk.Label(tab, wraplength=700, justify="left", text=(
             "Pick your own 64 MiB ROM dump (often gang100.bin). It is read on this computer only and never "
             "copied anywhere. The builder's own strict firmware check runs on it; there is no way to force it."
@@ -168,9 +359,15 @@ class App:
         self.ttk.Entry(row, textvariable=self.rom_var, state="readonly").pack(side="left", fill="x", expand=True)
         self.ttk.Button(row, text="Choose ROM...", command=self._pick_rom).pack(side="left", padx=6)
         self.rom_status = self._status(tab)
+        guide = self.ttk.LabelFrame(tab, text=f"Make a ROM dump ({COMING_SOON.lower()})", padding=6)
+        guide.pack(fill="x", pady=(10, 0))
+        self.ttk.Button(guide, text="Prepare the ROM-dump card...", state="disabled").pack(side="left")
+        self.ttk.Label(guide, text="The camera saves its ROM to a prepared card; reading only. Waiting on research "
+                                   "into the exact R5 steps.", foreground="#555", wraplength=460,
+                       justify="left").pack(side="left", padx=6)
 
     def _features_tab(self):
-        tab = self._tab("2. Features")
+        tab = self._panel(FEATURES)
         self.ttk.Label(tab, text=self.state.manifest.profile_exclusivity, wraplength=700).pack(anchor="w")
         self.profile_var = self.tk.StringVar(value=self.state.profile)
         self.profile_status = {}
@@ -213,9 +410,11 @@ class App:
         self.ttk.Label(tab, wraplength=700, foreground="#555", justify="left", text=(
             "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
             "They are embedded unchanged; nothing is trimmed or normalised.")).pack(anchor="w", pady=(6, 0))
+        self.ttk.Button(tab, text="Use these features", command=lambda: (
+            self.wizard.confirm_features(), self.refresh())).pack(anchor="w", pady=(8, 0))
 
     def _toolchain_tab(self):
-        tab = self._tab("3. Toolchain")
+        tab = self._panel(TOOLCHAIN)
         self.ttk.Label(tab, text=checks.TOOLCHAIN_INSTRUCTIONS, wraplength=700, justify="left").pack(anchor="w")
         self.ttk.Button(tab, text="Open the xPack releases page",
                         command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=6)
@@ -228,7 +427,7 @@ class App:
         self.tc_status = self._status(tab)
 
     def _build_tab(self, scrolledtext):
-        tab = self._tab("4. Build")
+        tab = self._panel(BUILD)
         row = self.ttk.Frame(tab)
         row.pack(fill="x")
         self.ttk.Label(row, text="Output folder (must be new):").pack(side="left")
@@ -255,9 +454,9 @@ class App:
         self.open_contents.pack(side="left", padx=6)
 
     def _card_tab(self):
-        tab = self._tab("6. Copy to card")
+        tab = self._panel(COPY)
         self.ttk.Label(tab, wraplength=700, justify="left", text=(
-            "Only for a card that is already bootable (tab 5, or prepared separately). Choose the card's top folder "
+            "Only for a card that is already bootable (step 7, or prepared separately). Choose the card's top folder "
             "(for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Any existing autoexec.bin is "
             "backed up to the build folder on this computer first; nothing on the card is deleted and the "
             "card is never formatted.")).pack(anchor="w")
@@ -279,10 +478,9 @@ class App:
         self.copy_result.pack(anchor="w", pady=6)
 
     def _prep_tab(self, scrolledtext):
-        tab = self._tab("5. Prepare card")
+        tab = self._panel(BOOTCARD, extra_details=EXPLAIN)
         self.ttk.Label(tab, text=FORMAT_WARNING, wraplength=740, justify="left", foreground="#b3261e",
                        font=("TkDefaultFont", 0, "bold")).pack(anchor="w")
-        self.ttk.Label(tab, text=EXPLAIN, wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
         self.ttk.Label(tab, text=card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."),
                        foreground="#b3261e", wraplength=740, justify="left").pack(anchor="w", pady=(4, 0))
         row = self.ttk.Frame(tab)
@@ -311,6 +509,8 @@ class App:
         self.prep_title.pack(anchor="w")
         self.prep_log = scrolledtext.ScrolledText(tab, height=9, state="disabled", font="TkFixedFont")
         self.prep_log.pack(fill="both", expand=True, pady=4)
+        self.ttk.Button(tab, text="My card is already prepared (skip this step)",
+                        command=lambda: (self.wizard.set_card_prepared("elsewhere"), self.refresh())).pack(anchor="w")
 
     def _refresh_prep(self):
         p = self.prep
@@ -406,6 +606,9 @@ class App:
                 return
             self.refresh()
             if verdict == "done":
+                if kind == "mark" and result.report.ok:
+                    self.wizard.set_card_prepared("prepared")
+                    self.refresh()
                 return
             title, text = p.confirmation()
             ok = self.messagebox.askokcancel(title, text, icon="warning")
@@ -419,13 +622,18 @@ class App:
                 return
             p.begin_write(result)
             self.refresh()
-            self._background(lambda: card_flow.write(result, ops), lambda r: self._prep_finished(r, None, show=True))
+            self._background(lambda: card_flow.write(result, ops),
+                             lambda r: self._prep_finished(r, None, show=True, kind=kind))
         self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source), read_done)
 
-    def _prep_finished(self, report, note, show=False):
+    def _prep_finished(self, report, note, show=False, kind=None):
         if isinstance(report, Exception):  # write() and cancel() report instead of raising; be safe anyway
             report = card_flow.Report(False, "Card state unknown.", [f"{report}",
                                       "Read the card again (Prepare or Undo) before using it."])
+        if kind == "mark" and report.ok:
+            self.wizard.set_card_prepared("prepared")
+        elif kind in ("undo", "restore") and report.ok:
+            self.wizard.set_card_prepared(None)
         if note:
             report.lines.insert(0, note)
         self.prep.finished(report)
@@ -449,6 +657,7 @@ class App:
 
     def refresh(self):
         s = self.state
+        self._refresh_wizard()
         self.rom_var.set(str(s.rom_path or ""))
         self._show(self.rom_status, s.rom_check())
         self.profile_var.set(s.profile)
@@ -515,6 +724,7 @@ class App:
     def _profile_changed(self):
         self.state.set_profile(self.profile_var.get())
         self._new_output()
+        self.wizard.features_changed()
         self.refresh()
 
     def _option_changed(self, option_id):
@@ -526,6 +736,7 @@ class App:
         except ValueError as exc:
             self.messagebox.showerror("Option not available", str(exc))
         self._new_output()
+        self.wizard.features_changed()
         self.refresh()
 
     def _new_output(self):
@@ -539,6 +750,7 @@ class App:
                                                filetypes=[("WAV audio", "*.wav *.WAV"), ("All files", "*")])
         if path:
             self.state.set_input(input_id, Path(path))
+            self.wizard.features_changed()
             self.refresh()
 
     def _pick_toolchain(self):
@@ -616,6 +828,8 @@ class App:
                                   foreground=STATUS_COLOURS[FAILED])
             return
         self.summary = summary
+        self.wizard.set_build(summary if summary.sha256_matches_build_json else None,
+                              note=None if summary.sha256_matches_build_json else "The build does not match build.json.")
         match = "matches build.json" if summary.sha256_matches_build_json else "DOES NOT MATCH build.json"
         self.result.configure(foreground=STATUS_COLOURS[OK] if summary.sha256_matches_build_json else STATUS_COLOURS[FAILED],
                               text=(f"Built: {summary.autoexec}\nSHA-256 {summary.sha256} ({match})\n"
@@ -650,7 +864,7 @@ class App:
         lines.append("Existing autoexec.bin: " + (info.existing.name if info.existing else "none"))
         lines += ["REFUSED: " + e for e in info.errors] + ["Warning: " + w for w in info.warnings]
         if self.summary is None:
-            lines.append("Build autoexec.bin first (tab 4).")
+            lines.append("Build autoexec.bin first (step 6).")
         colour = STATUS_COLOURS[FAILED] if info.errors else (STATUS_COLOURS[CHECKING] if info.warnings else "#444")
         self.card_report.configure(text="\n".join(lines), foreground=colour)
         self.refresh()
@@ -678,6 +892,10 @@ class App:
                 self.copy_result.configure(text=f"Copy failed unexpectedly: {result}", foreground=STATUS_COLOURS[FAILED])
             else:
                 self.copy_result.configure(text="\n".join(result.messages), foreground=STATUS_COLOURS[OK])
+                try:
+                    self.wizard.set_copied(result.sha256)
+                except ValueError:
+                    pass  # a newer build replaced the one that was copied
                 self.messagebox.showinfo("Done", "\n\n".join(result.messages))
             self.refresh()
         self._background(lambda: card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
