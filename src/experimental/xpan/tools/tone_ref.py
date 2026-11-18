@@ -204,6 +204,35 @@ DING_MS = 250
 DING_ATTACK_SHIFT = 7   # 128 samples, 2.67 ms
 DING_RELEASE_SHIFT = 8  # 256 samples, 5.33 ms final fade to exactly 0
 
+# dong: the record-stop counterpart of the ding (original, synthesized here; no
+# recorded or sampled sound). Two struck-bar notes falling a perfect fifth, G6
+# 1568 Hz then C6 1047 Hz: the second resolves to C an octave below the ding's
+# C7, so the pair reads as "start" (high, bright) and "stop" (lower, closing).
+# Each note has two partials, the fundamental and the first free-free bar mode
+# (2.756 x, rounded to whole hertz: 4321 Hz and 2886 Hz) at -9 dB, decaying twice
+# as fast as its fundamental. The ding's third (5.404 x) partial is left out, so
+# the dong is darker. Note 1 is a short strike (90 ms, decay 40/80: time
+# constants about 34/17 ms); note 2 rings longer (160 ms, decay 24/48: about
+# 57/28 ms). Same attack/release as the ding (2.67 ms / 5.33 ms per note), so
+# each note starts and ends at exactly 0 and the pair is 250 ms like the ding.
+# 25290 is the largest round (x10) shared fundamental amplitude whose peak stays
+# <= PEAK_Q15 (tested); 8973 = 25290 * 10^(-9/20), rounded.
+DONG_NOTES = ((1568, 90, 40), (1047, 160, 24))   # (fundamental Hz, ms, decay)
+DONG_OVERTONE_RATIO = 2.756
+DONG_AMPLITUDES = (25290, 8973)
+DONG_ATTACK_SHIFT = DING_ATTACK_SHIFT
+DONG_RELEASE_SHIFT = DING_RELEASE_SHIFT
+
+
+def _dong_note(hz, ms, decay):
+    upper = round(hz * DONG_OVERTONE_RATIO)
+    return segment(samples_ms(ms), ((phase_inc(hz), DONG_AMPLITUDES[0], decay),
+                                    (phase_inc(upper), DONG_AMPLITUDES[1], 2 * decay)),
+                   DONG_ATTACK_SHIFT, DONG_RELEASE_SHIFT)
+
+
+# --record-indicator (start) cues and --record-stop-indicator (stop) cues are
+# separate catalogs: a stop cue is never offered as a start cue, or the reverse.
 VARIANTS = {
     # Default record indicator: the struck-bar chime above (250 ms).
     "ding": (segment(samples_ms(DING_MS),
@@ -214,6 +243,11 @@ VARIANTS = {
                tone(2637, 55, NOTE_FADE_SHIFT, PEAK_Q15)),
     # Single 2 kHz tone, 150 ms, about -0.48 dBFS.
     "2k150loud": (tone(2000, 150, 8, PEAK_Q15),),
+}
+
+STOP_VARIANTS = {
+    # Record-stop cue: the falling G6 -> C6 pair above (250 ms).
+    "dong": tuple(_dong_note(h, ms, d) for h, ms, d in DONG_NOTES),
 }
 
 
