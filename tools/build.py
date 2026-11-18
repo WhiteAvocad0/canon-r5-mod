@@ -204,10 +204,13 @@ def build_image(
     policy_path: Path = POLICY_PATH,
     schema: dict = AUDIO_LOG_SCHEMA,
     record_indicator: str | None = None,
+    record_stop_indicator: str | None = None,
 ) -> dict:
     """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
     if profile != "xpan-crop" and record_indicator not in (None, "off"):
         raise ValueError("--record-indicator requires --profile xpan-crop")
+    if profile != "xpan-crop" and record_stop_indicator not in (None, "off"):
+        raise ValueError("--record-stop-indicator requires --profile xpan-crop")
     if profile == "xpan-crop":
         if startup_wav is not None or shutter_wav is not None:
             raise ValueError("--profile xpan-crop forbids --startup-wav and --shutter-wav")
@@ -229,6 +232,7 @@ def build_image(
             xpan_hooks=xpan_hooks,
             policy_path=policy_path,
             record_indicator=record_indicator,
+            record_stop_indicator=record_stop_indicator,
         )
     if profile != "shutter-feedback":
         raise ValueError(f"Unsupported build profile: {profile!r}")
@@ -790,7 +794,10 @@ def main(argv: list[str] | None = None) -> int:
         "--profile",
         choices=("shutter-feedback", "xpan-crop"),
         default="shutter-feedback",
-        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
+        help=(
+            "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop "
+            "(no WAVs; silent unless --record-indicator or --record-stop-indicator)"
+        ),
     )
     ap.add_argument("--rom", type=Path, required=True, help="Path to user's 64 MiB Canon EOS R5 2.2.1 ROM dump")
     ap.add_argument("--startup-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
@@ -810,6 +817,15 @@ def main(argv: list[str] | None = None) -> int:
             "(default off; 'ding' is the cue tested on a private lab build)"
         ),
     )
+    ap.add_argument(
+        "--record-stop-indicator",
+        choices=record_indicator.STOP_CHOICES,
+        default=None,
+        help=(
+            "xpan-crop only: opt-in movie record stop cue played once when a take ends "
+            "(default off; independent of --record-indicator; 'dong' is the cue tested on a private lab build)"
+        ),
+    )
     args = ap.parse_args(argv)
 
     if args.profile == "xpan-crop":
@@ -818,6 +834,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         if args.record_indicator is not None:
             ap.error("--record-indicator requires --profile xpan-crop")
+        if args.record_stop_indicator is not None:
+            ap.error("--record-stop-indicator requires --profile xpan-crop")
         missing = [
             flag
             for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
@@ -834,7 +852,9 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output,
         profile=args.profile,
         record_indicator=args.record_indicator,
+        record_stop_indicator=args.record_stop_indicator,
     )
+    indicator = record.get("record_indicator") or {}
     print(
         json.dumps(
             {
@@ -845,9 +865,8 @@ def main(argv: list[str] | None = None) -> int:
                 "sha256": record["format"]["sha256"],
                 "rom_sha256": record["caller_input_hashes"]["rom"]["sha256"],
                 "reservation": record["reservation"],
-                "record_indicator": (record.get("record_indicator") or {}).get("cue", "off")
-                if args.profile == "xpan-crop"
-                else None,
+                "record_indicator": indicator.get("cue", "off") if args.profile == "xpan-crop" else None,
+                "record_stop_indicator": indicator.get("stop_cue", "off") if args.profile == "xpan-crop" else None,
             }
         )
     )
