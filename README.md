@@ -57,6 +57,9 @@ Community ports and firmware-specific validation are welcome. See [docs/porting.
 
 ## Quickstart
 
+> [!TIP]
+> **New to this?** Start with the plain-language **[Getting started guide](docs/getting-started.md)**. It explains how the pieces fit together and walks through building, installing on a prepared card, testing and recovery.
+
 Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**. For deep XPan internals, see **[docs/xpan.md](docs/xpan.md)**.
 
 ### Clone and Run Host Tests (No ROM or ARM Toolchain Needed)
@@ -203,6 +206,7 @@ Original EOS R5 `2.2.1` owners who meet the boot-enabled prerequisites can submi
 
 ## Documentation Index
 
+- **[docs/getting-started.md](docs/getting-started.md)**: Plain-language guide: how it works, building for your own camera, installing on a prepared card, first test, recovery and FAQ.
 - **[docs/agent-setup.md](docs/agent-setup.md)** — Agent-assisted setup, evidence, card handling and testing lessons.
 - **[docs/xpan.md](docs/xpan.md)** — Deep `xpan-crop` architecture, R5 `2.2.1` Mermaid pipeline, supported/declined view matrix, automatic-review fix, record indicator, and KUWA diagnostic decoding.
 - **[docs/usage.md](docs/usage.md)** — Prerequisites, ROM provenance rules, audio conversion, offline build (`shutter-feedback` & `xpan-crop`), card preparation, and recovery.
