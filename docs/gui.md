@@ -21,14 +21,16 @@ If Tkinter is missing, the assistant prints these hints and exits. The command-l
 
 ## What it does
 
-*Screenshot, described:* a red warning line runs across the top, followed by three buttons that open the **Getting started guide**, the **Prerequisites** and this page. On the left is a list of the nine steps. Each has a mark and a status: ✓ *done*, • *needs action*, – *skipped* or ✗ *blocked*. The current step fills the right side. At the bottom are **< Back** and **Next >**, with a short note saying what is still needed.
+*Screenshot, described:* on the left is a grey sidebar with the app's name, a *Prototype* badge and the list of the nine steps. Each step shows a round mark and its status under its name: a green ✓ for *done*, – for *skipped*, and the step number for *needs action* or *blocked* (blocked steps are greyed out). The current step is highlighted in blue. On the right, an amber warning box runs across the top, with links to the **Getting started guide**, the **Prerequisites** and this page. The current step fills the space below it. At the bottom are **← Back** and the blue **Next →**, with a short note saying what is still needed.
+
+The window uses the system font (SF Pro on macOS, Segoe UI on Windows, Cantarell, Ubuntu or DejaVu Sans on Linux), one blue accent colour for actions and the current step, and green, amber and red only for statuses and warnings. On macOS, Windows and GNOME it starts in the desktop's light or dark appearance; set `R5_ASSISTANT_APPEARANCE=light` or `dark` to choose one yourself. The fonts, colours and spacing are defined in [`tools/gui/theme.py`](../tools/gui/theme.py).
 
 Every step has the same shape:
 - what it is and why, in plain language;
 - **What you do**;
 - the step's controls;
 - the app's own check, shown as *Check passed*, *To do* or *Blocked*;
-- a **Details** button that opens the technical facts.
+- a **Details** toggle that opens the technical facts.
 
 **Next** works only when the step's check passes (or the step was skipped). **Back** always works. Clicking a step in the list jumps to it, unless it is blocked; a blocked step says what must be finished first.
 
@@ -44,7 +46,7 @@ This is your confirmation. The ROM check in step 2 verifies the firmware itself.
 
 ### Step 2. ROM dump (one time; guided dump coming soon)
 
-*Screenshot, described:* a sentence explains that the ROM stays on this computer. Below it is a read-only path box and a **Choose ROM...** button. After you pick a file, a status line turns green: "ROM accepted for xpan-crop: Canon EOS R5 firmware 2.2.1, 67,108,864 bytes, 178 fingerprinted regions match." If the ROM is refused, the line is red and gives the builder's reason, for example "Input size must be exactly 67108864 bytes" or "firmware signature mismatch".
+*Screenshot, described:* a sentence explains that the ROM stays on this computer. Below it is a read-only path box and a **Choose ROM...** button. After you pick a file, a status line with a green ✓ says: "ROM accepted for xpan-crop: Canon EOS R5 firmware 2.2.1, 67,108,864 bytes, 178 fingerprinted regions match." If the ROM is refused, the line turns red and gives the builder's reason, for example "Input size must be exactly 67108864 bytes" or "firmware signature mismatch".
 
 The check is the builder's own strict admission (`build.check_rom`) for the profile and record indicator you selected. It reads the ROM only: it doesn't need the toolchain and writes nothing. Changing the profile or the indicator runs the check again, because an XPan build and a build with the indicator check extra fingerprinted pages. There is no way to force a refused ROM.
 
@@ -52,7 +54,7 @@ If you don't have a dump yet, the box *Make a ROM dump (coming soon)* will guide
 
 ### Step 3. Enable BootDisk (one time; guided version coming soon)
 
-*Screenshot, described:* the text explains that a stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. It is stored inside the camera and is **permanent**: formatting cards doesn't clear it, and there is no official way back. A box headed *Guided BootDisk (coming soon)* holds the greyed-out **Prepare the BootDisk card...** and **Disable BootDisk...** buttons. Below it are a required acknowledgement ("I understand that BootDisk is a permanent setting inside the camera, that there is no official way back, and that I use this at my own risk.") and "BootDisk is already enabled on my camera (it was confirmed with a readback when it was enabled)". The second box only works after the acknowledgement.
+*Screenshot, described:* the text explains that a stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. It is stored inside the camera and is **permanent**: formatting cards doesn't clear it, and there is no official way back. A box headed *Guided BootDisk (coming soon)* holds the greyed-out **Prepare the BootDisk card...** and **Disable BootDisk...** buttons. Below it an amber box repeats that BootDisk is permanent, followed by a required acknowledgement ("I understand that BootDisk is a permanent setting inside the camera, that there is no official way back, and that I use this at my own risk.") and "BootDisk is already enabled on my camera (it was confirmed with a readback when it was enabled)". The second box only works after the acknowledgement.
 
 For now this step only records your confirmation; the check says *confirmed by you (not verified by the app)*. The owner-approved guided version will work like this:
 - the app prepares a Canon Basic card with the same backup, confirmation, read-back and undo safeguards as the boot card;
@@ -64,7 +66,7 @@ The app itself never writes the camera's firmware or NVRAM. The exact R5 card co
 
 ### Step 4. Choose features
 
-*Screenshot, described:* two radio buttons, **Custom startup and shutter sounds (shutter-feedback)** and **XPan 2.71:1 crop (silent) (xpan-crop)**. Each has a short description and a grey status line, for example "Status: Verified on a private lab build. Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
+*Screenshot, described:* two cards, each with a radio button, **Custom startup and shutter sounds (shutter-feedback)** and **XPan 2.71:1 crop (silent) (xpan-crop)**; the chosen one has a blue outline. Each has a short description and a grey status line, for example "Status: Verified on a private lab build. Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
 
 Below them is a **Movie record indicator** box with a drop-down menu (Off, Ding, Chirp, Tone). The text under the menu gives the status of the chosen cue. Ding was tested on the REC press on a private lab build. Chirp ran in a private A/B trial with the same trigger, and Tone ran on an earlier private build with a different trigger (the start request). Neither has run in this public single-cue configuration, so both are marked experimental. With **shutter-feedback** selected, the menu is greyed out and says "The record indicator is part of the XPan profile only (it needs xpan-crop)."
 
@@ -80,20 +82,20 @@ At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It l
 
 ### Step 6. Build and verify
 
-*Screenshot, described:* an output folder path with a **Change...** button, then a yellow list headed "Before you can build:" (for example "Pick your ROM dump."), or "Ready to build." Below these are the **Build autoexec.bin** button, a scrolling log, a result area, a horizontal memory bar and two buttons, **Open output folder** and **Open 'what's in this build'**.
+*Screenshot, described:* an output folder path with a **Change...** button, then a box headed "Before you can build:" with what is missing (for example "Pick your ROM dump."), or a green "Ready to build." Below these are the blue **Build autoexec.bin** button, a moving progress bar while it builds, a result box, a horizontal memory bar (after a build), two buttons, **Open output folder** and **Open 'what's in this build'**, and the build log.
 
 - The output folder must be new. By default it's `build/gui-<profile>[-<cue>]-<date>-<time>` inside the repository, which git ignores.
 - **Build** runs `python3 tools/build.py ...` with the selected arguments in a separate process. The log shows each step (for example `gcc observer.o`, `ld handoff.elf`). The first line is the exact command, so you can repeat it in a terminal.
 - On success, the result area shows the path of `autoexec.bin` and its SHA-256, which the assistant recalculates and checks against `build.json`. It also shows a memory line, for example "Canon memory left after this build: 907,256 bytes (safety floor 524,304; margin 382,952 bytes)." The bar shows the remaining Canon memory as a share of the pool.
 - It also writes `BUILD-CONTENTS.txt` in the output folder: a plain-language list of the profile, options and their status, the WAVs used, the image's SHA-256, the memory margin, the `source_manifest_sha256` to quote in test reports, and what the build does *not* include.
-- If the builder refuses, the result area shows its last error line in red.
+- If the builder refuses, a red result box headed "Build refused or failed" shows its last error line.
 
 ### Step 7. Prepare the boot card
 
 > [!CAUTION]
 > **Writes raw boot sectors. Prototype, macOS only.** The owner decided on 18 November 2026 to offer this step in the assistant. The exFAT path was verified on 18 November 2026 on the owner's Mac (macOS 27.3) with a camera-formatted 128 GB exFAT card, which the camera then booted; FAT32 cards, Windows and Linux are untested. On that run sectors 12, 23, 0 and 11 were written, the read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted the card and ran a private lab build. The command-line builder still never writes cards.
 
-*Screenshot, described:* a bold red warning, "Format this card IN THE CAMERA first. Formatting erases everything on the card — copy your photos and videos to your computer before formatting.", then a short explanation and a red line saying the real-device path is untested. Below them are a **Find SD cards** button with a drop-down of the cards found, the chosen card's details (model, size, filesystem, volume name, mount state, device), and a "Not offered:" line naming every other disk with its reason. Then come the **Prepare card**, **Undo (restore the latest backup)** and **Restore from a chosen backup...** buttons, a yellow "Next:" list, the result line and a box with its details.
+*Screenshot, described:* a red warning box with the bold headline "Format this card IN THE CAMERA first. Formatting erases everything on the card — copy your photos and videos to your computer before formatting." and, under it, what has been tested on this system (FAT32 cards are untested). Below it are a **Find SD cards** button with a drop-down of the cards found, the chosen card's details (model, size, filesystem, volume name, mount state, device), and a "Not offered:" line naming every other disk with its reason. Then come the blue **Prepare card** button, a progress bar while a card operation runs, a "Next:" list, the result headline and a box with its details. A box headed *Undo a preparation* holds **Undo (restore the latest backup)** and **Restore from a chosen backup...**.
 
 This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that a camera whose BootDisk setting is already enabled loads `autoexec.bin` from the card. It does not enable BootDisk and never writes the camera. If your card is already prepared, **My card is already prepared (skip this step)** marks the step *skipped*.
 
@@ -181,6 +183,7 @@ Adding an option takes more than a manifest entry: the builder must implement it
 ## Known limitations
 
 - **Prototype.** Checked by host tests, and on macOS (Apple Silicon, Python 3.11 with Tk 9.0) by a scripted run of the real window: a real-ROM build, then a copy to an ordinary temporary folder. The Prepare card tab had its own scripted run of the real window, with the device calls replaced by image files. It hasn't been tried on Windows, Linux or a real card.
+- The window's look (fonts, colours, light and dark) is checked by host tests that build every step in a hidden window (macOS, Tk 9.0). It hasn't been looked at on Windows or Linux, and it doesn't follow an appearance change while it is open.
 - No memory estimate *before* building: the margin is reported from `build.json` after a build.
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
