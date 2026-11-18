@@ -5,7 +5,7 @@
 > - `--profile xpan-crop` is **silent by default (no audio)** and disables added shutter playback (`play_shutter = 0`, zero PCM assets or `puff` linked). The headless control/report worker remains active; Canon's own Beep setting is unchanged. The only sound it can add is the opt-in [movie record indicator](#4-opt-in-movie-record-indicator---record-indicator) (`--record-indicator`, off by default).
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
 > - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression.
-> - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. **The public repackaged build remains hardware-untested.**
+> - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. The public `xpan-crop` + `ding` build (`05e9612`) passed a short owner check of this review behaviour on 18 November 2026.
 
 ---
 
@@ -81,7 +81,7 @@ flowchart LR
 - **Outline.** For an admitted XPan claim, a matching rear-LCD call (GUI aspect `[[0x171DC]+0x18C0] == 7`, Canon's own decision H=1/V=0) gets its two caller-local decision words zeroed, so Canon takes its own no-line path. The 10-byte prologue is replayed exactly.
 - **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
 - **Diagnostics.** Decisions are kept as `.bss` counters only. No report rows are emitted and the lab's per-decision diagnostic records are not ported.
-- **Scope and limits.** Verified on the private lab build only (see the evidence note above). Bursts deliberately keep the stock review (no bars), and an in-review redraw after a newer shot falls back to stock. Other qualities and modes follow the same unverified/declined list as playback. The public repackaging is hardware-untested.
+- **Scope and limits.** Verified on the private lab build only (see the evidence note above). Bursts deliberately keep the stock review (no bars), and an in-review redraw after a newer shot falls back to stock. Other qualities and modes follow the same unverified/declined list as playback. The public `xpan-crop` + `ding` build passed a short owner check on 18 November 2026.
 
 ## 4. Opt-In Movie Record Indicator (`--record-indicator`)
 
