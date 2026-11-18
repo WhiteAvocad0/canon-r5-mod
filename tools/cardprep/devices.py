@@ -386,7 +386,7 @@ def privileged_script(python: str, helper: Path, helper_sha256: str, args: list[
     """The /bin/sh text run as root: with a cleared environment, copy the helper into a
     fresh root-owned folder, check its SHA-256, run it isolated, and remove the folder."""
     q = shlex.quote
-    inner = ("set -e; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
+    inner = ("set -e; cd /; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
              "trap '/bin/rm -rf \"$d\"' EXIT; "
              f"/bin/cp {q(str(helper))} \"$d/helper.py\"; "
              f"test \"$(/usr/bin/shasum -a 256 \"$d/helper.py\" | /usr/bin/cut -c1-64)\" = {q(helper_sha256)}; "
@@ -552,13 +552,19 @@ class MacOps:
     def _privileged(self, args: list[str], prompt: str) -> dict:
         if self.python is None:
             self.python = select_root_python(self.run)
-        helper_sha = hashlib.sha256(self.helper.read_bytes()).hexdigest()
-        script = privileged_script(self.python, self.helper, helper_sha, args)
-        try:
-            proc = self.run([OSASCRIPT, "-e", applescript(script, prompt)], capture_output=True, text=True,
-                            timeout=1800)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DeviceError(f"The password prompt or the helper did not finish ({exc}).") from exc
+        # macOS privacy protection stops the root shell reading the checkout when it is
+        # under ~/Documents, ~/Desktop or ~/Downloads, so the helper is staged in a
+        # private temporary folder first. Root still copies it and checks its SHA-256.
+        body = self.helper.read_bytes()
+        with tempfile.TemporaryDirectory(prefix="r5-cardprep-helper-") as tmp:
+            staged = Path(tmp) / "helper.py"
+            staged.write_bytes(body)
+            script = privileged_script(self.python, staged, hashlib.sha256(body).hexdigest(), args)
+            try:
+                proc = self.run([OSASCRIPT, "-e", applescript(script, prompt)], capture_output=True, text=True,
+                                timeout=1800, cwd="/")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DeviceError(f"The password prompt or the helper did not finish ({exc}).") from exc
         if proc.returncode != 0:
             if "-128" in proc.stderr or "User canceled" in proc.stderr:
                 raise Cancelled("The password prompt was cancelled.")

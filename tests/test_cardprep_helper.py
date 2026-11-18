@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -268,6 +269,30 @@ class Wrapper(unittest.TestCase):
         proc = subprocess.run([devices.OSASCRIPT, "-e", f"return {literal}"], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stdout.rstrip("\n"), text)
+
+    def test_root_shell_never_reads_the_checkout(self):
+        # macOS privacy protection refuses the root shell access to ~/Documents (seen on
+        # the owner's Mac: "cp: .../tools/cardprep/helper.py: Operation not permitted").
+        cand = devices.Candidate("darwin", "disk4", "disk4s1", "Built In SDXC Reader", "Secure Digital", 1, 2, 3,
+                                 "FAT32", "EOS_DIGITAL", "/Volumes/EOS_DIGITAL")
+        seen = []
+
+        def fake_run(argv, **kwargs):
+            script = argv[2]
+            source = re.search(r"/bin/cp '?([^' ]*r5-cardprep-helper-[^/' ]+/helper\.py)", script).group(1)
+            seen.append((kwargs.get("cwd"), script, source, Path(source).read_bytes()))
+            out = json.dumps({"helper": "r5-cardprep", "protocol": 2, "op": "read", "ok": True,
+                              "mbr_hex": "00" * 512, "area_hex": "00" * 12288})
+            return subprocess.CompletedProcess(argv, 0, out + "\n", "")
+        devices.MacOps(run=fake_run, python="/usr/bin/python3").raw_read(cand, 12288)
+        cwd, script, source, body = seen[0]
+        self.assertEqual(cwd, "/")
+        self.assertIn("cd /;", script)
+        self.assertNotIn(str(HELPER.parent), script)
+        self.assertTrue(Path(source).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()))
+        self.assertEqual(body, HELPER.read_bytes())
+        self.assertIn(sha(body), script)
+        self.assertFalse(Path(source).exists())
 
     def test_macops_builds_one_osascript_call_and_parses_it(self):
         cand = devices.Candidate("darwin", "disk4", "disk4s1", "Built In SDXC Reader", "Secure Digital", 1, 2, 3,
