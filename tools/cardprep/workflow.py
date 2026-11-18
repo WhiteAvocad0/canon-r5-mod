@@ -1,14 +1,15 @@
 """Prepare a card's Canon boot markers, or restore them from a backup, in one session.
 
 ``start`` re-checks the chosen card, unmounts its partition if it is mounted (never
-ejects), reads the MBR and the 24-sector boot area as root, makes the plan and saves
+ejects), reads the MBR and the 24-sector boot area through authopen (one password
+window, read-only), checks that the partition start agrees three ways, makes the plan and saves
 a backup that is verified by re-reading. When nothing needs writing it mounts the
 card again and the session carries the finished report. Otherwise the card stays
 unmounted until ``write`` or ``cancel``, so nothing on the Mac can change the boot
 sectors between the read and the write.
 
-``write`` re-checks the card again, then has root write only the planned sectors,
-and only if the MBR, the whole boot area and the target sectors still hash to the
+``write`` re-checks the card again, then (one more password window, read/write)
+writes only the planned sectors, and only if the MBR, the whole boot area and the target sectors still hash to the
 read's values. It reads everything back, runs the volume check and mounts the card
 again. ``write`` and ``cancel`` never raise: every outcome is a Report that names
 the backup folder and is saved next to it as result-*.json.
@@ -90,14 +91,11 @@ class Session:
 
 
 def _identity_matches(cand: Candidate, volume: layout.VolumeFacts) -> None:
+    """The filesystem macOS reports (when it reports one) must be the one in the boot sector.
+    (The partition position is checked three ways by layout.check_partition_start.)"""
     if cand.filesystem and volume.filesystem != cand.filesystem:
         raise CardPrepError("geometry_mismatch",
                             f"macOS reports {cand.filesystem}, but the boot sector is {volume.filesystem}.")
-    if (volume.mbr.start_bytes, volume.mbr.size_bytes) != (cand.partition_offset, cand.partition_bytes):
-        raise CardPrepError("geometry_mismatch",
-                            "The MBR partition does not match the partition macOS reports "
-                            f"(MBR {volume.mbr.start_bytes:,}+{volume.mbr.size_bytes:,}, "
-                            f"macOS {cand.partition_offset}+{cand.partition_bytes}).")
 
 
 def _mount(ops, cand: Candidate) -> tuple[bool, str]:
@@ -281,7 +279,9 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
     try:
         mbr, area = ops.raw_read(cand, AREA_BYTES)
         if len(mbr) != MBR_BYTES or len(area) != AREA_BYTES:
-            raise PrepFailure("The helper returned the wrong number of bytes.")
+            raise PrepFailure("The card read returned the wrong number of bytes.")
+        layout.check_partition_start(mbr, area, disk_bytes=cand.disk_bytes, reported_bytes=cand.partition_offset,
+                                     reported_size=cand.partition_bytes)
         if restore_from is not None:
             # The current boot area need not validate on its own (an interrupted write can
             # leave one exFAT region with a stale checksum); plan_restore checks it byte
@@ -357,7 +357,7 @@ def write(session: Session, ops) -> Report:
             return report
         except Exception as exc:
             report.title = f"{what}: card state unknown."
-            report.lines += [f"The helper did not report a result: {exc}",
+            report.lines += [f"The write did not report a result: {exc}",
                              "Read the card again before using it (Prepare or Undo do that first)."]
             return report
         written = [o // layout.SECTOR for o in result.get("written") or []]
@@ -370,11 +370,11 @@ def write(session: Session, ops) -> Report:
             return report
         if not result.get("ok") and "area_hex" not in result and result.get("possibly_written") == []:
             report.title, report.nothing_written = f"{what}: not written.", True
-            report.lines.append(f"The helper stopped before writing anything: {result.get('error')} "
+            report.lines.append(f"It stopped before writing anything: {result.get('error')} "
                                 "Nothing was written.")
             return report
         if not result.get("ok") and "area_hex" not in result:
-            report.lines += [f"The helper stopped: {result.get('error')}",
+            report.lines += [f"The write stopped: {result.get('error')}",
                              f"Sectors written: {written or 'none'}; possibly written (started but not confirmed): "
                              f"{[s for s in possibly if s not in written] or 'none'}.",
                              "Do not use the card yet. Undo restores it from the backup below."]
@@ -384,9 +384,9 @@ def write(session: Session, ops) -> Report:
                                              bytes.fromhex(result.get("area_hex", "")),
                                              disk_bytes=cand.disk_bytes)
         except (TypeError, ValueError) as exc:
-            problems = [f"The helper's read-back could not be decoded ({exc})."]
+            problems = [f"The read-back could not be decoded ({exc})."]
         if not result.get("ok"):
-            problems.insert(0, f"The helper reported {result.get('code') or 'a failure'}.")
+            problems.insert(0, f"The write reported {result.get('code') or 'a failure'}.")
         try:
             verified, output = ops.verify(cand)
         except Exception as exc:  # a timeout or crash here must not hide what was written
@@ -417,5 +417,5 @@ def write(session: Session, ops) -> Report:
         mounted, out = _mount(ops, cand)
         report.lines.append(_mount_line(mounted, out))
         report.lines.append(f"Backup: {backup.folder}")
-        report.record = _record(backup, report, {"plan": plan.to_dict(), "helper": {
+        report.record = _record(backup, report, {"plan": plan.to_dict(), "raw_write": {
             k: v for k, v in result.items() if k not in ("area_hex", "mbr_hex")}})

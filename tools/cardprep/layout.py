@@ -319,6 +319,29 @@ def _exfat_facts(area: bytes, mbr: MbrFacts) -> VolumeFacts:
                        })
 
 
+def check_partition_start(mbr: bytes, area: bytes, *, disk_bytes: int, reported_bytes: int | None,
+                          reported_size: int | None) -> int:
+    """The partition start in bytes, only if three sources agree: the MBR entry's LBA x 512,
+    the operating system's report, and the boot sector's own field (exFAT PartitionOffset
+    at byte 64, FAT32 HiddenSectors at byte 28, both in sectors)."""
+    facts = parse_mbr(mbr, disk_bytes=disk_bytes)
+    s = area[:SECTOR]
+    if s[3:11] == b"EXFAT   ":
+        field, name = struct.unpack_from("<Q", s, 64)[0], "exFAT PartitionOffset"
+    elif s[82:90] == b"FAT32   ":
+        field, name = _u32(s, 28), "FAT32 HiddenSectors"
+    else:
+        raise CardPrepError("geometry_mismatch", "The partition's boot sector is not FAT32 or exFAT, so its "
+                            "position cannot be confirmed. Format the card in the camera first.")
+    _require(reported_bytes == facts.start_bytes and reported_size == facts.size_bytes, "geometry_mismatch",
+             f"The MBR partition ({facts.start_bytes:,}+{facts.size_bytes:,} bytes) does not match the partition "
+             f"macOS reports ({reported_bytes}+{reported_size}).")
+    _require(field * SECTOR == facts.start_bytes, "geometry_mismatch",
+             f"The boot sector's {name} ({field:,} sectors) does not match the MBR partition start "
+             f"({facts.start_lba:,} sectors).")
+    return facts.start_bytes
+
+
 def inspect(mbr: bytes, area: bytes, *, disk_bytes: int) -> VolumeFacts:
     """Validate the MBR and boot area of a camera-formatted card."""
     _require(len(area) == AREA_BYTES, "area_length", f"The boot area must be {AREA_BYTES} bytes, got {len(area)}.")

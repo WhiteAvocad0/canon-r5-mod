@@ -20,14 +20,14 @@ OTHER = devices.classify_macos(ci.mac_whole("disk5"), [ci.mac_part("disk5", name
 USB = devices.classify_macos(ci.mac_whole("disk6", BusProtocol="USB"), [ci.mac_part("disk6", BusProtocol="USB")], BOOT)
 
 
+@unittest.skipUnless(ci.FD_PASSING, "needs UNIX sockets with SCM_RIGHTS")
 class Images(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cardprep-state-"))
         self.addCleanup(shutil.rmtree, self.tmp)
         mbr, area, _ = ci.fat32_card()
-        (self.tmp / "disk.img").write_bytes(mbr + bytes(4096))
-        (self.tmp / "part.img").write_bytes(area + bytes(4096))
-        self.ops = ImageOps(CARD, self.tmp / "disk.img", self.tmp / "part.img")
+        ci.write_disk_image(self.tmp / "disk.img", mbr, area, ci.LAB_FAT32["start_lba"])
+        self.ops = ImageOps(CARD, self.tmp / "disk.img")
 
     def state(self) -> PrepState:
         s = PrepState("darwin", backup_root=self.tmp / "backups")

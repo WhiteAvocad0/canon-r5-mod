@@ -1,4 +1,4 @@
-"""Find removable SD cards, and run diskutil and the privileged helper (macOS).
+"""Find removable SD cards, run diskutil, and open the card for raw access (macOS).
 
 Only a card in an SD card slot is offered: on macOS ``diskutil`` must report the
 Secure Digital protocol, removable and ejectable physical media, an MBR with one
@@ -8,9 +8,9 @@ half-written card can still be restored), 512-byte sectors and a size between
 (including USB card readers, which macOS cannot tell from other USB drives),
 system images and anything else are refused with a reason.
 
-Raw reads and writes go through helper.py, started as root by the macOS password
-prompt (``osascript ... with administrator privileges``) with a cleared environment
-and a root-owned interpreter. This module never asks for, sees or stores a password.
+Raw reads and writes use rawio.RawAccess: macOS ``authopen`` opens only the chosen
+whole-disk device after the system password window and passes the descriptor to
+this process. No code runs as root, and this module never sees a password.
 
 Windows and Linux: best-effort enumeration only, **untested**; preparing a card
 is offered on macOS only.
@@ -18,41 +18,29 @@ is offered on macOS only.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 import os
-from pathlib import Path
 import plistlib
 import re
-import shlex
 import subprocess
 import sys
-import tempfile
 from typing import Callable
 
-HELPER_PATH = Path(__file__).resolve().with_name("helper.py")
-HELPER_PROTOCOL = 2
+from . import rawio
+from .rawio import Cancelled, DeviceError  # noqa: F401  (shared with the raw-access layer)
+
 SD_MIN_BYTES = 2 * 1000**3
 SD_MAX_BYTES = 2 * 1024**4
 WHOLE_ID_RE = re.compile(r"disk[0-9]{1,3}")
 PART_ID_RE = re.compile(r"disk([0-9]{1,3})s([0-9]{1,2})")
 MAC_FAT32_CONTENT = frozenset({"Windows_FAT_32", "DOS_FAT_32"})
 DISKUTIL = "/usr/sbin/diskutil"
-OSASCRIPT = "/usr/bin/osascript"
 
 UNTESTED_NOTE = {
     "darwin": "macOS: the real-device path is untested until the owner's first verification.",
     "linux": "Linux: detection only, untested. Preparing a card is offered on macOS only.",
     "win32": "Windows: detection only, untested. Preparing a card is offered on macOS only.",
 }
-
-
-class DeviceError(Exception):
-    """A device query or helper run failed, or the card changed."""
-
-
-class Cancelled(DeviceError):
-    """The person cancelled the password prompt."""
 
 
 @dataclass(frozen=True)
@@ -375,107 +363,7 @@ def prepare_supported(platform: str | None = None) -> bool:
     return (sys.platform if platform is None else platform) == "darwin"
 
 
-# -- macOS privileged helper and diskutil actions --------------------------------
-
-
-ROOT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-CLT_PYTHON = "/usr/bin/python3"
-
-
-def privileged_script(python: str, helper: Path, helper_sha256: str, args: list[str]) -> str:
-    """The /bin/sh text run as root: with a cleared environment, copy the helper into a
-    fresh root-owned folder, check its SHA-256, run it isolated, and remove the folder."""
-    q = shlex.quote
-    inner = ("set -e; cd /; umask 077; d=$(/usr/bin/mktemp -d /tmp/r5-cardprep.XXXXXX); "
-             "trap '/bin/rm -rf \"$d\"' EXIT; "
-             f"/bin/cp {q(str(helper))} \"$d/helper.py\"; "
-             f"test \"$(/usr/bin/shasum -a 256 \"$d/helper.py\" | /usr/bin/cut -c1-64)\" = {q(helper_sha256)}; "
-             f"{q(python)} -I -S \"$d/helper.py\" " + " ".join(q(a) for a in args))
-    return f"exec /usr/bin/env -i PATH={ROOT_PATH} /bin/sh -c {q(inner)}"
-
-
-def _applescript_string(text: str) -> str:
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def applescript(script: str, prompt: str) -> str:
-    return (f"do shell script {_applescript_string(script)} with prompt {_applescript_string(prompt)} "
-            "with administrator privileges")
-
-
-def ownership_problem(path: str) -> str | None:
-    """Why a file or folder could be changed by someone other than root, or None.
-
-    Checks the path and every folder above it: each must be owned by root and not
-    writable by its group or by everyone."""
-    current = os.path.realpath(path)
-    while True:
-        try:
-            st = os.lstat(current)
-        except OSError as exc:
-            return f"{current} cannot be checked ({exc.strerror})."
-        if st.st_uid != 0:
-            return f"{current} is not owned by root."
-        if st.st_mode & 0o022:
-            return f"{current} is writable by its group or by everyone."
-        parent = os.path.dirname(current)
-        if parent == current:
-            return None
-        current = parent
-
-
-PROBE = "import os,sys;print(os.path.realpath(sys.executable));print(os.path.dirname(os.__file__));print(sys.version_info[0]*100+sys.version_info[1])"
-
-
-def interpreter_problem(python: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> tuple[str | None, str | None]:
-    """(real interpreter path, None) if root may run it, else (None, reason).
-
-    Its executable, standard library and lib-dynload folders must all be root-owned
-    and not group- or world-writable, and it must be Python 3.9 or newer."""
-    try:
-        proc = run([python, "-I", "-S", "-c", PROBE], capture_output=True, text=True, timeout=60,
-                   env={"PATH": ROOT_PATH})
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return None, f"{python} could not be started ({exc})."
-    lines = proc.stdout.split("\n") if proc.returncode == 0 else []
-    if len(lines) < 3 or not lines[2].strip().isdigit():
-        return None, f"{python} did not report its version."
-    real, stdlib, version = lines[0].strip(), lines[1].strip(), int(lines[2])
-    if version < 309:
-        return None, f"{real} is older than Python 3.9."
-    dynload = os.path.join(stdlib, "lib-dynload")
-    for path in [real, stdlib] + ([dynload] if os.path.isdir(dynload) else []):
-        problem = ownership_problem(path)
-        if problem:
-            return None, problem
-    return real, None
-
-
-ROOT_PYTHON_GUIDANCE = (
-    "Card preparation runs its helper as root with a Python that only root can change. "
-    "Install Apple's Command Line Tools (run 'xcode-select --install' in Terminal), which provide one, "
-    "or start the assistant with a Python whose files are all owned by root and not group-writable.")
-
-
-def select_root_python(run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-                       own: str | None = None) -> str:
-    """The interpreter root runs the helper with: Apple's /usr/bin/python3 (Command Line
-    Tools) when installed and root-owned, otherwise the assistant's own Python if it is
-    root-owned; anything else is refused with guidance."""
-    reasons = []
-    try:
-        clt = run(["/usr/bin/xcode-select", "-p"], capture_output=True, text=True, timeout=30,
-                  env={"PATH": ROOT_PATH})
-        have_clt = clt.returncode == 0 and bool(clt.stdout.strip())
-    except (OSError, subprocess.TimeoutExpired):
-        have_clt = False
-    candidates = ([CLT_PYTHON] if have_clt and os.path.exists(CLT_PYTHON) else []) + [own or sys.executable]
-    for python in candidates:
-        real, problem = interpreter_problem(python, run)
-        if real:
-            return real
-        reasons.append(problem)
-    raise DeviceError(ROOT_PYTHON_GUIDANCE + " (" + " ".join(r for r in reasons if r) + ")")
+# -- macOS diskutil actions and raw access -----------------------------------------
 
 
 def _completed(run, argv: list[str], timeout: int, **kwargs) -> subprocess.CompletedProcess:
@@ -492,13 +380,12 @@ def _completed(run, argv: list[str], timeout: int, **kwargs) -> subprocess.Compl
 
 
 class MacOps:
-    """diskutil as the person, raw sector access as root through the password prompt."""
+    """diskutil as the person; raw sector access through authopen (no code runs as root)."""
 
     def __init__(self, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
-                 python: str | None = None, helper: Path = HELPER_PATH):
+                 raw: rawio.RawAccess | None = None):
         self.run = run
-        self.python = python  # chosen on the first privileged call unless given
-        self.helper = helper
+        self.raw = raw or rawio.RawAccess()
 
     def _diskutil(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
         return _completed(self.run, [DISKUTIL, *args], timeout, text=True)
@@ -549,60 +436,17 @@ class MacOps:
         proc = self._diskutil("verifyVolume", cand.partition_id, timeout=1800)
         return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
-    def _privileged(self, args: list[str], prompt: str) -> dict:
-        if self.python is None:
-            self.python = select_root_python(self.run)
-        # macOS privacy protection stops the root shell reading the checkout when it is
-        # under ~/Documents, ~/Desktop or ~/Downloads, so the helper is staged in a
-        # private temporary folder first. Root still copies it and checks its SHA-256.
-        body = self.helper.read_bytes()
-        with tempfile.TemporaryDirectory(prefix="r5-cardprep-helper-") as tmp:
-            staged = Path(tmp) / "helper.py"
-            staged.write_bytes(body)
-            script = privileged_script(self.python, staged, hashlib.sha256(body).hexdigest(), args)
-            try:
-                proc = self.run([OSASCRIPT, "-e", applescript(script, prompt)], capture_output=True, text=True,
-                                timeout=1800, cwd="/")
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise DeviceError(f"The password prompt or the helper did not finish ({exc}).") from exc
-        if proc.returncode != 0:
-            if "-128" in proc.stderr or "User canceled" in proc.stderr:
-                raise Cancelled("The password prompt was cancelled.")
-            raise DeviceError("The privileged helper did not run: " + proc.stderr.strip())
-        lines = [line for line in proc.stdout.replace("\r", "\n").splitlines() if line.strip()]
-        try:
-            result = json.loads(lines[-1])
-        except (IndexError, json.JSONDecodeError) as exc:
-            raise DeviceError("The privileged helper returned no result.") from exc
-        if not isinstance(result, dict) or result.get("helper") != "r5-cardprep" \
-                or result.get("protocol") != HELPER_PROTOCOL:
-            raise DeviceError("The privileged helper returned an unexpected result.")
-        return result
+    def _device(self, cand: Candidate) -> str:
+        if not WHOLE_ID_RE.fullmatch(cand.whole_id) or not isinstance(cand.partition_offset, int):
+            raise DeviceError(f"{cand.whole_id} is not a whole-disk device this tool opens.")
+        return cand.raw_disk
 
     def raw_read(self, cand: Candidate, length: int) -> tuple[bytes, bytes]:
-        result = self._privileged(
-            ["read", "--disk", cand.raw_disk, "--partition", cand.raw_partition, "--length", str(length)],
-            f"The Canon R5 build assistant wants to READ the boot sectors of the SD card "
-            f"{cand.label()} ({cand.whole_id}) and back them up. Nothing is written in this step.")
-        if not result.get("ok"):
-            raise DeviceError(f"Reading the card failed: {result.get('error')}")
-        try:
-            return bytes.fromhex(result["mbr_hex"]), bytes.fromhex(result["area_hex"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise DeviceError("The privileged helper returned unreadable data.") from exc
+        """One password window (read-only): the MBR and the partition's first ``length`` bytes."""
+        return self.raw.read(self._device(cand), cand.partition_offset, length)
 
     def raw_write(self, cand: Candidate, ranges: list[tuple[int, int]], expect_sha256: str, after: bytes, *,
                   expect_mbr_sha256: str, expect_area_sha256: str) -> dict:
-        with tempfile.TemporaryDirectory(prefix="r5-cardprep-") as tmp:
-            path = Path(tmp) / "after.bin"
-            path.write_bytes(after)
-            args = ["write", "--disk", cand.raw_disk, "--partition", cand.raw_partition]
-            for offset, length in ranges:
-                args += ["--range", f"{offset}:{length}"]
-            args += ["--expect-sha", expect_sha256, "--expect-mbr-sha", expect_mbr_sha256,
-                     "--expect-area-sha", expect_area_sha256, "--after", str(path),
-                     "--after-sha", hashlib.sha256(after).hexdigest()]
-            sectors = ", ".join(str(o // 512) for o, _ in ranges)
-            return self._privileged(
-                args, f"The Canon R5 build assistant wants to WRITE boot sector(s) {sectors} of the SD card "
-                      f"{cand.label()} ({cand.whole_id}). Its backup is already saved.")
+        """One password window (read/write): the planned partition sectors, with all checks."""
+        return self.raw.write(self._device(cand), cand.partition_offset, ranges, after, expect_sha256=expect_sha256,
+                              expect_mbr_sha256=expect_mbr_sha256, expect_area_sha256=expect_area_sha256)

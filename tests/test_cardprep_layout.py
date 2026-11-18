@@ -188,6 +188,33 @@ class Refusals(unittest.TestCase):
         refused(self, "mbr_length", layout.plan_markers, self.fmbr[:100], self.farea, disk_bytes=self.fdisk)
 
 
+class PartitionStart(unittest.TestCase):
+    """The partition start must agree three ways before the boot area is trusted."""
+
+    def test_agreement(self):
+        for card, g in ((ci.exfat_card(), ci.LAB_EXFAT), (ci.fat32_card(), ci.LAB_FAT32)):
+            mbr, area, disk = card
+            start, size = g["start_lba"] * 512, g["sectors"] * 512
+            self.assertEqual(layout.check_partition_start(mbr, area, disk_bytes=disk, reported_bytes=start,
+                                                          reported_size=size), start)
+            # macOS reports another start or size
+            for reported in ((start + 512, size), (start, size - 512), (None, size)):
+                refused(self, "geometry_mismatch", layout.check_partition_start, mbr, area, disk_bytes=disk,
+                        reported_bytes=reported[0], reported_size=reported[1])
+
+    def test_boot_sector_field_must_match(self):
+        mbr, _, disk = ci.exfat_card()
+        area = ci.exfat_area(start_lba=ci.LAB_EXFAT["start_lba"] + 8)  # exFAT PartitionOffset (byte 64) differs
+        refused(self, "geometry_mismatch", layout.check_partition_start, mbr, area, disk_bytes=disk,
+                reported_bytes=ci.LAB_EXFAT["start_lba"] * 512, reported_size=ci.LAB_EXFAT["sectors"] * 512)
+        fmbr, _, fdisk = ci.fat32_card()
+        farea = ci.fat32_area(ci.fat32_sector(**{**ci.LAB_FAT32, "start_lba": 8193}))  # HiddenSectors (byte 28)
+        refused(self, "geometry_mismatch", layout.check_partition_start, fmbr, farea, disk_bytes=fdisk,
+                reported_bytes=ci.LAB_FAT32["start_lba"] * 512, reported_size=ci.LAB_FAT32["sectors"] * 512)
+        refused(self, "geometry_mismatch", layout.check_partition_start, fmbr, bytes(12288), disk_bytes=fdisk,
+                reported_bytes=ci.LAB_FAT32["start_lba"] * 512, reported_size=ci.LAB_FAT32["sectors"] * 512)
+
+
 class Restore(unittest.TestCase):
     def round_trip(self, card):
         mbr, area, disk = card

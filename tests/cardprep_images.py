@@ -160,3 +160,38 @@ def mac_part(disk="disk4", index=1, *, fs="msdos", content="Windows_FAT_32", off
 def mac_exfat_part(disk="disk4", **override) -> dict:
     return mac_part(disk, fs="exfat", content="Windows_NTFS", offset=LAB_EXFAT["start_lba"] * 512,
                     size=LAB_EXFAT["sectors"] * 512, **override)
+
+
+# -- whole-disk image files and the authopen stand-in ------------------------------
+
+import os as _os
+import socket as _socket
+import stat as _stat
+import sys as _sys
+from pathlib import Path as _Path
+
+FAKE_AUTHOPEN = _Path(__file__).resolve().with_name("cardprep_fake_authopen.py")
+FD_PASSING = hasattr(_socket, "AF_UNIX") and hasattr(_socket, "recv_fds") and _os.name == "posix"
+
+
+def fake_authopen(mode: str = "ok") -> tuple[str, ...]:
+    """A command prefix that behaves like /usr/libexec/authopen (see cardprep_fake_authopen.py)."""
+    return (_sys.executable, "-I", str(FAKE_AUTHOPEN), mode)
+
+
+def same_file(fd: int, path: str) -> None:
+    """Test-only device binding: the descriptor must be the image file itself.
+    (Production requires a character device with the same st_rdev.)"""
+    from cardprep.rawio import DeviceError
+    st, expected = _os.fstat(fd), _os.stat(path)
+    if not _stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (expected.st_dev, expected.st_ino):
+        raise DeviceError("not the expected image file")
+
+
+def write_disk_image(path, mbr_bytes: bytes, area: bytes, start_lba: int, tail: int = 65536) -> None:
+    """A sparse whole-disk image: the MBR at 0 and the partition's boot area at its start."""
+    with open(path, "wb") as f:
+        f.truncate(start_lba * SECTOR + len(area) + tail)
+        f.write(mbr_bytes)
+        f.seek(start_lba * SECTOR)
+        f.write(area)
