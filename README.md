@@ -59,7 +59,7 @@ Community ports and firmware-specific validation are welcome. See [docs/porting.
 > [!TIP]
 > **New to this?** Start with the plain-language **[Getting started guide](docs/getting-started.md)**. It explains how the pieces fit together and walks through building, installing on a prepared card, testing and recovery.
 >
-> **Prefer a window to a terminal?** The **[build assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) checks your ROM, lets you pick features, builds, and copies `autoexec.bin` to the card. On a Mac it can also prepare a card you formatted in the camera: choose the card, press **Prepare card** and confirm once. The boot sectors are backed up automatically first, and Undo restores them. That step is opt-in; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested. It runs the same builder and checks.
+> **Prefer a window to a terminal?** The **[setup assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) guides you step by step: camera check, ROM, BootDisk, features, build tools, build, boot card, copy and first test, with a check at every step and saved progress. On a Mac it can also prepare a card you formatted in the camera (backup first, one confirmation, Undo). The exFAT card path was verified on the owner's Mac and camera; FAT32 is untested. Its guided ROM-dump and BootDisk steps are coming soon. It runs the same builder and checks.
 
 Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**. For deep XPan internals, see **[docs/xpan.md](docs/xpan.md)**.
 

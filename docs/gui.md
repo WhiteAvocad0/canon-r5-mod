@@ -1,9 +1,9 @@
-# Build assistant (prototype)
+# Setup assistant (prototype)
 
 > [!WARNING]
-> **Prototype.** This is Phases 1 and 2 of [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16). It builds `autoexec.bin` on your computer, can write the two boot markers onto a card you formatted in the camera (macOS only; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested), and copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
+> **Prototype.** This is [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16): a step-by-step setup wizard. It builds `autoexec.bin` on your computer and can write the two boot markers onto a card you formatted in the camera (macOS only; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested). Then it copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
 
-The build assistant is a small desktop window for owners of an original Canon EOS R5 on firmware `2.2.1` who would rather not use a terminal to build. You still need the [one-time prerequisites](usage.md#1-prerequisites): your own ROM dump and BootDisk enabled in the camera. On a Mac the assistant can make a camera-formatted SD card bootable ([Prepare card](#5-prepare-card)); elsewhere you need an already bootable card.
+The setup assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. The guided ROM-dump and BootDisk steps (2 and 3) are **coming soon**. Until then you need your own ROM dump, and BootDisk already enabled in the camera ([one-time prerequisites](usage.md#1-prerequisites)). On a Mac the assistant can make a camera-formatted SD card bootable ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
 ## Launch
 
@@ -21,15 +21,48 @@ If Tkinter is missing, the assistant prints these hints and exits. The command-l
 
 ## What it does
 
-The window has seven tabs. A red warning line runs across the top of every tab, followed by three buttons that open the **Getting started guide**, the **Prerequisites** and this page.
+*Screenshot, described:* a red warning line runs across the top, followed by three buttons that open the **Getting started guide**, the **Prerequisites** and this page. On the left is a list of the nine steps. Each has a mark and a status: ✓ *done*, • *needs action*, – *skipped* or ✗ *blocked*. The current step fills the right side. At the bottom are **< Back** and **Next >**, with a short note saying what is still needed.
 
-### 1. ROM
+Every step has the same shape:
+- what it is and why, in plain language;
+- **What you do**;
+- the step's controls;
+- the app's own check, shown as *Check passed*, *To do* or *Blocked*;
+- a **Details** button that opens the technical facts.
+
+**Next** works only when the step's check passes (or the step was skipped). **Back** always works. Clicking a step in the list jumps to it, unless it is blocked; a blocked step says what must be finished first.
+
+**Progress is saved** in `~/.r5-build-assistant/wizard.json` after every change, so you can close the window and continue later. On reopening, anything that can be checked again is checked again before it counts: the ROM, the WAV files, the toolchain, and whether the last build still matches its `build.json`. A copy to the card counts only for the same, still-verified build. The file holds paths and your confirmations, never ROM or card data.
+
+**Returning owners:** once the one-time steps (1 to 3) are done, step 1 offers **Update my card**. The short path is Features, Build tools (only if they no longer pass), Build and Copy. **Set up from the start** shows all nine steps again.
+
+### Step 1. Welcome and camera check
+
+*Screenshot, described:* the text says the mod works only on an original EOS R5 on firmware 2.2.1. **What you do** explains where to look: press MENU, open the yellow Setup (wrench) tab, and find *Firmware* on the last Setup page, which must read *Firmware Ver. 2.2.1*. The body of the camera must say *EOS R5*, with no *C* or *Mark II*. Then tick "My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'." Below are **Set up from the start** and **Update my card (Features > Build > Copy)**; the second is greyed out until steps 1 to 3 are done. **Details** lists what the assistant never does.
+
+This is your confirmation. The ROM check in step 2 verifies the firmware itself.
+
+### Step 2. ROM dump (one time; guided dump coming soon)
 
 *Screenshot, described:* a sentence explains that the ROM stays on this computer. Below it is a read-only path box and a **Choose ROM...** button. After you pick a file, a status line turns green: "ROM accepted for xpan-crop: Canon EOS R5 firmware 2.2.1, 67,108,864 bytes, 178 fingerprinted regions match." If the ROM is refused, the line is red and gives the builder's reason, for example "Input size must be exactly 67108864 bytes" or "firmware signature mismatch".
 
 The check is the builder's own strict admission (`build.check_rom`) for the profile and record indicator you selected. It reads the ROM only: it doesn't need the toolchain and writes nothing. Changing the profile or the indicator runs the check again, because an XPan build and a build with the indicator check extra fingerprinted pages. There is no way to force a refused ROM.
 
-### 2. Features
+If you don't have a dump yet, the box *Make a ROM dump (coming soon)* will guide you. The app will prepare a Canon Basic card, and the camera saves its ROM to it; dumping only reads and changes nothing in the camera. It uses the same safeguards as the boot card. Its exact R5 details are still being researched, so for now the button is greyed out.
+
+### Step 3. Enable BootDisk (one time; guided version coming soon)
+
+*Screenshot, described:* the text explains that a stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. It is stored inside the camera and is **permanent**: formatting cards doesn't clear it, and there is no official way back. A box headed *Guided BootDisk (coming soon)* holds the greyed-out **Prepare the BootDisk card...** and **Disable BootDisk...** buttons. Below it are a required acknowledgement ("I understand that BootDisk is a permanent setting inside the camera, that there is no official way back, and that I use this at my own risk.") and "BootDisk is already enabled on my camera (it was confirmed with a readback when it was enabled)". The second box only works after the acknowledgement.
+
+For now this step only records your confirmation; the check says *confirmed by you (not verified by the app)*. The owner-approved guided version will work like this:
+- the app prepares a Canon Basic card with the same backup, confirmation, read-back and undo safeguards as the boot card;
+- you run it yourself in the camera; nothing happens automatically;
+- the result is verified by readback;
+- a **Disable BootDisk** path undoes it.
+
+The app itself never writes the camera's firmware or NVRAM. The exact R5 card contents, trigger, enable/disable calls and the readback location are still being researched.
+
+### Step 4. Choose features
 
 *Screenshot, described:* two radio buttons, **Custom startup and shutter sounds (shutter-feedback)** and **XPan 2.71:1 crop (silent) (xpan-crop)**. Each has a short description and a grey status line, for example "Status: Verified on a private lab build. Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
 
@@ -39,13 +72,13 @@ Then come two boxes, **Startup sound (WAV)** and **Shutter sound (WAV)**, each w
 
 XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.
 
-### 3. Toolchain
+### Step 5. Build tools
 
 *Screenshot, described:* installation instructions, a button that opens the xPack releases page, a path box with **Choose bin folder...** and **Detect again** buttons, and a status line.
 
 At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It looks on your `PATH`, under `~/tools/`, your home folder and `~/Downloads/`, in xPack's own install folders and in the usual system folders. Each candidate goes through the builder's toolchain admission (target `arm-none-eabi`, GCC `15.2.1`). If nothing is found, download **xPack GNU Arm Embedded GCC 15.2.1-1.1** yourself, unpack it, and choose its `bin` folder. **This prototype never downloads anything.**
 
-### 4. Build
+### Step 6. Build and verify
 
 *Screenshot, described:* an output folder path with a **Change...** button, then a yellow list headed "Before you can build:" (for example "Pick your ROM dump."), or "Ready to build." Below these are the **Build autoexec.bin** button, a scrolling log, a result area, a horizontal memory bar and two buttons, **Open output folder** and **Open 'what's in this build'**.
 
@@ -55,14 +88,14 @@ At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It l
 - It also writes `BUILD-CONTENTS.txt` in the output folder: a plain-language list of the profile, options and their status, the WAVs used, the image's SHA-256, the memory margin, the `source_manifest_sha256` to quote in test reports, and what the build does *not* include.
 - If the builder refuses, the result area shows its last error line in red.
 
-### 5. Prepare card
+### Step 7. Prepare the boot card
 
 > [!CAUTION]
 > **Writes raw boot sectors. Prototype, macOS only.** The owner decided on 18 November 2026 to offer this step in the assistant. The exFAT path was verified on 18 November 2026 on the owner's Mac (macOS 27.3) with a camera-formatted 128 GB exFAT card, which the camera then booted; FAT32 cards, Windows and Linux are untested. On that run sectors 12, 23, 0 and 11 were written, the read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted the card and ran a private lab build. The command-line builder still never writes cards.
 
 *Screenshot, described:* a bold red warning, "Format this card IN THE CAMERA first. Formatting erases everything on the card — copy your photos and videos to your computer before formatting.", then a short explanation and a red line saying the real-device path is untested. Below them are a **Find SD cards** button with a drop-down of the cards found, the chosen card's details (model, size, filesystem, volume name, mount state, device), and a "Not offered:" line naming every other disk with its reason. Then come the **Prepare card**, **Undo (restore the latest backup)** and **Restore from a chosen backup...** buttons, a yellow "Next:" list, the result line and a box with its details.
 
-This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that a camera whose BootDisk setting is already enabled loads `autoexec.bin` from the card. It does not enable BootDisk and never writes the camera.
+This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that a camera whose BootDisk setting is already enabled loads `autoexec.bin` from the card. It does not enable BootDisk and never writes the camera. If your card is already prepared, **My card is already prepared (skip this step)** marks the step *skipped*.
 
 1. **Format in the camera first.** The warning at the top says so. The assistant never formats, partitions or erases anything; the owner decided formatting stays out of the tool. The warning is advice. The real check is the boot-sector layout: on FAT32 the boot code where `BOOTDISK` goes must be empty, and on exFAT it must be the `F4` fill. A card formatted by Windows, or a FAT32 card formatted on a Mac, is refused. A card formatted as exFAT by macOS can't be told apart from a camera-formatted one (both use `F4`), which is another reason to format in the camera. Formatting removes the markers, so prepare the card again after every format.
 2. **Choose the card.** **Find SD cards** lists only cards in an SD card slot (macOS reports the *Secure Digital* protocol). The card must be removable, ejectable, physical media with 512-byte sectors and an MBR with exactly one FAT32 or exFAT partition, writable, and between 2 GB and 2 TiB. The disk macOS runs from, internal disks, disk images, system media, partitions mounted outside `/Volumes` and USB devices are refused with their reason. That includes USB card readers, because macOS can't tell them from other USB drives. An unmounted card is still listed (marked *not mounted*), so a half-written card can be undone.
@@ -76,7 +109,7 @@ This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that 
 4. **Undo or restore.** **Undo** reads the card first, then uses the newest backup taken before its markers were written (`...-before-marking`, never `...-before-restore`) whose MBR and boot-area bytes outside the markers match the card as read, so it can't pick another card's backup or a half-marked state. **Restore from a chosen backup...** uses a backup folder you choose; its files are checked against its manifest. Both work like Prepare: read (also from an unmounted, half-written or unmountable card, identified by its disk and partition, not by a mount), an automatic backup of the current state (`...-before-restore`), one confirmation dialog, then write and verify. The card must be the backed-up one: same size, partition, slot and model, the same MBR, and every boot-area byte outside the marker ranges unchanged. The exFAT `VolumeFlags` and `PercentInUse` bytes are exempt and kept as they are now. Each marker range must hold either the original or the prepared bytes.
 5. **Report.** The result says *done and verified*, *Already prepared*, *Cancelled. Nothing was written*, *refused. Nothing was written* (for example after the card changed since it was read) or *not written* (for example if the card was removed). Otherwise it says which sectors were written, and which were *possibly written* (a write that was started but not confirmed), what failed, and the backup to undo from. A hanging `diskutil` never loses the report. The card is mounted again in every case, or you're told to reinsert it.
 
-Only one card operation runs at a time. While one runs, or while the confirmation is open, the [Copy to card](#6-copy-to-card) tab is blocked, and the other way round.
+Only one card operation runs at a time. While one runs, or while the confirmation is open, the [Copy to card](#step-8-copy-autoexecbin) tab is blocked, and the other way round.
 
 **What runs, exactly (macOS).** As you: `diskutil info -plist /`, `diskutil list -plist physical` and `diskutil info -plist diskN` / `diskNsM` to find and re-check cards, then `diskutil unmount diskNsM`, `diskutil mount diskNsM` and `diskutil verifyVolume diskNsM`. Every `diskutil` call has a timeout.
 
@@ -107,7 +140,7 @@ Each sector is flushed with `F_FULLFSYNC` (falling back to `fsync` where the dev
 
 **Windows and Linux:** **Find SD cards** lists cards on a best-effort basis (PowerShell `Get-Disk` / `lsblk`), **untested**. Preparing a card is offered on macOS only.
 
-### 6. Copy to card
+### Step 8. Copy autoexec.bin
 
 *Screenshot, described:* an explanation, a path box with **Choose card folder...**, a report (folder, drive size, whether a `DCIM` folder exists, any existing `autoexec.bin`, plus warnings), a confirmation checkbox, and the **Copy autoexec.bin to card** button.
 
@@ -122,9 +155,20 @@ This is only for a card that is **already bootable**. Choose the card's top fold
 
 The copy step **never** formats or partitions a card, never opens a raw disk, never writes boot sectors, and never deletes anything except its own temporary file from the current copy. Temporary files left by an interrupted earlier copy are reported and left alone.
 
+### Step 9. First camera test
+
+*Screenshot, described:* a checklist for the first power-on:
+- camera off, with USB and HDMI unplugged and only the prepared SD card inserted;
+- powered on normally;
+- a full-frame control photo;
+- the features in this build;
+- waited for the card light before switching off.
+
+It is blocked until this build has been copied in step 8. **Open the test report form** opens the right GitHub form for the profile you built. If the camera freezes or shows an error, remove the battery, then the card, and power on without the card. Never upload your ROM, photos or card images.
+
 ### What this tool cannot do
 
-The last tab lists what is out of scope. The assistant does **not** dump the ROM or enable **BootDisk** in the camera. It doesn't format or partition cards, write the MBR, write anything except the boot-marker sectors shown in [Prepare card](#5-prepare-card), write the camera's firmware or NVRAM, download the toolchain, or test anything on the camera. See [Getting started → Step 2](getting-started.md#step-2-check-the-one-time-prerequisites).
+Step 1's **Details** lists what is out of scope. The assistant never changes the camera by itself: the ROM dump and BootDisk steps are things you run in the camera (their guided versions are coming soon). It doesn't format or partition cards, write the MBR, write anything except the boot-marker sectors shown in [Prepare card](#step-7-prepare-the-boot-card), write the camera's firmware or NVRAM, download the toolchain, or test anything on the camera. See [Getting started → Step 2](getting-started.md#step-2-check-the-one-time-prerequisites).
 
 ## One feature list for the builder and the assistant
 
