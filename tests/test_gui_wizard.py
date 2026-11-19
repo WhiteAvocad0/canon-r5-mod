@@ -50,13 +50,13 @@ class Base(unittest.TestCase):
 
 
 class Steps(Base):
-    def test_nine_steps_in_order_with_placeholders_marked(self):
+    def test_nine_steps_in_order_with_no_placeholders(self):
         self.assertEqual([s.id for s in wz.STEPS], [wz.CAMERA, wz.ROM, wz.BOOTDISK, wz.FEATURES, wz.TOOLCHAIN,
                                                     wz.BUILD, wz.BOOTCARD, wz.COPY, wz.TEST])
         self.assertEqual([s.number for s in wz.STEPS], list(range(1, 10)))
-        self.assertEqual([s.id for s in wz.STEPS if s.placeholder], [wz.ROM, wz.BOOTDISK])
-        for step in (wz.ROM, wz.BOOTDISK):
-            self.assertIn(wz.COMING_SOON, wz.GUIDE[step].details)
+        self.assertEqual([s.id for s in wz.STEPS if s.placeholder], [])
+        self.assertIn("SaveAllRomImageToFile", wz.GUIDE[wz.ROM].details)
+        self.assertIn("EnableBootDisk", wz.GUIDE[wz.BOOTDISK].details)
         self.assertEqual(set(wz.GUIDE), set(wz.STEP_BY_ID))
 
     def test_initial_statuses(self):
@@ -145,9 +145,39 @@ class Gating(Base):
             self.a.finish("input", self.a.input_key(input_id), True, "WAV accepted", input_id=input_id)
         self.assertEqual(self.w.status(wz.FEATURES).status, wz.DONE)
 
-    def test_bootdisk_cannot_be_marked_verified_yet(self):
+    def test_bootdisk_verified_disabled_and_rechecked_on_resume(self):
         with self.assertRaises(ValueError):
             self.w.set_bootdisk("verified")
+        with self.assertRaises(ValueError):
+            self.w.set_bootdisk("hacked")
+
+        self.w.set_bootdisk("disabled")
+        self.assertEqual(self.w.status(wz.BOOTDISK).status, wz.NEEDS_ACTION)
+        self.assertIn("0x00000000", self.w.status(wz.BOOTDISK).message)
+        self.assertFalse(self.w.next())
+
+        rom = self.tmp / "gang101.bin"
+        self.w.set_bootdisk("verified", rom_path=rom, rom_sha256="ab" * 32)
+        self.assertEqual(self.w.status(wz.BOOTDISK).status, wz.DONE)
+        self.assertIn("verified by ROM readback", self.w.status(wz.BOOTDISK).message)
+        self.assertEqual(self.w.saved.bootdisk_rom_path, str(rom))
+
+        # Resume trusts verified state only if verify_bootdisk confirms it.
+        w_ok = wz.Wizard(AssistantState(), state_file=self.file)
+        w_ok.load(verify_bootdisk=lambda p, sha: (p == rom and sha == "ab" * 32))
+        self.assertEqual(w_ok.saved.bootdisk, "verified")
+
+        w_bad = wz.Wizard(AssistantState(), state_file=self.file)
+        w_bad.load(verify_bootdisk=lambda _p, _sha: False)
+        self.assertEqual(w_bad.saved.bootdisk, "unknown")
+        self.assertIsNone(w_bad.saved.bootdisk_rom_path)
+        self.assertIsNone(w_bad.saved.bootdisk_rom_sha256)
+
+        # Missing path/hash in saved JSON is also downgraded to unknown on load.
+        self.file.write_text(json.dumps({"version": 1, "bootdisk": "verified"}))
+        w_incomplete = wz.Wizard(AssistantState(), state_file=self.file)
+        w_incomplete.load()
+        self.assertEqual(w_incomplete.saved.bootdisk, "unknown")
 
 
 class Resume(Base):

@@ -12,10 +12,9 @@ Returning owners get a short path, "Update my card": Features, Toolchain (only i
 no longer passes), Build, Copy. It is offered only when the one-time steps (camera,
 ROM, BootDisk) are already done.
 
-Steps 2 (ROM dump guide) and 3 (BootDisk guide) are placeholders for the Canon Basic
-card flow: their guided parts wait on research and are marked as such. "I already have
-a ROM dump" works now (the builder's own ROM admission), and so does "BootDisk is
-already enabled on my camera" (recorded as confirmed by you, not verified by the app).
+Steps 2 (ROM dump) and 3 (BootDisk) guide a Canon Basic SDHC card flow that you run
+yourself in the camera, with ROM readback verification, alongside picking an
+existing ROM dump or confirming an earlier BootDisk setup.
 """
 from __future__ import annotations
 
@@ -66,10 +65,9 @@ class StepInfo:
 
 STEPS = (
     StepInfo(CAMERA, 1, "Welcome and camera check", "Make sure you have an original EOS R5 on firmware 2.2.1.", True),
-    StepInfo(ROM, 2, "ROM dump", "Your own copy of the camera's firmware, needed to build (one time, read-only).",
-             True, placeholder=True),
+    StepInfo(ROM, 2, "ROM dump", "Your own copy of the camera's firmware, needed to build (one time, read-only).", True),
     StepInfo(BOOTDISK, 3, "Enable BootDisk", "A one-time, permanent camera setting that lets it start a program "
-             "from the card.", True, placeholder=True),
+             "from the card.", True),
     StepInfo(FEATURES, 4, "Choose features", "Pick what the mod does."),
     StepInfo(TOOLCHAIN, 5, "Build tools", "The free GNU Arm compiler that turns the source into autoexec.bin."),
     StepInfo(BUILD, 6, "Build and verify", "Build autoexec.bin on this computer and check it."),
@@ -90,7 +88,9 @@ class StepStatus:
 class Saved:
     """What survives closing the window. Facts that can be re-checked are re-checked on resume."""
     camera_confirmed: bool = False
-    bootdisk: str = "unknown"  # "unknown", "confirmed" (by the person), "verified" (readback, once available)
+    bootdisk: str = "unknown"  # "unknown", "confirmed" (by the person), "verified" (readback), "disabled"
+    bootdisk_rom_path: str | None = None
+    bootdisk_rom_sha256: str | None = None
     profile: str | None = None
     options: dict = field(default_factory=dict)
     rom_path: str | None = None
@@ -116,7 +116,7 @@ class Saved:
         saved = cls(**known)
         if saved.current not in STEP_BY_ID:
             saved.current = CAMERA
-        if saved.bootdisk not in ("unknown", "confirmed", "verified"):
+        if saved.bootdisk not in ("unknown", "confirmed", "verified", "disabled"):
             saved.bootdisk = "unknown"
         return saved
 
@@ -147,15 +147,25 @@ class Wizard:
         except OSError:
             pass  # progress is a convenience; the wizard works without it
 
-    def load(self, *, verify_build=None) -> None:
+    def load(self, *, verify_build=None, verify_bootdisk=None) -> None:
         """Restore saved progress into the assistant state; everything re-checkable is checked again
-        (ROM, WAVs and toolchain by the window's normal check loop; the build by ``verify_build``)."""
+        (ROM, WAVs and toolchain by the window's normal check loop; the build by ``verify_build``;
+        verified BootDisk state by ``verify_bootdisk``)."""
         try:
             data = json.loads(self.state_file.read_text())
         except (OSError, ValueError):
             return
         self.saved = Saved.from_json(data)
         s, a = self.saved, self.a
+        if s.bootdisk == "verified":
+            if not s.bootdisk_rom_path or not s.bootdisk_rom_sha256:
+                s.bootdisk = "unknown"
+                s.bootdisk_rom_path = None
+                s.bootdisk_rom_sha256 = None
+            elif verify_bootdisk is not None and not verify_bootdisk(Path(s.bootdisk_rom_path), s.bootdisk_rom_sha256):
+                s.bootdisk = "unknown"
+                s.bootdisk_rom_path = None
+                s.bootdisk_rom_sha256 = None
         if s.profile in a.manifest.profiles:
             a.set_profile(s.profile)
         for oid, value in (s.options or {}).items():
@@ -184,9 +194,23 @@ class Wizard:
         self.saved.camera_confirmed = bool(value)
         self.save()
 
-    def set_bootdisk(self, value: str) -> None:
-        if value not in ("unknown", "confirmed"):
-            raise ValueError("BootDisk can only be confirmed by you here; readback verification is not available yet")
+    def set_bootdisk(
+        self,
+        value: str,
+        *,
+        rom_path: Path | None = None,
+        rom_sha256: str | None = None,
+    ) -> None:
+        if value not in ("unknown", "confirmed", "verified", "disabled"):
+            raise ValueError(f"unknown BootDisk state {value!r}")
+        if value == "verified":
+            if rom_path is None or not rom_sha256:
+                raise ValueError("Verified BootDisk state requires a readback ROM dump path and SHA-256")
+            self.saved.bootdisk_rom_path = str(rom_path)
+            self.saved.bootdisk_rom_sha256 = str(rom_sha256)
+        else:
+            self.saved.bootdisk_rom_path = None
+            self.saved.bootdisk_rom_sha256 = None
         self.saved.bootdisk = value
         self.save()
 
@@ -244,7 +268,7 @@ class Wizard:
         if step_id == ROM:
             check = a.rom_check()
             if a.rom_path is None:
-                return StepStatus(NEEDS_ACTION, "Choose your ROM dump (64 MiB). The guided dump is coming soon.")
+                return StepStatus(NEEDS_ACTION, "Choose your 64 MiB ROM dump, or use the guided ROM-dump card below.")
             if check.status == OK:
                 return StepStatus(DONE, check.message)
             if check.status == FAILED:
@@ -252,10 +276,12 @@ class Wizard:
             return StepStatus(NEEDS_ACTION, "Checking the ROM...")
         if step_id == BOOTDISK:
             if s.bootdisk == "verified":
-                return StepStatus(DONE, "BootDisk is enabled (verified by readback).")
+                return StepStatus(DONE, "BootDisk is enabled (verified by ROM readback: BootInfo +0x04 = 0xFFFFFFFF).")
             if s.bootdisk == "confirmed":
                 return StepStatus(DONE, "BootDisk is enabled, confirmed by you (not verified by the app).")
-            return StepStatus(NEEDS_ACTION, "Confirm that BootDisk is already enabled. The guided step is coming soon.")
+            if s.bootdisk == "disabled":
+                return StepStatus(NEEDS_ACTION, "BootDisk is disabled (verified by ROM readback: BootInfo +0x04 = 0x00000000). Enable it to run autoexec.bin.")
+            return StepStatus(NEEDS_ACTION, "Enable and verify BootDisk with a Canon Basic card, verify from a post-enable ROM dump, or confirm it is already enabled.")
         if step_id == FEATURES:
             missing = []
             for view in a.input_views():
@@ -384,8 +410,6 @@ class Wizard:
 
 # -- the words on each step: what and why, what you do, and technical details ----------
 
-COMING_SOON = "Coming soon"
-
 
 @dataclass(frozen=True)
 class Guide:
@@ -407,24 +431,35 @@ GUIDE = {
     ROM: Guide(
         "The build uses small parts of Canon's firmware, read from your own camera's ROM. They can't be shared, "
         "so everyone makes their own copy once. Dumping the ROM only reads; it changes nothing in the camera.",
-        "If you already have your 64 MiB ROM dump (often called gang100.bin), choose it below and the app checks "
-        "it. Guided dumping with a prepared card is coming soon.",
-        "The file must be exactly 67,108,864 bytes and pass the builder's own admission for the chosen features "
-        "(check_rom: checksum, startup bytes and, for XPan, fingerprinted pages). Keep it private: never upload "
-        "or share it. [Coming soon: the app prepares a Canon Basic card (SCRIPT marker plus script.req/extend.m) "
-        "with the same backup, confirm, read-back and undo safeguards as the boot card; the exact R5 details are "
-        "still being researched.]"),
+        "If you already have your 64 MiB ROM dump (often gang100.bin), choose it below. Otherwise, use a "
+        "camera-formatted FAT32 SDHC card (up to 32 GB) with the guided ROM-dump controls below: prepare the "
+        "card with the Canon Basic SCRIPT marker and script files, run it once in the camera (no CFexpress, USB "
+        "or HDMI; power on, press Playback, press SET once, wait until the card light stops plus 60 s, then "
+        "power off), and import the returned dump.",
+        "The dump must be exactly 67,108,864 bytes and pass the builder's strict admission (check_rom: checksum, "
+        "startup bytes and, for XPan, fingerprinted pages), plus the four BootInfo/IsScriptMode fingerprints "
+        "(0xE0B38CD4, 0xE00068C0, 0xE0006FC4, 0xE06F73DC). Canon Basic on R5 2.2.1 uses SCRIPT (6 B) at FAT32 "
+        "VBR byte 496 (0x1F0), 17-byte script.req ('for DC_scriptdisk'), and extend.m calling "
+        "SaveAllRomImageToFile() (requires >= 300 MiB free and no AUTOEXEC.BIN or native boot markers). "
+        "SDXC/exFAT cards (>= 0x4000000 sectors) check LBA-1 for SCRIPT and are untested, so guided Canon "
+        "Basic refuses them. Keep your ROM dump private; gang2NN.bin is not needed."),
     BOOTDISK: Guide(
         "A stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. "
-        "It is stored inside the camera, it is PERMANENT (formatting cards doesn't clear it), and there is no "
-        "official way back.",
-        "If BootDisk is already enabled on your camera (and whoever enabled it confirmed it with a readback), "
-        "read and tick the acknowledgement, then confirm below. The guided steps to enable or disable it are "
-        "coming soon. The app never changes the camera by itself: you would run the step in the camera.",
-        "Owner-approved design: a Canon Basic card that you run in the camera, an acknowledgement before it is "
-        "prepared, and verification by readback, plus a 'Disable BootDisk' path. The tool itself never writes "
-        "the camera's firmware or NVRAM. [Coming soon: the card contents, trigger, enable/disable calls and "
-        "the flag's readback location are still being researched.]"),
+        "It is stored inside the camera, it is PERMANENT across card formats and card removal, and there is no "
+        "official Canon uninstaller.",
+        "Tick the risk acknowledgement below. Then either: (1) prepare a Canon Basic Enable-BootDisk card (FAT32 "
+        "SDHC up to 32 GB, no native boot markers, no AUTOEXEC.BIN), run it once in the camera (full battery, no "
+        "CFexpress/USB/HDMI, press Playback then SET once, wait for the card light to stop plus 60 s without "
+        "powering off or opening doors), and verify the returned card so the app checks BootInfo +0x04 = "
+        "0xFFFFFFFF and removes extend.m; (2) verify from an existing post-enable ROM dump; or (3) confirm below "
+        "if BootDisk was already enabled earlier.",
+        "EnableBootDisk() (0xE0B38D62) writes 0xFFFFFFFF to BootInfo +0x04 (file offset 0x3FF8004). The guided "
+        "script calls EnableBootDisk() followed by SaveAllRomImageToFile() so the returned gang1NN.bin lets the "
+        "app verify BootInfo +0x04, check loader invariants (+0x00 == 0, +0x0C/+0x10..+0x1F/+0x24 == 0xFFFFFFFF), "
+        "compare the first 48 bytes against an earlier dump, and immediately remove extend.m and script.req so a "
+        "stray SET cannot repeat a flash write. DisableBootDisk() (0xE0B38D74, writing 0x00000000) is the stock "
+        "inverse in the R5 2.2.1 ROM, but it has NOT been tested on hardware yet. The app itself never writes "
+        "camera flash or NVRAM: you run the card in the camera."),
     FEATURES: Guide(
         "The mod comes in two versions. XPan adds a 2.71:1 panoramic crop; Custom sounds plays your own startup "
         "and shutter sounds. They can't be combined.",

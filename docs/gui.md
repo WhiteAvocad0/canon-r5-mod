@@ -3,7 +3,7 @@
 > [!WARNING]
 > **Prototype.** This is [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16): a step-by-step setup wizard. It builds `autoexec.bin` on your computer and can write the two boot markers onto a card you formatted in the camera (macOS only; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested). Then it copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
 
-The setup assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. The guided ROM-dump and BootDisk steps (2 and 3) are **coming soon**. Until then you need your own ROM dump, and BootDisk already enabled in the camera ([one-time prerequisites](usage.md#1-prerequisites)). On a Mac the assistant can make a camera-formatted SD card bootable ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
+The setup assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
 ## Launch
 
@@ -44,25 +44,28 @@ Every step has the same shape:
 
 This is your confirmation. The ROM check in step 2 verifies the firmware itself.
 
-### Step 2. ROM dump (one time; guided dump coming soon)
+### Step 2. ROM dump (one time)
 
 *Screenshot, described:* a sentence explains that the ROM stays on this computer. Below it is a read-only path box and a **Choose ROM...** button. After you pick a file, a status line with a green ✓ says: "ROM accepted for xpan-crop: Canon EOS R5 firmware 2.2.1, 67,108,864 bytes, 178 fingerprinted regions match." If the ROM is refused, the line turns red and gives the builder's reason, for example "Input size must be exactly 67108864 bytes" or "firmware signature mismatch".
 
 The check is the builder's own strict admission (`build.check_rom`) for the profile and record cues you selected. It reads the ROM only: it doesn't need the toolchain and writes nothing. Changing the profile or a record cue runs the check again, because an XPan build and a build with either cue check extra fingerprinted pages. There is no way to force a refused ROM.
 
-If you don't have a dump yet, the box *Make a ROM dump (coming soon)* will guide you. The app will prepare a Canon Basic card, and the camera saves its ROM to it; dumping only reads and changes nothing in the camera. It uses the same safeguards as the boot card. Its exact R5 details are still being researched, so for now the button is greyed out.
+If you don't have a dump yet, the box *Make a ROM dump (Canon Basic, read-only)* guides you through preparing a Canon Basic card (`<= 32 GB` FAT32 SDHC, formatted in the camera first) and importing the returned dump:
+- **Prepare ROM-dump card...** (macOS) uses the same `cardprep` backup, confirmation, read-back and undo framework as step 7 to write the 6-byte ASCII `SCRIPT` marker at offset `0x1F0` (`496`) of the primary FAT32 boot sector (only if `0x1F0..0x1F6` is all-zero and no `BOOTDISK` marker is present), then stages `script.req` (`for DC_scriptdisk\n`) and `extend.m` (`SaveAllRomImageToFile()`) at the card root with SHA-256 readback. **Stage ROM-dump scripts on folder...** writes only `script.req` and `extend.m` to a chosen FAT32 card folder whose boot sector already carries `SCRIPT`.
+- You run it yourself in the camera: insert the card in the SD slot, power on in **▶ playback** mode, press **SET**, and wait about 2–4 minutes until the card activity light goes out and stopped for several seconds before powering off. Dumping only reads and changes nothing in the camera (`SaveAllRomImageToFile` at `0xE0B38CD4` writes `64 MiB` `gang100.bin` from `0xE0000000` and `16 KiB` `gang200.bin` BootInfo from `0xE8004000`).
+- **Import ROM from card...** copies `gang100.bin` (and `gang200.bin` if present) from the card to `~/R5-rom-dumps/rom-<timestamp>/` on your computer with SHA-256 readback, runs `build.check_rom`, selects the verified local copy as your ROM, and renames `extend.m` / `script.req` on the card to `.done` so pressing `SET` in `▶` playback won't re-run the script (`SCRIPT` at `0x1F0` remains until Undo or camera format). If `gang200.bin` is present and valid, it also inspects the BootInfo flag at `+0x04` (`0xE8004004`).
 
-### Step 3. Enable BootDisk (one time; guided version coming soon)
+### Step 3. Enable BootDisk (one time)
 
-*Screenshot, described:* the text explains that a stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. It is stored inside the camera and is **permanent**: formatting cards doesn't clear it, and there is no official way back. A box headed *Guided BootDisk (coming soon)* holds the greyed-out **Prepare the BootDisk card...** and **Disable BootDisk...** buttons. Below it an amber box repeats that BootDisk is permanent, followed by a required acknowledgement ("I understand that BootDisk is a permanent setting inside the camera, that there is no official way back, and that I use this at my own risk.") and "BootDisk is already enabled on my camera (it was confirmed with a readback when it was enabled)". The second box only works after the acknowledgement.
+*Screenshot, described:* the text explains that a stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. It is stored inside the camera (`0xE8004004`, mirrored in the `16 KiB` BootInfo dump `gang200.bin` / `gang201.bin` at offset `+0x04`). Below an amber warning box is the required acknowledgement ("I understand that BootDisk is a permanent setting inside the camera, that there is no official way back, and that I use this at my own risk."). All guided buttons and the manual confirmation checkbox stay disabled until you tick that acknowledgement.
 
-For now this step only records your confirmation; the check says *confirmed by you (not verified by the app)*. The owner-approved guided version will work like this:
-- the app prepares a Canon Basic card with the same backup, confirmation, read-back and undo safeguards as the boot card;
-- you run it yourself in the camera; nothing happens automatically;
-- the result is verified by readback;
-- a **Disable BootDisk** path undoes it.
+Once acknowledged, the box *Guided BootDisk (Canon Basic, verified by readback)* offers:
+- **Prepare Enable-BootDisk card...** (macOS raw `SCRIPT` at `0x1F0` + scripts, with automatic backup to `~/R5-card-backups/...-before-script/`, confirmation dialog and readback) and **Stage Enable scripts on folder...**. The script dumps before (`gang100.bin` / `gang200.bin`), calls Canon's `EnableBootDisk()` (`0xE0B38D62` -> `0xE05E3E66(0)`), waits `2000 ms`, and dumps after (`gang101.bin` / `gang201.bin`).
+- **Verify returned BootDisk card...** or **Verify gang200.bin / gang201.bin file...**: copies the returned dumps to `~/R5-rom-dumps/bootdisk-<timestamp>/` with SHA-256 readback, renames `extend.m` / `script.req` on the card to `.done`, and verifies the `16,384`-byte BootInfo block (`cbasic.verify_bootinfo`). It checks that all `16,380` bytes outside `+0x04..+0x08` match your camera's `64 MiB` ROM mirror at `0xE0004000` (and the before-dump `gang200.bin` when both exist) and checks the 32-bit little-endian flag at `+0x04` (`0xE8004004`): `0x00000000` sets the step to **verified by readback** (*Check passed*), and `0xFFFFFFFF` reports that BootDisk is **disabled in the camera (verified by readback)** (*To do*). Any other value or size/header mismatch is refused.
+- **Prepare Disable-BootDisk card...** / **Stage Disable scripts on folder...** (marked **hardware-untested**): prepares a Canon Basic card that dumps before, calls Canon's `DisableBootDisk()` (`0xE0B38D74` -> `0xE05E3E66(1)`), waits `2000 ms`, and dumps after (`gang101.bin` / `gang201.bin`), verified with the same readback button.
+- If you already enabled BootDisk earlier and don't have the `gang200.bin` / `gang201.bin` file at hand, ticking "BootDisk is already enabled on my camera (it was confirmed with a readback when it was enabled)" records it as *confirmed by you (not verified by the app)*.
 
-The app itself never writes the camera's firmware or NVRAM. The exact R5 card contents, trigger, enable/disable calls and the readback location are still being researched.
+The app itself never writes the camera's firmware or NVRAM; you always run the Canon Basic card yourself in the camera.
 
 ### Step 4. Choose features
 
@@ -170,7 +173,7 @@ It is blocked until this build has been copied in step 8. **Open the test report
 
 ### What this tool cannot do
 
-Step 1's **Details** lists what is out of scope. The assistant never changes the camera by itself: the ROM dump and BootDisk steps are things you run in the camera (their guided versions are coming soon). It doesn't format or partition cards, write the MBR, write anything except the boot-marker sectors shown in [Prepare card](#step-7-prepare-the-boot-card), write the camera's firmware or NVRAM, download the toolchain, or test anything on the camera. See [Getting started → Step 2](getting-started.md#step-2-check-the-one-time-prerequisites).
+Step 1's **Details** lists what is out of scope. The assistant never changes the camera by itself: the ROM dump and BootDisk steps prepare a Canon Basic card that you run yourself in the camera, and verify the returned files by readback. It doesn't format or partition cards, write the MBR, write anything except the planned boot-sector markers (`SCRIPT` at `0x1F0` on FAT32 in steps 2–3, or `EOS_DEVELOP`/`BOOTDISK` in [Prepare card](#step-7-prepare-the-boot-card)), write the camera's firmware or NVRAM directly, download the toolchain, or test anything on the camera. See [Getting started → Step 2](getting-started.md#step-2-check-the-one-time-prerequisites).
 
 ## Screenshots
 
@@ -216,7 +219,8 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
 - No consented toolchain download yet. You install the toolchain yourself.
-- The assistant can't tell whether BootDisk is enabled in the camera.
+- The assistant verifies whether BootDisk is enabled or disabled only when you give it the camera's returned `16 KiB` BootInfo dump (`gang200.bin` or `gang201.bin` from `0xE8004000`, offset `+0x04`); without a returned dump it records only your manual confirmation.
+- **Canon Basic ROM dump and BootDisk steps: host-tested only.** The Canon Basic card preparation (`SCRIPT` at FAT32 `0x1F0`, `script.req`, `extend.m`) and `gang200.bin`/`gang201.bin` BootInfo readback verifier are tested on synthetic FAT32 images and lab-derived fixtures. `EnableBootDisk()` and `SaveAllRomImageToFile()` match the script used to capture the reference camera's `gang100.bin`/`gang200.bin`/`gang101.bin`/`gang201.bin`, whereas the `DisableBootDisk()` script (`0xE0B38D74`) is derived from ROM disassembly and is **hardware-untested**. Canon Basic requires a `<= 32 GB` FAT32 SDHC card; `> 32 GB` SDXC exFAT cards are refused for Canon Basic even though they work for native `autoexec.bin` booting in step 7.
 - **Prepare card: verified for exFAT on one Mac and camera only.** On 18 November 2026 the owner's Mac (macOS 27.3) prepared a camera-formatted 128 GB exFAT card through `authopen`. The read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted it. FAT32 cards, other Macs and macOS versions, Windows and Linux are untested. The host tests use image files only: synthetic FAT32 and exFAT boot areas (including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums), plus `fsck_msdos` on a real FAT32 image file.
 - Only the Mac's built-in SD slot is offered. USB card readers are refused.
 - "Camera-formatted" is checked from the boot sectors, not proven. A FAT32 card formatted on a computer usually has boot code where the markers go and is refused. An exFAT card formatted by macOS looks the same as a camera-formatted one and is accepted, which is why the warning says to format in the camera.

@@ -58,6 +58,47 @@ def check_rom(path: Path, *, profile: str, options: dict[str, str | None]) -> Ch
     )
 
 
+def check_bootinfo(
+    path: Path,
+    *,
+    before_path: Path | None = None,
+    profile: str = "xpan-crop",
+    record_indicator: str | None = None,
+    options: dict[str, str | None] | None = None,
+) -> CheckResult:
+    """Verify ROM admission, wizard BootInfo/script fingerprints, and BootInfo +0x04 state."""
+    from cardprep import cbasic
+    from gui import card
+
+    opts: dict[str, str | None] = dict(options or {})
+    if record_indicator is not None and "record_indicator" not in opts:
+        opts["record_indicator"] = record_indicator
+    rom = check_rom(path, profile=profile, options=opts)
+    if not rom.ok:
+        return rom
+    try:
+        data = card._read_file(Path(path), cbasic.ROM_BYTES)
+        before = card._read_file(Path(before_path), cbasic.ROM_BYTES) if before_path is not None else None
+        info = cbasic.inspect_bootinfo(data, before_bytes=before)
+    except (cbasic.CBasicError, card.CardError, ValueError, OSError) as exc:
+        return CheckResult(False, f"BootInfo check failed: {exc}")
+    state_text = "ENABLED (0xFFFFFFFF)" if info.state == "enabled" else "DISABLED (0x00000000)"
+    msg = f"BootInfo verified: BootDisk is {state_text} at offset 0x3FF8004."
+    if info.before_compared:
+        msg += " Only +0x04..+0x07 changed compared to the earlier ROM dump."
+    return CheckResult(
+        True,
+        msg,
+        {
+            **rom.facts,
+            "boot_disk_state": info.state,
+            "boot_disk_raw": info.boot_disk_raw,
+            "rom_sha256": info.rom_sha256,
+            "before_compared": info.before_compared,
+        },
+    )
+
+
 def check_wav(path: Path) -> CheckResult:
     """The builder's WAV admission: 48 kHz mono 16-bit PCM, one data chunk, at most 1 MiB."""
     from audio_profile import admit_pcm

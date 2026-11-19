@@ -18,8 +18,10 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import build as build_mod
 import features
+from cardprep import cbasic
 from gui import checks, runner, state
 from test_audio_profile import build_wav_bytes
+from test_cbasic import make_synthetic_cbasic_rom
 from test_contracts import make_synthetic_contract_and_rom
 
 
@@ -226,6 +228,38 @@ class CheckTests(unittest.TestCase):
             self.assertFalse(refused.ok)
             self.assertIn("missing", refused.message)
 
+    def test_check_bootinfo_reports_enabled_disabled_and_refusals(self):
+        manifest, contract, fps, rom_before = make_synthetic_cbasic_rom(0x00000000)
+        _, _, _, rom_after = make_synthetic_cbasic_rom(0xFFFFFFFF)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            p_before = tmp / "gang100.bin"
+            p_after = tmp / "gang101.bin"
+            p_before.write_bytes(bytes(rom_before))
+            p_after.write_bytes(bytes(rom_after))
+            real = build_mod.check_rom
+            with mock.patch.object(build_mod, "check_rom",
+                                   lambda p, **k: real(p, manifest=manifest, target_contract=contract, **k)), \
+                    mock.patch.object(cbasic, "WIZARD_FINGERPRINTS", fps):
+                res_dis = checks.check_bootinfo(p_before, profile="shutter-feedback")
+                self.assertTrue(res_dis.ok, res_dis.message)
+                self.assertEqual(res_dis.facts["boot_disk_state"], "disabled")
+                self.assertIn("DISABLED", res_dis.message)
+
+                res_en = checks.check_bootinfo(p_after, before_path=p_before, profile="shutter-feedback")
+                self.assertTrue(res_en.ok, res_en.message)
+                self.assertEqual(res_en.facts["boot_disk_state"], "enabled")
+                self.assertTrue(res_en.facts["before_compared"])
+                self.assertIn("ENABLED", res_en.message)
+
+                bad = bytearray(rom_after)
+                bad[0xE00068C0 - cbasic.ROM_BASE] ^= 1
+                p_bad = tmp / "bad.bin"
+                p_bad.write_bytes(bytes(bad))
+                res_bad = checks.check_bootinfo(p_bad, profile="shutter-feedback")
+                self.assertFalse(res_bad.ok)
+                self.assertIn("fingerprint", res_bad.message.lower())
+
 
 class RunnerTests(unittest.TestCase):
     def test_condense_log_lines(self):
@@ -280,9 +314,10 @@ class RunnerTests(unittest.TestCase):
 
 class NoTkinterTests(unittest.TestCase):
     def test_logic_modules_do_not_import_tkinter(self):
-        for name in ("state", "checks", "runner", "card"):
+        for name in ("state", "checks", "runner", "card", "wizard"):
             source = (ROOT / "tools" / "gui" / f"{name}.py").read_text()
             self.assertNotIn("tkinter", source, name)
+        self.assertNotIn("tkinter", (ROOT / "tools" / "cardprep" / "cbasic.py").read_text(), "cbasic")
 
 
 if __name__ == "__main__":

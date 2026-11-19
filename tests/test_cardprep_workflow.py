@@ -408,6 +408,43 @@ class Flow(unittest.TestCase):
         session.report = workflow.Report(True, "used")
         self.assertTrue(workflow.write(session, ops).nothing_written)
 
+    def test_script_prepare_and_undo_from_before_script_backup(self):
+        cand, ops = self.card("FAT32")
+        original = ops.part_bytes()
+        session = workflow.start(cand, ops, self.backups, kind="script")
+        self.assertEqual(session.kind, "script")
+        self.assertTrue(session.needs_write)
+        self.assertEqual(session.backup.manifest["purpose"], "before-script")
+        self.assertFalse(session.backup.manifest["script_present"])
+        report = workflow.write(session, ops)
+        self.assertTrue(report.ok, report.lines)
+        self.assertEqual(report.written_sectors, [0])
+        self.assertEqual(ops.part_bytes()[496:502], b"SCRIPT")
+        self.assertEqual(ops.part_bytes()[512:], original[512:])
+
+        again = workflow.start(cand, ops, self.backups, kind="script")
+        self.assertFalse(again.needs_write)
+        self.assertTrue(again.report.ok and again.report.nothing_written)
+        self.assertIn("Already prepared", again.report.title)
+
+        latest = workflow.latest_backup(cand, self.backups)
+        self.assertEqual(latest.folder, session.backup.folder)
+        undo = workflow.start(cand, ops, self.backups, restore_from=workflow.LATEST)
+        self.assertEqual(undo.kind, "restore")
+        self.assertEqual(undo.source.folder, session.backup.folder)
+        undo_report = workflow.write(undo, ops)
+        self.assertTrue(undo_report.ok, undo_report.lines)
+        self.assertEqual(ops.part_bytes(), original)
+
+        ecand, eops = self.card("exFAT")
+        with self.assertRaises(CardPrepError) as ctx:
+            workflow.start(ecand, eops, self.backups, kind="script")
+        self.assertEqual(ctx.exception.code, "script_requires_fat32")
+        self.assertTrue(eops.mounted)
+
+        with self.assertRaises(ValueError):
+            workflow.start(cand, ops, self.backups, kind="unknown")
+
 
 @unittest.skipUnless(ci.FD_PASSING and sys.platform == "darwin" and Path("/sbin/newfs_msdos").exists() and Path("/sbin/fsck_msdos").exists(),
                      "needs macOS newfs_msdos and fsck_msdos")

@@ -34,6 +34,9 @@ EXFAT = "exFAT"
 
 BOOTDISK = b"BOOTDISK"
 EOS_DEVELOP = b"EOS_DEVELOP"
+SCRIPT = b"SCRIPT"
+SCRIPT_OFFSET = 0x1F0  # byte 496 of the FAT32 primary boot sector
+SDHC_MAX_SECTORS = 0x4000000  # 67,108,864 sectors (~34.36 GB / 32 GiB); >= uses LBA-1 (untested)
 
 FAT32_MARKERS = (("EOS_DEVELOP", 0x47, EOS_DEVELOP), ("BOOTDISK", 0x5C, BOOTDISK))
 EXFAT_MARKERS = (("BOOTDISK", 122, BOOTDISK), ("EOS_DEVELOP", 130, EOS_DEVELOP))
@@ -166,6 +169,10 @@ class VolumeFacts:
     @property
     def markers_present(self) -> bool:
         return all(m.present for m in self.markers)
+
+    @property
+    def script_present(self) -> bool:
+        return bool(self.details.get("canon_basic_script_marker"))
 
     @property
     def serial_hex(self) -> str:
@@ -461,6 +468,8 @@ def _label(filesystem: str):
             for name, start, value in FAT32_MARKERS:
                 if start <= offset < start + len(value):
                     return f"{name} marker, primary boot sector byte {start}"
+            if SCRIPT_OFFSET <= offset < SCRIPT_OFFSET + len(SCRIPT):
+                return f"SCRIPT marker, primary boot sector byte {SCRIPT_OFFSET}"
             return f"sector {offset // SECTOR} byte {offset % SECTOR}"
         region = "backup" if offset >= EXFAT_REGION_BYTES else "main"
         local = offset % EXFAT_REGION_BYTES
@@ -504,9 +513,45 @@ def plan_markers(mbr: bytes, area: bytes, *, disk_bytes: int) -> Plan:
     return Plan("mark", volume, area, after, _diff(area, after, _label(volume.filesystem)), writes, tuple(notes))
 
 
+def plan_script(mbr: bytes, area: bytes, *, disk_bytes: int) -> Plan:
+    """The exact write that adds the Canon Basic SCRIPT marker on a FAT32 SDHC card; none if already there."""
+    volume = inspect(mbr, area, disk_bytes=disk_bytes)
+    _require(volume.filesystem == FAT32, "script_requires_fat32",
+             "Canon Basic card preparation requires a camera-formatted FAT32 SDHC card (up to 32 GB). "
+             "exFAT / SDXC cards use a different SCRIPT offset that has not been tested on hardware yet.")
+    _require(disk_bytes < SDHC_MAX_SECTORS * SECTOR and volume.mbr.start_lba + volume.mbr.sectors < SDHC_MAX_SECTORS,
+             "script_sdxc_untested",
+             "This card has 0x4000000 or more sectors (SDXC). On SDXC cards the R5 checks the sector before the "
+             "partition for SCRIPT, which has not been tested on hardware yet. Use a camera-formatted FAT32 SDHC card "
+             "(up to 32 GB).")
+    _require(not any(m.present for m in volume.markers), "native_markers_present",
+             "This card carries native EOS_DEVELOP / BOOTDISK boot markers. Use a card without native boot markers "
+             "(format it in the camera or use Step 7 Undo first) so a BootDisk-enabled camera starts normal Canon "
+             "firmware for Canon Basic.")
+    observed = area[SCRIPT_OFFSET:SCRIPT_OFFSET + len(SCRIPT)]
+    _require(observed in (SCRIPT, bytes(len(SCRIPT))), "unexpected_marker_bytes",
+             "The FAT32 boot sector has unexpected bytes where SCRIPT goes (byte 496). "
+             "A card formatted in the camera has zeros there.")
+    if volume.script_present:
+        after = area
+    else:
+        buf = bytearray(area)
+        buf[SCRIPT_OFFSET:SCRIPT_OFFSET + len(SCRIPT)] = SCRIPT
+        after = bytes(buf)
+    writes = _sector_writes(area, after, lambda s: s)
+    check = inspect(mbr, after, disk_bytes=disk_bytes)
+    _require(check.script_present and not any(m.present for m in check.markers) and check.identity() == volume.identity(),
+             "plan_self_check", "Internal check failed: the planned boot area does not validate.")
+    notes = (f"The backup boot sector (sector {volume.details['backup_boot_sector']}) is left unchanged, "
+             "as on the lab card.",)
+    return Plan("script", volume, area, after, _diff(area, after, _label(volume.filesystem)), writes, notes)
+
+
 def _owned(filesystem: str) -> list[tuple[int, int]]:
     if filesystem == FAT32:
-        return [(offset, offset + len(value)) for _, offset, value in FAT32_MARKERS]
+        return [(offset, offset + len(value)) for _, offset, value in FAT32_MARKERS] + [
+            (SCRIPT_OFFSET, SCRIPT_OFFSET + len(SCRIPT))
+        ]
     owned = []
     for _, base in sorted(EXFAT_REGIONS, key=lambda r: r[1]):
         owned.append((base + 122, base + 141))
@@ -548,14 +593,20 @@ def plan_restore(original_mbr: bytes, original_area: bytes, current_mbr: bytes, 
     after = bytearray(current_area)
     for start, end in _owned(original.filesystem):
         now = current_area[start:end]
-        _require(now in (original_area[start:end], prepared[start:end]), "restore_unknown_bytes",
+        if original.filesystem == FAT32 and (start, end) == (SCRIPT_OFFSET, SCRIPT_OFFSET + len(SCRIPT)):
+            allowed = (original_area[start:end], SCRIPT) if original_area[start:end] in (bytes(len(SCRIPT)), SCRIPT) \
+                else (original_area[start:end],)
+        else:
+            allowed = (original_area[start:end], prepared[start:end])
+        _require(now in allowed, "restore_unknown_bytes",
                  f"Boot-area bytes {start}..{end - 1} match neither the backup nor the prepared markers; "
                  "refusing to guess.")
         after[start:end] = original_area[start:end]
     after = bytes(after)
     check = inspect(original_mbr, after, disk_bytes=disk_bytes)
     _require(check.identity() == original.identity() and
-             [m.present for m in check.markers] == [m.present for m in original.markers],
+             [m.present for m in check.markers] == [m.present for m in original.markers] and
+             check.script_present == original.script_present,
              "plan_self_check", "Internal check failed: the restored boot area does not match the backup.")
     order = _exfat_order(current_area) if original.filesystem == EXFAT else (lambda s: s)
     return Plan("restore", original, current_area, after,
@@ -588,6 +639,8 @@ def verify_written(plan: Plan, expected_mbr: bytes, mbr: bytes, area: bytes, *, 
             problems.append("The volume identity read back differs from the plan.")
         if [m.present for m in facts.markers] != [m.present for m in expected.markers]:
             problems.append("The boot markers read back are not in the planned state.")
+        if facts.script_present != expected.script_present:
+            problems.append("The Canon Basic SCRIPT marker read back is not in the planned state.")
     except CardPrepError as exc:
         problems.append(f"The boot area no longer validates: {exc}")
     return problems
@@ -599,8 +652,12 @@ def describe_plan(plan: Plan) -> list[str]:
     lines = [f"{v.filesystem} volume, serial {v.serial_hex}, partition at sector {v.mbr.start_lba:,} "
              f"({v.mbr.size_bytes / 1000**3:,.1f} GB)."]
     if not plan.writes_needed:
-        lines.append("Nothing to write: " + ("the boot markers are already present and valid."
-                                             if plan.kind == "mark" else "the card already matches the backup."))
+        if plan.kind == "mark":
+            lines.append("Nothing to write: the boot markers are already present and valid.")
+        elif plan.kind == "script":
+            lines.append("The Canon Basic SCRIPT marker is already present; nothing needs to be written.")
+        else:
+            lines.append("Nothing to write: the card already matches the backup.")
         return lines + list(plan.notes)
     lines.append(f"Sectors to write, in this order: {', '.join(str(w.sector) for w in plan.writes)} "
                  f"({len(plan.writes) * SECTOR:,} bytes; nothing else is written).")

@@ -13,6 +13,8 @@ Its look (fonts, colours, spacing and ttk styles) comes from theme.py.
 """
 from __future__ import annotations
 
+from datetime import datetime
+import hashlib
 import os
 from pathlib import Path
 import queue
@@ -30,13 +32,13 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from cardprep import devices as card_devices, workflow as card_flow
+from cardprep import cbasic, devices as card_devices, workflow as card_flow
 from gui import card, checks, runner, shots, theme
 import screenshots as screenshots_mod
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 from gui.theme import BUSY, DANGER, INFO, NEUTRAL, SPACE, SUCCESS, WARNING
-from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COMING_SOON, COPY, DONE, FEATURES, GUIDE,
+from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COPY, DONE, FEATURES, GUIDE,
                         NEEDS_ACTION, ROM, SKIPPED, STEP_BY_ID, STEPS, TEST, TEST_CHECKLIST, TOOLCHAIN, Wizard)
 
 
@@ -50,21 +52,39 @@ def verify_build(out: Path):
         return None, f"The previous build in {out} no longer matches its build.json; build again."
     return summary, None
 
+
+def verify_bootdisk(rom_path: Path, expected_sha256: str) -> bool:
+    """On resume: verified BootDisk counts only if the readback ROM dump still matches and shows enabled."""
+    try:
+        data = card._read_file(Path(rom_path), cbasic.ROM_BYTES)
+    except (card.CardError, OSError):
+        return False
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        return False
+    try:
+        return cbasic.inspect_bootinfo(data).state == "enabled"
+    except (cbasic.CBasicError, ValueError):
+        return False
+
+
 DOCS = {
     "Getting started guide": ROOT / "docs" / "getting-started.md",
     "Prerequisites": ROOT / "docs" / "usage.md",
     "About this assistant": ROOT / "docs" / "gui.md",
 }
 CANNOT_DO = """\
-What this assistant does: it builds autoexec.bin on your computer, can write the two \
-boot markers onto a card you formatted in the camera (step 7, macOS only, with a backup \
-first), and copies autoexec.bin to the card. What it never does:
+What this assistant does: it guides you through dumping the camera's ROM and enabling \
+BootDisk with a Canon Basic SDHC card you run yourself in the camera, verifies the \
+returned ROM dump, builds autoexec.bin on your computer, can write the two boot \
+markers onto a camera-formatted card (step 7, macOS only, with a backup first), and \
+copies autoexec.bin to the card. What it never does:
 
-  •  change the camera by itself: the ROM dump and BootDisk steps are things you run in \
-the camera (their guided versions are coming soon);
+  •  change the camera automatically: the ROM dump and BootDisk steps only prepare an \
+SDHC card and check the dump you return; you run them yourself in the camera;
+  •  write the camera's firmware or NVRAM directly from this computer;
   •  format, partition or erase a card, or write its partition table (MBR);
-  •  write anything to a card except the boot-marker sectors shown in step 7;
-  •  write the camera's firmware or NVRAM;
+  •  write anything to a card except the boot-marker sectors in step 7, the Canon \
+Basic SCRIPT marker on FAT32 SDHC cards in steps 2-3, and the card-root files;
   •  download the toolchain (you install it yourself; see step 5);
   •  test anything on the camera, or tell you whether your camera will work.
 
@@ -209,6 +229,8 @@ class App:
         self.summary: runner.BuildSummary | None = None
         self.card_info: card.CardInspection | None = None
         self.copying = False
+        self.cbasic_busy: str | None = None
+        self.cbasic_baselines: dict[str, tuple[Path, dict[str, str]]] = {}
         self.prep = PrepState()
         self.shots = shots.ShotsState()
         self.utility: str | None = None  # a utility shown instead of the current setup step
@@ -254,7 +276,7 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
-        self.wizard.load(verify_build=verify_build)
+        self.wizard.load(verify_build=verify_build, verify_bootdisk=verify_bootdisk)
         self.summary = self.wizard.build_summary
         self.root.after(100, self._poll)
         self._detect_toolchain()
@@ -456,11 +478,11 @@ class App:
         (outside the setup steps) has the same shape without the step's check."""
         tk, ttk, p = self.tk, self.ttk, self.theme.palette
         if utility:
-            title, guide, placeholder = shots.TITLE, shots.GUIDE, False
+            title, guide = shots.TITLE, shots.GUIDE
             eyebrow = "TOOL   ·   NOT PART OF SETUP"
         else:
             info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
-            title, placeholder = info.title, info.placeholder
+            title = info.title
             eyebrow = f"STEP {info.number}" + ("   ·   ONE TIME" if info.one_time else "")
         frame = ttk.Frame(self.content)
         canvas = tk.Canvas(frame, highlightthickness=0, borderwidth=0, background=p.bg, yscrollincrement=1)
@@ -491,8 +513,6 @@ class App:
         self._text(inner, guide.why, pady=(M, 0))
         self._text(inner, "What you do", "Subheading.TLabel", pady=(L, 0))
         self._text(inner, guide.todo, pady=(XS, 0))
-        if placeholder:
-            Callout(self, inner).set(INFO, COMING_SOON, "The guided part of this step is being prepared.")
         body = ttk.Frame(inner)
         body.pack(fill="x", pady=(S, 0))
         check = None if utility else Callout(self, inner, pady=(L, 0))
@@ -531,26 +551,67 @@ class App:
         row = self._buttons(tools, pady=(S, 0))
         self.shots_entry = self._button(row, "Convert screenshots...", lambda: self._open_utility(shots.SCREENSHOTS))
 
+    def _cbasic_card_selector(self, parent):
+        row = self.ttk.Frame(parent)
+        row.pack(fill="x", pady=(S, 0))
+        find_btn = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
+        find_btn.pack(side="left")
+        choice = self.tk.StringVar()
+        combo = self.ttk.Combobox(row, textvariable=choice, state="disabled", width=40)
+        combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
+        combo.bind("<<ComboboxSelected>>", lambda _e, var=choice: self._cbasic_card_selected(var))
+        note = self._text(parent, "", "Caption.TLabel", pady=(XS, 0), inset=CARD_INSET, full=True)
+        return find_btn, choice, combo, note
+
+    def _cbasic_card_selected(self, choice_var):
+        summary = choice_var.get()
+        match = next((c for c in self.prep.accepted if c.summary() == summary), None)
+        self.prep.select(match.whole_id if match else None)
+        self.refresh()
+
     def _bootdisk_panel(self):
         tab = self._panel(BOOTDISK)
-        guide = self._card(tab, f"Guided BootDisk ({COMING_SOON.lower()})")
-        row = self._buttons(guide, pady=(S, 0))
-        self._button(row, "Prepare the BootDisk card...", state="disabled")
-        self._button(row, "Disable BootDisk...", state="disabled")
-        self._text(guide, "Waiting on research into the exact R5 steps; never automatic.", "Caption.TLabel",
-                   inset=CARD_INSET)
-        Callout(self, tab, pady=(L, 0)).set(
+        Callout(self, tab, pady=(S, 0)).set(
             WARNING, "BootDisk is permanent",
             "It stays enabled inside the camera, formatting cards doesn't clear it, and there is no official way back.")
         self.bootdisk_ack = self.tk.BooleanVar(value=False)
         self.ttk.Checkbutton(tab, variable=self.bootdisk_ack, command=self.refresh, text=(
             "I understand that BootDisk is a permanent setting inside the camera, that there is no official way "
             "back, and that I use this at my own risk.")).pack(anchor="w", pady=(M, 0))
+        guide = self._card(tab, "Guided BootDisk (Canon Basic card + ROM readback verification)", pady=(L, 0))
+        self._text(guide,
+                   "Tick the risk acknowledgement above first. Use a camera-formatted FAT32 SDHC card (up to 32 GB, "
+                   ">= 300 MiB free, no AUTOEXEC.BIN, no native boot markers). Full battery, NO USB or AC, REMOVE any "
+                   "CFexpress card, and never power off or open card/battery doors while the card light is on.\n"
+                   "In the camera: power on -> press Playback -> press SET once -> wait until the card light stops "
+                   "plus 60 s -> power off -> return the card and click 'Verify returned card (readback)'.",
+                   "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
+        self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note = \
+            self._cbasic_card_selector(guide)
+        row1 = self._buttons(guide, pady=(S, 0))
+        self.bd_enable_button = self._button(
+            row1, "Prepare Enable-BootDisk card...",
+            lambda: self._prepare_cbasic_card("enable_bootdisk", self.bootdisk_guide_status), primary=True)
+        self.bd_disable_button = self._button(
+            row1, "Prepare Disable-BootDisk card (hardware-untested)...",
+            lambda: self._prepare_cbasic_card("disable_bootdisk", self.bootdisk_guide_status))
+        row2 = self._buttons(guide, pady=(S, 0))
+        self.bd_stage_button = self._button(
+            row2, "Stage Enable files on folder...",
+            lambda: self._stage_cbasic_folder("enable_bootdisk", self.bootdisk_guide_status))
+        self.bd_verify_card_button = self._button(
+            row2, "Verify returned card (readback)...",
+            self._verify_bootdisk_card, primary=True)
+        self.bd_verify_file_button = self._button(
+            row2, "Verify from a ROM dump file...",
+            self._verify_bootdisk_file)
+        self.bd_cbasic_busy = Busy(self, guide)
+        self.bootdisk_guide_status = Callout(self, guide)
         self.bootdisk_var = self.tk.BooleanVar(value=False)
         self.bootdisk_box = self.ttk.Checkbutton(tab, variable=self.bootdisk_var, command=self._bootdisk_changed,
                                                  text="BootDisk is already enabled on my camera (it was confirmed "
                                                       "with a readback when it was enabled).")
-        self.bootdisk_box.pack(anchor="w", pady=(S, 0))
+        self.bootdisk_box.pack(anchor="w", pady=(M, 0))
 
     def _bootdisk_changed(self):
         self.wizard.set_bootdisk("confirmed" if self.bootdisk_var.get() else "unknown")
@@ -799,11 +860,27 @@ class App:
         self.rom_var = self.tk.StringVar()
         self._field(tab, "ROM dump", self.rom_var, [("Choose ROM...", self._pick_rom)])
         self.rom_status = StatusLine(self, tab)
-        guide = self._card(tab, f"Make a ROM dump ({COMING_SOON.lower()})", pady=(L, 0))
+        guide = self._card(tab, "Make a ROM dump with a Canon Basic card (read-only)", pady=(L, 0))
+        self._text(guide,
+                   "Use a camera-formatted FAT32 SDHC card (up to 32 GB, >= 300 MiB free, no AUTOEXEC.BIN, no native "
+                   "boot markers). Full battery, REMOVE any CFexpress card, and unplug USB/HDMI.\n"
+                   "In the camera: insert only the SD card -> power on -> press Playback -> press SET once -> wait "
+                   "until the card light stops plus 60 s -> power off -> return the card and import the dump below.",
+                   "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
+        self.rom_find_button, self.rom_card_choice, self.rom_card_combo, self.rom_card_note = \
+            self._cbasic_card_selector(guide)
         row = self._buttons(guide, pady=(S, 0))
-        self._button(row, "Prepare the ROM-dump card...", state="disabled")
-        self._text(guide, "The camera saves its ROM to a prepared card; reading only. Waiting on research "
-                          "into the exact R5 steps.", "Caption.TLabel", inset=CARD_INSET)
+        self.rom_prep_button = self._button(
+            row, "Prepare ROM-dump card...",
+            lambda: self._prepare_cbasic_card("dump", self.rom_guide_status), primary=True)
+        self.rom_stage_button = self._button(
+            row, "Stage files on a chosen folder...",
+            lambda: self._stage_cbasic_folder("dump", self.rom_guide_status))
+        self.rom_import_button = self._button(
+            row, "Import ROM dump from returned card...",
+            self._import_rom_from_card, primary=True)
+        self.rom_cbasic_busy = Busy(self, guide)
+        self.rom_guide_status = Callout(self, guide)
 
     def _features_tab(self):
         tab = self._panel(FEATURES)
@@ -931,11 +1008,413 @@ class App:
         self._button(row, "My card is already prepared (skip this step)",
                      lambda: (self.wizard.set_card_prepared("elsewhere"), self.refresh()))
 
+    def _card_busy(self) -> bool:
+        return bool(self.cbasic_busy or self.prep.busy or self.prep.session is not None or self.copying)
+
+    def _selected_rom_args(self) -> tuple[str, dict[str, str | None]]:
+        options = {
+            oid: (self.state.options[oid] if self.state.manifest.option_availability(self.state.profile, oid)[0] else None)
+            for oid in self.state.manifest.options
+        }
+        return self.state.profile, options
+
+    def _refresh_cbasic(self):
+        p = self.prep
+        accepted = p.accepted
+        busy = self._card_busy()
+        values = [c.summary() for c in accepted]
+        selected_text = p.selected.summary() if p.selected else ""
+        lines: list[str] = []
+        if p.selected:
+            lines.append(f"Selected: {p.selected.summary()}")
+            if p.selected.filesystem != "FAT32" or (p.selected.disk_bytes and p.selected.disk_bytes >= 0x4000000 * 512):
+                lines.append("Note: guided Canon Basic requires a FAT32 SDHC card (up to 32 GB); "
+                             "SDXC / exFAT cards are untested and refused.")
+        elif p.searched and not accepted:
+            lines.append("No usable SD card found.")
+        elif p.searched:
+            lines.append("Choose your FAT32 SDHC card above.")
+        elif not p.supported:
+            lines.append("Preparing raw SCRIPT sectors is offered on macOS only; use 'Stage ... on folder' "
+                         "if your card already has SCRIPT.")
+        else:
+            lines.append("Click 'Find SD cards' to locate your FAT32 SDHC card (up to 32 GB).")
+        if p.refused:
+            lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
+                                                     for c in p.refused))
+        note = "\n".join(lines)
+        for find_btn, choice, combo, note_label in (
+            (self.rom_find_button, self.rom_card_choice, self.rom_card_combo, self.rom_card_note),
+            (self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note),
+        ):
+            find_btn.configure(state="disabled" if busy else "normal")
+            combo.configure(values=values, state="readonly" if accepted and not busy else "disabled")
+            choice.set(selected_text)
+            note_label.configure(text=note)
+
+        can_raw = p.supported and p.selected is not None and not busy
+        self.rom_prep_button.configure(state="normal" if can_raw else "disabled")
+        self.rom_stage_button.configure(state="normal" if not busy else "disabled")
+        self.rom_import_button.configure(state="normal" if not busy else "disabled")
+        ack = self.bootdisk_ack.get()
+        self.bd_enable_button.configure(state="normal" if (ack and can_raw) else "disabled")
+        self.bd_disable_button.configure(state="normal" if (ack and can_raw) else "disabled")
+        self.bd_stage_button.configure(state="normal" if (ack and not busy) else "disabled")
+        self.bd_verify_card_button.configure(state="normal" if not busy else "disabled")
+        self.bd_verify_file_button.configure(state="normal" if not busy else "disabled")
+        self.rom_cbasic_busy.set(self.cbasic_busy if self.wizard.current == ROM else None)
+        self.bd_cbasic_busy.set(self.cbasic_busy if self.wizard.current == BOOTDISK else None)
+
+    @staticmethod
+    def _set_cbasic_status(callout: Callout, text: str, kind: str = NEUTRAL):
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            callout.clear()
+        elif len(lines) == 1:
+            callout.set(kind, lines[0])
+        else:
+            callout.set(kind, lines[0], "\n".join(lines[1:]))
+
+    @staticmethod
+    def _cbasic_task_label(task: str) -> str:
+        return {
+            "dump": "SaveAllRomImageToFile() (read-only ROM dump)",
+            "enable_bootdisk": "EnableBootDisk() + SaveAllRomImageToFile()",
+            "disable_bootdisk": "DisableBootDisk() + SaveAllRomImageToFile()",
+        }[task]
+
+    def _default_card_initialdir(self) -> str:
+        if self.prep.selected and self.prep.selected.mount_point:
+            return self.prep.selected.mount_point
+        return "/Volumes" if sys.platform == "darwin" else str(Path.home())
+
+    def _prepare_cbasic_card(self, task: str, status_callout: Callout):
+        if self._card_busy():
+            self._set_cbasic_status(status_callout, "Wait for the current card operation to finish.", WARNING)
+            return
+        if not self.prep.supported:
+            self._set_cbasic_status(status_callout, "Preparing raw SCRIPT sectors is offered on macOS only.", DANGER)
+            return
+        cand = self.prep.selected
+        if cand is None:
+            self._set_cbasic_status(status_callout, "Click 'Find SD cards' and choose your FAT32 SDHC card first.", WARNING)
+            return
+        if task == "disable_bootdisk":
+            if not self.messagebox.askokcancel(
+                "Disable BootDisk (hardware-untested)",
+                "DisableBootDisk() (0xE0B38D74) is the stock inverse in the R5 2.2.1 ROM, "
+                "but it has NEVER been run on real camera hardware yet.\n\n"
+                "Only proceed if you accept the risk of testing this on your camera. Continue?",
+                icon="warning",
+            ):
+                return
+
+        ops = card_devices.MacOps()
+        self.cbasic_busy = "Reading card and checking FAT32 SDHC layout (macOS asks for your password)..."
+        self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
+        self.refresh()
+
+        def read_done(session):
+            if isinstance(session, Exception):
+                self.cbasic_busy = None
+                self._set_cbasic_status(status_callout, f"Card preparation stopped\n{session}", DANGER)
+                self.refresh()
+                self.messagebox.showerror("Canon Basic card preparation", str(session))
+                return
+            if session.needs_write:
+                c = session.snapshot.candidate
+                sectors = ", ".join(str(w.sector) for w in session.plan.writes)
+                prompt = "\n\n".join([
+                    f"Prepare {c.label()} for Canon Basic?",
+                    f"{c.model}, {c.whole_id}.",
+                    f"This writes the Canon Basic SCRIPT marker at FAT32 boot sector byte 496 (sector(s) {sectors}, "
+                    f"{len(session.plan.writes) * 512:,} bytes), then stages script.req and extend.m for "
+                    f"{self._cbasic_task_label(task)}.",
+                    "Nothing else on the card is changed. macOS will ask for your administrator password.",
+                    f"Backup of the card as it is now: {session.backup.folder}",
+                ])
+                if not self.messagebox.askokcancel("Prepare Canon Basic card", prompt, icon="warning"):
+                    self.cbasic_busy = "Mounting the card again..."
+                    self.refresh()
+                    self._background(lambda: card_flow.cancel(session, ops), lambda r: self._cbasic_cancelled(r, status_callout))
+                    return
+                self.cbasic_busy = "Writing SCRIPT marker and verifying (macOS asks for your password)..."
+                self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
+                self.refresh()
+
+                def write_and_refresh():
+                    report = card_flow.write(session, ops)
+                    refreshed = None
+                    if report.ok:
+                        try:
+                            refreshed = ops.refresh(session.snapshot.candidate)
+                        except Exception:
+                            refreshed = session.snapshot.candidate
+                    return report, refreshed, session.backup.folder
+
+                self._background(write_and_refresh, lambda r: self._cbasic_script_written(r, task, status_callout))
+            else:
+                def refresh_mounted():
+                    try:
+                        refreshed = ops.refresh(session.snapshot.candidate)
+                    except Exception:
+                        refreshed = session.snapshot.candidate
+                    return None, refreshed, session.backup.folder
+
+                self._background(refresh_mounted, lambda r: self._cbasic_script_written(r, task, status_callout))
+
+        self._background(lambda: card_flow.start(cand, ops, self.prep.backup_root, kind="script"), read_done)
+
+    def _cbasic_cancelled(self, report, status_callout: Callout):
+        self.cbasic_busy = None
+        lines = ["Cancelled. Nothing was written."]
+        if not isinstance(report, Exception) and report is not None:
+            lines = [report.title] + report.lines
+        self._set_cbasic_status(status_callout, "\n".join(lines), WARNING)
+        self.refresh()
+
+    def _cbasic_script_written(self, outcome, task: str, status_callout: Callout):
+        if isinstance(outcome, Exception):
+            self.cbasic_busy = None
+            self._set_cbasic_status(status_callout, f"Failed\n{outcome}", DANGER)
+            self.refresh()
+            self.messagebox.showerror("Canon Basic card preparation", str(outcome))
+            return
+        report, refreshed, backup_folder = outcome
+        if report is not None and not report.ok:
+            self.cbasic_busy = None
+            msg = "\n".join([report.title] + report.lines)
+            self._set_cbasic_status(status_callout, msg, DANGER)
+            self.refresh()
+            self.messagebox.showinfo("Canon Basic card preparation", msg)
+            return
+        mount_point = refreshed.mount_point if refreshed else ""
+        if not mount_point:
+            self.cbasic_busy = None
+            msg = ("SCRIPT marker is on the card, but the card did not report a mount folder.\n"
+                   "Mount the card and click 'Stage files on a chosen folder...'.")
+            self._set_cbasic_status(status_callout, msg, WARNING)
+            self.refresh()
+            self.messagebox.showinfo("Canon Basic card preparation", msg)
+            return
+        prefix = [report.title] + report.lines if report is not None else ["Canon Basic SCRIPT marker already present."]
+        self._stage_cbasic_folder_impl(Path(mount_point), task, status_callout, backup_dir=backup_folder,
+                                       prefix_lines=prefix)
+
+    def _stage_cbasic_folder(self, task: str, status_callout: Callout):
+        if self._card_busy():
+            self._set_cbasic_status(status_callout, "Wait for the current card operation to finish.", WARNING)
+            return
+        if task == "disable_bootdisk" and not self.messagebox.askokcancel(
+            "Disable BootDisk (hardware-untested)",
+            "DisableBootDisk() (0xE0B38D74) has NEVER been run on real camera hardware yet. Continue?",
+            icon="warning",
+        ):
+            return
+        folder = self.filedialog.askdirectory(
+            title="Choose the FAT32 SDHC card's top folder (must already have SCRIPT)",
+            initialdir=self._default_card_initialdir(),
+        )
+        if not folder:
+            return
+        backup_dir = self.prep.backup_root / f"cbasic-{task}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self._stage_cbasic_folder_impl(Path(folder), task, status_callout, backup_dir=backup_dir)
+
+    def _stage_cbasic_folder_impl(self, folder: Path, task: str, status_callout: Callout, *,
+                                  backup_dir: Path, prefix_lines: list[str] | tuple[str, ...] = ()):
+        try:
+            info = card.inspect_card(folder)
+        except OSError as exc:
+            self.cbasic_busy = None
+            self._set_cbasic_status(status_callout, f"Could not inspect {folder}\n{exc}", DANGER)
+            self.refresh()
+            return
+        if info.errors:
+            self.cbasic_busy = None
+            msg = " ".join(info.errors)
+            self._set_cbasic_status(status_callout, f"Card refused\n{msg}", DANGER)
+            self.refresh()
+            self.messagebox.showerror("Card refused", msg)
+            return
+        if info.existing is not None:
+            self.cbasic_busy = None
+            msg = (f"{info.existing.name} is on this card. Remove or back up AUTOEXEC.BIN first so a "
+                   "BootDisk-enabled camera starts normal Canon firmware for Canon Basic.")
+            self._set_cbasic_status(status_callout, f"AUTOEXEC.BIN present\n{msg}", DANGER)
+            self.refresh()
+            self.messagebox.showerror("AUTOEXEC.BIN present", msg)
+            return
+        if info.warnings and not self.messagebox.askokcancel(
+            "Confirm card folder",
+            "\n".join(info.warnings) + "\n\nStage script.req and extend.m in this folder anyway?",
+            icon="warning",
+        ):
+            self.cbasic_busy = None
+            self._set_cbasic_status(status_callout, "Staging cancelled.", WARNING)
+            self.refresh()
+            return
+
+        self.cbasic_busy = "Staging script.req and extend.m..."
+        self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
+        self.refresh()
+
+        def done(staged):
+            self.cbasic_busy = None
+            if isinstance(staged, Exception):
+                self._set_cbasic_status(status_callout, f"Could not stage files\n{staged}", DANGER)
+                self.refresh()
+                self.messagebox.showerror("Staging failed", str(staged))
+                return
+            mode_key = "dump" if task == "dump" else "bootdisk"
+            self.cbasic_baselines[mode_key] = (staged.card_root, staged.baseline_gang1)
+            camera_steps = (
+                "Next on the camera (full battery, NO CFexpress/USB/HDMI): insert only this SD card -> "
+                "power on -> press Playback -> press SET once -> wait until the card light stops plus 60 s -> "
+                "power off -> return the card here."
+            )
+            lines = list(prefix_lines) + staged.messages + [camera_steps]
+            text = "\n".join(lines)
+            self._set_cbasic_status(status_callout, text, SUCCESS)
+            self.refresh()
+            self.messagebox.showinfo("Canon Basic card ready", text)
+
+        self._background(
+            lambda: cbasic.stage_script_files(info.root, task, backup_dir, confirmed_warnings=info.warnings),
+            done,
+        )
+
+    def _import_rom_from_card(self):
+        self._collect_from_returned_card("rom", self.rom_guide_status)
+
+    def _verify_bootdisk_card(self):
+        self._collect_from_returned_card("bootdisk", self.bootdisk_guide_status)
+
+    def _collect_from_returned_card(self, mode: str, status_callout: Callout):
+        if self._card_busy():
+            self._set_cbasic_status(status_callout, "Wait for the current card operation to finish.", WARNING)
+            return
+        folder = self.filedialog.askdirectory(
+            title="Choose the returned SD card folder",
+            initialdir=self._default_card_initialdir(),
+        )
+        if not folder:
+            return
+        resolved = Path(folder).resolve()
+        mode_key = "dump" if mode == "rom" else "bootdisk"
+        baseline_entry = self.cbasic_baselines.get(mode_key)
+        if baseline_entry and baseline_entry[0] == resolved:
+            baseline_gang1, require_new = baseline_entry[1], True
+        else:
+            baseline_gang1, require_new = None, False
+        before_rom = None
+        if mode == "bootdisk" and self.state.rom_path is not None and self.state.rom_path.is_file():
+            before_rom = self.state.rom_path
+        profile, options = self._selected_rom_args()
+        backup_dir = self.prep.backup_root / f"cbasic-returned-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+        self.cbasic_busy = "Reading and verifying gang1NN.bin from the card..."
+        self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
+        self.refresh()
+
+        def done(returned):
+            self.cbasic_busy = None
+            if isinstance(returned, Exception):
+                self._set_cbasic_status(status_callout, f"Verification failed\n{returned}", DANGER)
+                self.refresh()
+                self.messagebox.showerror("ROM dump / BootInfo check", str(returned))
+                return
+            self.cbasic_baselines.pop(mode_key, None)
+            if mode == "rom":
+                self.state.set_rom(returned.local_path)
+                if returned.bootinfo.state == "enabled":
+                    self.wizard.set_bootdisk("verified", rom_path=returned.local_path, rom_sha256=returned.sha256)
+                kind = SUCCESS
+            else:
+                if returned.bootinfo.state == "enabled":
+                    self.wizard.set_bootdisk("verified", rom_path=returned.local_path, rom_sha256=returned.sha256)
+                    if self.state.rom_path is None:
+                        self.state.set_rom(returned.local_path)
+                    kind = SUCCESS
+                else:
+                    self.wizard.set_bootdisk("disabled")
+                    kind = WARNING
+            text = "\n".join(returned.messages)
+            self._set_cbasic_status(status_callout, text, kind)
+            self.refresh()
+            self.messagebox.showinfo("ROM dump verified", text)
+
+        self._background(
+            lambda: cbasic.collect_returned_dump(
+                resolved,
+                cbasic.DEFAULT_DUMP_ROOT,
+                baseline_gang1=baseline_gang1,
+                require_new=require_new,
+                before_rom=before_rom,
+                profile=profile,
+                options=options,
+                clean_scripts=True,
+                backup_dir=backup_dir,
+            ),
+            done,
+        )
+
+    def _verify_bootdisk_file(self):
+        if self._card_busy():
+            return
+        target: Path | None = None
+        if self.state.rom_path is not None and self.state.rom_path.is_file():
+            choice = self.messagebox.askyesnocancel(
+                "Verify BootDisk from ROM",
+                f"Check the ROM dump already selected in Step 2?\n\n{self.state.rom_path}\n\n"
+                "Yes = check Step 2's ROM\nNo = choose another ROM file",
+            )
+            if choice is None:
+                return
+            if choice:
+                target = self.state.rom_path
+        if target is None:
+            picked = self.filedialog.askopenfilename(title="Choose a 64 MiB ROM dump (e.g. gang101.bin)")
+            if not picked:
+                return
+            target = Path(picked)
+
+        before_path = None
+        if self.state.rom_path is not None and self.state.rom_path.is_file() and target != self.state.rom_path:
+            before_path = self.state.rom_path
+        profile, options = self._selected_rom_args()
+        self._set_cbasic_status(self.bootdisk_guide_status, "Checking ROM admission and BootInfo +0x04...", INFO)
+
+        def done(result):
+            if isinstance(result, Exception):
+                self._set_cbasic_status(self.bootdisk_guide_status, f"Check failed\n{result}", DANGER)
+                return
+            if not result.ok:
+                self._set_cbasic_status(self.bootdisk_guide_status, f"ROM refused\n{result.message}", DANGER)
+                self.refresh()
+                return
+            if result.facts.get("boot_disk_state") == "enabled":
+                self.wizard.set_bootdisk("verified", rom_path=target, rom_sha256=result.facts["rom_sha256"])
+                self._set_cbasic_status(self.bootdisk_guide_status, f"BootDisk enabled\n{result.message}", SUCCESS)
+            else:
+                self.wizard.set_bootdisk("disabled")
+                self._set_cbasic_status(
+                    self.bootdisk_guide_status,
+                    f"BootDisk disabled\n{result.message} Enable BootDisk on the camera before running autoexec.bin.",
+                    WARNING,
+                )
+            self.refresh()
+
+        self._background(
+            lambda: checks.check_bootinfo(target, before_path=before_path, profile=profile, options=options),
+            done,
+        )
+
     def _refresh_prep(self):
         p = self.prep
         accepted = p.accepted
+        busy = self._card_busy()
         self.prep_combo.configure(values=[c.summary() for c in accepted],
-                                  state="readonly" if accepted and not p.busy and p.session is None else "disabled")
+                                  state="readonly" if accepted and not busy else "disabled")
         self.prep_choice.set(p.selected.summary() if p.selected else "")
         lines = p.selected.details() if p.selected else []
         if p.searched and not accepted:
@@ -945,8 +1424,8 @@ class App:
                                                      for c in p.refused))
         self.prep_details.configure(text="\n".join(lines))
         self.prep_details.pack_configure(pady=(S, 0) if lines else (0, 0))
-        blocked = p.blockers()
-        self.prep_find.configure(state="disabled" if p.busy or p.session is not None or p.copying else "normal")
+        blocked = p.blockers() + ([f"Wait: {self.cbasic_busy}"] if self.cbasic_busy else [])
+        self.prep_find.configure(state="disabled" if busy else "normal")
         for button in (self.prep_button, self.prep_undo, self.prep_restore):
             button.configure(state="disabled" if blocked else "normal")
         self.prep_busy.set(p.busy)
@@ -967,6 +1446,8 @@ class App:
             self.prep_log_slot.hide(self.prep_log_box)
 
     def _prep_find(self):
+        if self._card_busy():
+            return
         self.prep.busy = "Looking for SD cards..."
         self.refresh()
 
@@ -989,7 +1470,7 @@ class App:
     def _prep_run(self, kind):
         """Prepare ("mark"), Undo ("undo": the latest backup) or Restore ("restore": a chosen backup)."""
         p = self.prep
-        if p.blockers():
+        if p.blockers() or self.cbasic_busy:
             return
         cand, source = p.selected, None
         if kind == "undo":
@@ -1069,7 +1550,7 @@ class App:
         if self.shots.busy and not self.messagebox.askokcancel(
                 "Quit", "Screenshots are still being converted. Quit anyway? The card is not changed."):
             return
-        if p.busy and not self.messagebox.askokcancel(
+        if (p.busy or self.cbasic_busy) and not self.messagebox.askokcancel(
                 "Quit", "A card operation is still running. Quitting now can leave the card unmounted. Quit anyway?"):
             return
         if p.session is not None:
@@ -1121,10 +1602,11 @@ class App:
         self.build_busy.set("Building... this usually takes under a minute." if s.building else None)
         ready_to_copy = self.summary is not None and self.card_info is not None and not self.card_info.errors \
             and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying \
-            and not self.prep.blocks_copy
+            and not self.prep.blocks_copy and not self.cbasic_busy
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
         self.copy_busy.set("Copying..." if self.copying else None)
+        self._refresh_cbasic()
         self._refresh_prep()
         self._refresh_shots()
         for what, input_id in s.needs_check():
@@ -1319,7 +1801,7 @@ class App:
             f"Copy autoexec.bin to {info.root}?\n\nAny existing autoexec.bin is backed up to {backups} first.",
         ):
             return
-        if self.prep.blocks_copy:
+        if self.prep.blocks_copy or self.cbasic_busy:
             return  # a card preparation step is running or waiting for confirmation
         confirmed = list(info.warnings) if self.card_confirm.get() else []
         self.copying = self.prep.copying = True

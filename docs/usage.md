@@ -1,8 +1,8 @@
 # Detailed Usage, Card Preparation, and Safety Notes
 
 > [!CAUTION]
-> **Source / Developer Preview for Already Boot-Enabled Cameras Only**
-> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** camera-side `EnableBootDisk` automator and **no** card formatter. The command-line builder never writes cards. The only card writer is the build assistant's opt-in prototype step that writes the two boot markers ([Card preparation](#5-card-preparation)). Read every requirement and disclaimer below before putting a built image on an SD card.
+> **Source / Developer Preview for EOS R5 `2.2.1` Only**
+> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** automatic camera-side `EnableBootDisk` runner and **no** card formatter. The command-line builder never writes cards. Only the build assistant offers opt-in card steps: guided Canon Basic card preparation for a read-only ROM dump or user-run BootDisk enable/disable on a `<= 32 GB` FAT32 SDHC card ([gui.md](gui.md#step-2-rom-dump-one-time)), and boot-marker preparation ([Card preparation](#5-card-preparation)). Read every requirement and disclaimer below before putting a built image on an SD card.
 
 ---
 

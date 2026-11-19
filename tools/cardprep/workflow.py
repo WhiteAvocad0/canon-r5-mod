@@ -155,6 +155,7 @@ def save_backup(snapshot: Snapshot, plan: Plan, root: Path = DEFAULT_BACKUP_ROOT
         "format": BACKUP_FORMAT, "version": BACKUP_VERSION, "purpose": purpose, "created_at": now.isoformat(),
         "card": snapshot.candidate.identity(), "volume": v.identity(),
         "markers_present": v.markers_present,
+        "script_present": v.script_present,
         "mbr_file": MBR_FILE, "mbr_bytes": MBR_BYTES, "mbr_sha256": sha256(snapshot.mbr),
         "area_file": AREA_FILE, "area_bytes": AREA_BYTES, "area_sha256": sha256(snapshot.area),
         "area_note": "The first 24 sectors of the card's partition (both exFAT boot regions, or the FAT32 "
@@ -193,9 +194,9 @@ LATEST = "latest"  # restore_from value for Undo: choose the backup after readin
 
 
 def undo_backups(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT):
-    """Valid backups taken before markers were first written to a card in this slot with
-    this size and partition, newest first. Only "before-marking" backups without markers
-    qualify; "before-restore" backups (which may hold half-marked bytes) never do."""
+    """Valid backups taken before markers or SCRIPT were written to a card in this slot with
+    this size and partition, newest first. Only "before-marking" (without markers) or
+    "before-script" (without SCRIPT) qualify; "before-restore" backups never do."""
     try:
         folders = sorted((p for p in Path(root).iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True)
     except OSError:
@@ -206,8 +207,10 @@ def undo_backups(cand: Candidate, root: Path = DEFAULT_BACKUP_ROOT):
         except PrepFailure:
             continue
         card = backup.manifest.get("card") or {}
-        if backup.manifest.get("purpose") == "before-marking" and backup.manifest.get("markers_present") is False \
-                and all(card.get(k) == getattr(cand, k) for k in RESTORE_IDENTITY):
+        purpose = backup.manifest.get("purpose")
+        eligible = ((purpose == "before-marking" and backup.manifest.get("markers_present") is False)
+                    or (purpose == "before-script" and backup.manifest.get("script_present") is False))
+        if eligible and all(card.get(k) == getattr(cand, k) for k in RESTORE_IDENTITY):
             yield backup
 
 
@@ -260,15 +263,18 @@ def restore_plan(cand: Candidate, mbr: bytes, area: bytes, backup: Backup) -> Pl
 
 
 def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
-          restore_from: Backup | str | None = None, now: datetime | None = None) -> Session:
+          restore_from: Backup | str | None = None, kind: str = "mark", now: datetime | None = None) -> Session:
     """Read the card, save a verified backup and plan the writes.
 
-    restore_from is None (prepare), a chosen Backup (restore), or LATEST (Undo: the
-    newest before-marking backup that matches the card as read).
+    restore_from is None (prepare: kind="mark" for native markers, or kind="script" for
+    Canon Basic SCRIPT), a chosen Backup (restore), or LATEST (Undo: the newest
+    before-marking or before-script backup that matches the card as read).
 
     Nothing is ever written to the card here. On any failure the card is mounted
     again and the exception says why; a plan that needs writing leaves the card
     unmounted for write() or cancel()."""
+    if kind not in ("mark", "script"):
+        raise ValueError(f"unknown plan kind {kind!r}")
     cand = ops.refresh(cand)
     if cand.mounted:
         try:
@@ -294,8 +300,12 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
         else:
             volume = layout.inspect(mbr, area, disk_bytes=cand.disk_bytes)
             _identity_matches(cand, volume)
-            plan = layout.plan_markers(mbr, area, disk_bytes=cand.disk_bytes)
-            purpose = "before-marking"
+            if kind == "script":
+                plan = layout.plan_script(mbr, area, disk_bytes=cand.disk_bytes)
+                purpose = "before-script"
+            else:
+                plan = layout.plan_markers(mbr, area, disk_bytes=cand.disk_bytes)
+                purpose = "before-marking"
         snapshot = Snapshot(cand, mbr, area, volume)
         backup = save_backup(snapshot, plan, backup_root, purpose=purpose, now=now)
     except Exception as exc:
@@ -309,7 +319,7 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
     session = Session(snapshot, plan, backup, source=restore_from)
     if not plan.writes_needed:
         mounted, out = _mount(ops, cand)
-        title = "Already prepared: nothing to write." if plan.kind == "mark" else "Nothing to restore."
+        title = "Already prepared: nothing to write." if plan.kind in ("mark", "script") else "Nothing to restore."
         report = Report(True, title, layout.describe_plan(plan) + [_mount_line(mounted, out),
                                                                   f"Backup: {backup.folder}"], nothing_written=True)
         report.record = _record(backup, report, {"plan": plan.to_dict()})
@@ -329,7 +339,7 @@ def cancel(session: Session, ops) -> Report:
 def write(session: Session, ops) -> Report:
     """Write exactly the planned sectors, read everything back, check the volume, mount again."""
     snapshot, plan, backup = session.snapshot, session.plan, session.backup
-    what = "Boot markers" if plan.kind == "mark" else "Restore"
+    what = "Boot markers" if plan.kind == "mark" else ("Canon Basic SCRIPT marker" if plan.kind == "script" else "Restore")
     report = Report(False, f"{what}: FAILED.")
     result: dict = {}
     cand = snapshot.candidate

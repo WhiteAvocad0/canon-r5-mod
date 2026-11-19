@@ -302,5 +302,47 @@ class VerifyWritten(unittest.TestCase):
         self.assertTrue(layout.verify_written(plan, mbr, mbr, bytes(stray), disk_bytes=disk))
 
 
+class ScriptPlanning(unittest.TestCase):
+    def test_fat32_sdhc_script_plan_idempotent_and_restore_round_trip(self):
+        mbr, area, disk = ci.fat32_card()
+        plan = layout.plan_script(mbr, area, disk_bytes=disk)
+        self.assertEqual(plan.kind, "script")
+        self.assertTrue(plan.writes_needed)
+        self.assertEqual([w.sector for w in plan.writes], [0])
+        self.assertEqual(plan.after_area[496:502], b"SCRIPT")
+        self.assertEqual(plan.after_area[512:], area[512:])
+        self.assertEqual(layout.verify_written(plan, mbr, mbr, plan.after_area, disk_bytes=disk), [])
+        self.assertTrue(layout.inspect(mbr, plan.after_area, disk_bytes=disk).script_present)
+
+        again = layout.plan_script(mbr, plan.after_area, disk_bytes=disk)
+        self.assertFalse(again.writes_needed)
+        self.assertIn("The Canon Basic SCRIPT marker is already present; nothing needs to be written.",
+                      "\n".join(layout.describe_plan(again)))
+
+        restore = layout.plan_restore(mbr, area, mbr, plan.after_area, disk_bytes=disk)
+        self.assertEqual(restore.after_area, area)
+        self.assertEqual([w.sector for w in restore.writes], [0])
+        self.assertEqual(layout.verify_written(restore, mbr, mbr, restore.after_area, disk_bytes=disk), [])
+
+        weird = bytearray(plan.after_area)
+        weird[496:502] = b"BAD!  "
+        refused(self, "restore_unknown_bytes", layout.plan_restore, mbr, area, mbr, bytes(weird), disk_bytes=disk)
+
+    def test_script_plan_refusals(self):
+        embr, earea, edisk = ci.exfat_card()
+        refused(self, "script_requires_fat32", layout.plan_script, embr, earea, disk_bytes=edisk)
+
+        fmbr, farea, fdisk = ci.fat32_card()
+        refused(self, "script_sdxc_untested", layout.plan_script, fmbr, farea,
+                disk_bytes=layout.SDHC_MAX_SECTORS * 512)
+
+        marked = layout.plan_markers(fmbr, farea, disk_bytes=fdisk).after_area
+        refused(self, "native_markers_present", layout.plan_script, fmbr, marked, disk_bytes=fdisk)
+
+        unexpected = bytearray(farea)
+        unexpected[496:502] = b"\x01\x02\x03\x04\x05\x06"
+        refused(self, "unexpected_marker_bytes", layout.plan_script, fmbr, bytes(unexpected), disk_bytes=fdisk)
+
+
 if __name__ == "__main__":
     unittest.main()
