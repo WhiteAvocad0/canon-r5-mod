@@ -75,7 +75,7 @@
           "value": "ding",
           "label": "Ding: struck-bar chime, 250 ms",
           "status": "private-lab-verified",
-          "status_detail": "Tested on the REC press by the owner on a private lab build on 18 November 2026."
+          "status_detail": "Owner-checked on the REC press on public image 0adff001 and private lab builds (18 November 2026)."
         },
         {
           "value": "chirp2",
@@ -110,7 +110,7 @@
           "value": "dong",
           "label": "Dong: two falling notes, 250 ms",
           "status": "private-lab-verified",
-          "status_detail": "Tested with the ding at the end of a take by the owner on a private lab build on 18 November 2026. Without a start cue it has not run on hardware in any form."
+          "status_detail": "Owner-checked together with the ding on public image 01956513 and private lab build fbf31293 (18 November 2026). A dong-only image has not run on hardware."
         }
       ]
     }
