@@ -8,6 +8,7 @@ tools/cardprep, and the build itself is tools/build.py with all of its checks. I
 never downloads anything, never formats or partitions a card and never contacts a
 camera. Boot sectors are written only by the "Prepare card" tab (issue #16 Phase 2),
 after the person confirms the card, through the operating system's password prompt.
+The Screenshots utility (shots.py, outside the setup steps) only reads the card.
 Its look (fonts, colours, spacing and ttk styles) comes from theme.py.
 """
 from __future__ import annotations
@@ -30,7 +31,8 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 from cardprep import devices as card_devices, workflow as card_flow
-from gui import card, checks, runner, theme
+from gui import card, checks, runner, shots, theme
+import screenshots as screenshots_mod
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 from gui.theme import BUSY, DANGER, INFO, NEUTRAL, SPACE, SUCCESS, WARNING
@@ -208,6 +210,8 @@ class App:
         self.card_info: card.CardInspection | None = None
         self.copying = False
         self.prep = PrepState()
+        self.shots = shots.ShotsState()
+        self.utility: str | None = None  # a utility shown instead of the current setup step
         self.wizard = Wizard(self.state, prep_supported=card_devices.prepare_supported())
         self._wrapped: list = []
         self._inners = {}  # step -> the scrolled frame holding its content
@@ -235,6 +239,7 @@ class App:
         footer.lift(self.content)  # Tab reaches the step's controls before Back and Next
 
         self.panels = {}
+        self.utilities = {}  # utility id -> (frame, None, canvas), like panels but outside the setup steps
         self._camera_panel()
         self._rom_tab()
         self._bootdisk_panel()
@@ -244,6 +249,7 @@ class App:
         self._prep_tab()
         self._card_tab()
         self._test_panel()
+        self._screenshots_panel()
         self._bind_scrolling()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -374,33 +380,48 @@ class App:
         rows.pack(fill="x")
         self.side_rows = {}
         for info in STEPS:
-            row = tk.Frame(rows, background=p.surface, highlightthickness=2, highlightbackground=p.surface,
-                           highlightcolor=p.accent, takefocus=1, cursor="hand2")
-            bar = tk.Frame(row, width=3, background=p.surface)
-            bar.grid(row=0, column=0, rowspan=2, sticky="ns")
-            mark = tk.Canvas(row, width=22, height=22, highlightthickness=0, borderwidth=0, background=p.surface)
-            mark.grid(row=0, column=1, rowspan=2, padx=(S, 10), pady=S)
-            title = tk.Label(row, text=info.title, anchor="w", justify="left", background=p.surface,
-                             foreground=p.text, font=f["body"], borderwidth=0, padx=0, pady=0)
-            title.grid(row=0, column=2, sticky="sw", pady=(S, 0))
-            status = tk.Label(row, text="", anchor="w", background=p.surface, foreground=p.text_muted,
-                              font=f["caption"], borderwidth=0, padx=0, pady=0)
-            status.grid(row=1, column=2, sticky="nw", pady=(0, S))
-            row.columnconfigure(2, weight=1)
-            parts = (row, bar, mark, title, status)
-            for widget in parts:
-                widget.bind("<Button-1>", lambda _e, s=info.id: self._sidebar_clicked(s))
-                widget.bind("<Enter>", lambda _e, s=info.id: self._side_hover(s, True))
-                widget.bind("<Leave>", lambda _e, s=info.id: self._side_hover(s, False))
-            for key in ("<Return>", "<KP_Enter>", "<space>"):
-                row.bind(key, lambda _e, s=info.id: self._sidebar_clicked(s))
-            row.bind("<Up>", lambda _e, s=info.id: self._side_focus(s, -1))
-            row.bind("<Down>", lambda _e, s=info.id: self._side_focus(s, 1))
+            parts = self._side_row(rows, info.id, info.title, lambda s=info.id: self._sidebar_clicked(s))
+            parts[0].bind("<Up>", lambda _e, s=info.id: self._side_focus(s, -1))
+            parts[0].bind("<Down>", lambda _e, s=info.id: self._side_focus(s, 1))
             self.side_rows[info.id] = {"parts": parts, "hover": False}
         self._side_path = None
         self.mode_label = ttk.Label(side, text="", style="Sidebar.Caption.TLabel", justify="left",
                                     wraplength=theme.SIDEBAR_WIDTH - 2 * M - 2 * S)
         self.mode_label.pack(anchor="w", padx=S, pady=(M, 0))
+        # Below the steps: at the smallest window height this can be cut off; step 1 links to it too.
+        ttk.Label(side, text="TOOLS", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M, XS))
+        tools = ttk.Frame(side, style="Sidebar.TFrame")
+        tools.pack(fill="x")
+        self.tool_rows = {}
+        parts = self._side_row(tools, shots.SCREENSHOTS, shots.TITLE, lambda: self._open_utility(shots.SCREENSHOTS))
+        parts[0].pack(fill="x")
+        parts[4].configure(text="Convert card screenshots")
+        self.tool_rows[shots.SCREENSHOTS] = {"parts": parts, "hover": False}
+
+    def _side_row(self, parent, key, text, on_click):
+        """A sidebar row: a focus bar, a round mark, a title and a status caption."""
+        tk, p, f = self.tk, self.theme.palette, self.theme.fonts
+        row = tk.Frame(parent, background=p.surface, highlightthickness=2, highlightbackground=p.surface,
+                       highlightcolor=p.accent, takefocus=1, cursor="hand2")
+        bar = tk.Frame(row, width=3, background=p.surface)
+        bar.grid(row=0, column=0, rowspan=2, sticky="ns")
+        mark = tk.Canvas(row, width=22, height=22, highlightthickness=0, borderwidth=0, background=p.surface)
+        mark.grid(row=0, column=1, rowspan=2, padx=(S, 10), pady=S)
+        title = tk.Label(row, text=text, anchor="w", justify="left", background=p.surface,
+                         foreground=p.text, font=f["body"], borderwidth=0, padx=0, pady=0)
+        title.grid(row=0, column=2, sticky="sw", pady=(S, 0))
+        status = tk.Label(row, text="", anchor="w", background=p.surface, foreground=p.text_muted,
+                          font=f["caption"], borderwidth=0, padx=0, pady=0)
+        status.grid(row=1, column=2, sticky="nw", pady=(0, S))
+        row.columnconfigure(2, weight=1)
+        parts = (row, bar, mark, title, status)
+        for widget in parts:
+            widget.bind("<Button-1>", lambda _e: on_click())
+            widget.bind("<Enter>", lambda _e: self._side_hover(key, True))
+            widget.bind("<Leave>", lambda _e: self._side_hover(key, False))
+        for binding in ("<Return>", "<KP_Enter>", "<space>"):
+            row.bind(binding, lambda _e: on_click())
+        return parts
 
     def _banner(self, parent):
         holder = self.ttk.Frame(parent, padding=(XL, M, XL, 0))
@@ -429,11 +450,18 @@ class App:
 
     # -- steps ---------------------------------------------------------------------
 
-    def _panel(self, step_id: str, extra_details: str = ""):
+    def _panel(self, step_id: str, extra_details: str = "", *, utility: bool = False):
         """A wizard step: its title, what and why, what you do, a body for its controls, the
-        app's check of the step, and a Details expander with the technical facts."""
+        app's check of the step, and a Details expander with the technical facts. A utility
+        (outside the setup steps) has the same shape without the step's check."""
         tk, ttk, p = self.tk, self.ttk, self.theme.palette
-        info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
+        if utility:
+            title, guide, placeholder = shots.TITLE, shots.GUIDE, False
+            eyebrow = "TOOL   ·   NOT PART OF SETUP"
+        else:
+            info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
+            title, placeholder = info.title, info.placeholder
+            eyebrow = f"STEP {info.number}" + ("   ·   ONE TIME" if info.one_time else "")
         frame = ttk.Frame(self.content)
         canvas = tk.Canvas(frame, highlightthickness=0, borderwidth=0, background=p.bg, yscrollincrement=1)
         bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview, style="Thin.Vertical.TScrollbar")
@@ -458,17 +486,16 @@ class App:
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
 
-        eyebrow = f"STEP {info.number}" + ("   ·   ONE TIME" if info.one_time else "")
         ttk.Label(inner, text=eyebrow, style="Eyebrow.TLabel").pack(anchor="w")
-        self._text(inner, info.title, "Heading.TLabel", pady=(XS, 0), full=True)
+        self._text(inner, title, "Heading.TLabel", pady=(XS, 0), full=True)
         self._text(inner, guide.why, pady=(M, 0))
         self._text(inner, "What you do", "Subheading.TLabel", pady=(L, 0))
         self._text(inner, guide.todo, pady=(XS, 0))
-        if info.placeholder:
+        if placeholder:
             Callout(self, inner).set(INFO, COMING_SOON, "The guided part of this step is being prepared.")
         body = ttk.Frame(inner)
         body.pack(fill="x", pady=(S, 0))
-        check = Callout(self, inner, pady=(L, 0))
+        check = None if utility else Callout(self, inner, pady=(L, 0))
         details_box = ttk.Frame(inner, style="Details.TFrame", padding=M)
         self.wrap(ttk.Label(details_box, text="\n\n".join(t for t in (guide.details, extra_details) if t),
                             style="Details.TLabel", justify="left"), CARD_INSET).pack(anchor="w")
@@ -483,7 +510,7 @@ class App:
                 toggle.configure(text="▾  Details")
         toggle.configure(command=flip)
         toggle.pack(anchor="w", pady=(M, 0))
-        self.panels[step_id] = (frame, check, canvas)
+        (self.utilities if utility else self.panels)[step_id] = (frame, check, canvas)
         self._inners[step_id] = inner
         return body
 
@@ -498,6 +525,11 @@ class App:
         self._button(row, "Set up from the start", self._full_path)
         self.update_button = self._button(row, "Update my card (Features > Build > Copy)", self._update_path)
         self.update_note = self._text(modes, "", "Caption.TLabel", pady=(S, 0), inset=CARD_INSET)
+        tools = self._card(tab, "Screenshots from the camera", pady=(M, 0))
+        self._text(tools, "Turn screenshots a lab build saved on the card into PNG pictures. Not part of the setup.",
+                   pady=(0, 0), inset=CARD_INSET)
+        row = self._buttons(tools, pady=(S, 0))
+        self.shots_entry = self._button(row, "Convert screenshots...", lambda: self._open_utility(shots.SCREENSHOTS))
 
     def _bootdisk_panel(self):
         tab = self._panel(BOOTDISK)
@@ -548,6 +580,7 @@ class App:
         self.refresh()
 
     def _sidebar_clicked(self, step_id):
+        self.utility = None
         if step_id in self.wizard.path():
             self.wizard.goto(step_id)
         self.refresh()
@@ -561,14 +594,45 @@ class App:
         return "break"
 
     def _side_hover(self, step_id, inside):
+        if step_id in self.tool_rows:
+            self.tool_rows[step_id]["hover"] = inside
+            self._paint_tool_row(step_id)
+            return
         self.side_rows[step_id]["hover"] = inside
         self._paint_row(step_id)
+
+    def _open_utility(self, key):
+        self.utility = key
+        self.refresh()
+        self.utilities[key][2].yview_moveto(0)
+        return "break"
+
+    def _paint_tool_row(self, key):
+        p, f = self.theme.palette, self.theme.fonts
+        row, bar, mark, title, _status = self.tool_rows[key]["parts"]
+        current = key == self.utility
+        bg = p.accent_subtle if current else (p.hover if self.tool_rows[key]["hover"] else p.surface)
+        for widget in self.tool_rows[key]["parts"][2:]:
+            widget.configure(background=bg)
+        row.configure(background=bg, highlightbackground=bg)
+        bar.configure(background=p.accent if current else bg)
+        title.configure(font=f["subheading"] if current else f["body"])
+        if current:
+            self.draw_mark(mark, INFO, bg, text="↓")
+        else:
+            self.draw_mark(mark, NEUTRAL, bg, text="↓", ring=True, colour=p.text_muted)
+
+    def _visible(self):
+        """(id, (frame, check, canvas)) of what the content area shows: a utility or the current step."""
+        if self.utility is not None:
+            return self.utility, self.utilities[self.utility]
+        return self.wizard.current, self.panels[self.wizard.current]
 
     def _paint_row(self, step_id):
         p, f, w = self.theme.palette, self.theme.fonts, self.wizard
         row, bar, mark, title, status = self.side_rows[step_id]["parts"]
         st, info = w.status(step_id).status, STEP_BY_ID[step_id]
-        current = step_id == w.current
+        current = step_id == w.current and self.utility is None
         bg = p.accent_subtle if current else (p.hover if self.side_rows[step_id]["hover"] else p.surface)
         for widget in (row, mark, title, status):
             widget.configure(background=bg)
@@ -592,7 +656,10 @@ class App:
         self.refresh()
 
     def _back(self):
-        self.wizard.back()
+        if self.utility is not None:
+            self.utility = None  # back to the setup step that was open
+        else:
+            self.wizard.back()
         self.refresh()
 
     def _refresh_wizard(self):
@@ -608,19 +675,32 @@ class App:
             self._paint_row(step_id)
         self.mode_label.configure(text="Path: Update my card (one-time steps already done)." if w.saved.mode == "update"
                                   else "Path: full setup. Done one-time steps stay done when you come back.")
+        for key, (frame, _check, _canvas) in self.utilities.items():
+            if key == self.utility:
+                if not frame.winfo_manager():
+                    frame.pack(fill="both", expand=True)
+            elif frame.winfo_manager():
+                frame.pack_forget()
+        for key in self.tool_rows:
+            self._paint_tool_row(key)
         for step_id, (frame, check, _canvas) in self.panels.items():
-            if step_id == current:
+            if step_id == current and self.utility is None:
                 st = w.status(step_id)
                 check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: "))
                 if not frame.winfo_manager():
                     frame.pack(fill="both", expand=True)
             elif frame.winfo_manager():
                 frame.pack_forget()
-        self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled")
-        blockers = w.next_blockers()
-        last = current == path[-1]
-        self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next  →")
-        self.nav_note.configure(text="" if not blockers or last else blockers[0])
+        if self.utility is not None:
+            self.back_button.configure(state="normal", text="←  Back to setup")
+            self.next_button.configure(state="disabled", text="Next  →")
+            self.nav_note.configure(text="")
+        else:
+            self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled", text="←  Back")
+            blockers = w.next_blockers()
+            last = current == path[-1]
+            self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next  →")
+            self.nav_note.configure(text="" if not blockers or last else blockers[0])
         self.camera_var.set(w.saved.camera_confirmed)
         missing = w.one_time_done()
         self.update_button.configure(state="disabled" if missing else "normal")
@@ -642,7 +722,7 @@ class App:
                 return None
             if not str(widget).startswith(str(self.content)):
                 return None
-            canvas = self.panels[self.wizard.current][2]
+            canvas = self._visible()[1][2]
             first, last = canvas.yview()
             return canvas if (first, last) != (0.0, 1.0) else None
 
@@ -660,10 +740,10 @@ class App:
             scroll(event, -(dy - 0x10000 if dy >= 0x8000 else dy))
         def reveal(event):
             """Keyboard focus scrolls the focused control into view."""
-            widget, inner = event.widget, self._inners.get(self.wizard.current)
+            key, (_frame, _check, canvas) = self._visible()
+            widget, inner = event.widget, self._inners.get(key)
             if inner is None or not isinstance(widget, self.tk.Misc) or not str(widget).startswith(str(inner) + "."):
                 return
-            canvas = self.panels[self.wizard.current][2]
             total = max(1, inner.winfo_height())
             top, height = canvas.canvasy(0), canvas.winfo_height()
             y = widget.winfo_rooty() - inner.winfo_rooty()
@@ -986,6 +1066,9 @@ class App:
 
     def _on_close(self):
         p = self.prep
+        if self.shots.busy and not self.messagebox.askokcancel(
+                "Quit", "Screenshots are still being converted. Quit anyway? The card is not changed."):
+            return
         if p.busy and not self.messagebox.askokcancel(
                 "Quit", "A card operation is still running. Quitting now can leave the card unmounted. Quit anyway?"):
             return
@@ -1043,6 +1126,7 @@ class App:
         self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
         self.copy_busy.set("Copying..." if self.copying else None)
         self._refresh_prep()
+        self._refresh_shots()
         for what, input_id in s.needs_check():
             self._start_check(what, input_id)
 
@@ -1258,6 +1342,105 @@ class App:
             self.refresh()
         self._background(lambda: card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
                                                    confirmed_warnings=confirmed), done)
+
+    # -- screenshots (a utility, not a setup step) ---------------------------------------
+
+    def _screenshots_panel(self):
+        tab = self._panel(shots.SCREENSHOTS, utility=True)
+        Callout(self, tab, pady=(S, 0)).set(INFO, "Private lab feature", shots.LAB_NOTE)
+        self.shots_src_var = self.tk.StringVar()
+        self._field(tab, "Screenshots from (the card's top folder, DCIM, or an R5SHOTS folder)", self.shots_src_var,
+                    [("Choose card or folder...", self._pick_shots_source)], pady=(L, 0))
+        self.shots_src_status = StatusLine(self, tab)
+        self.shots_out_var = self.tk.StringVar()
+        self._field(tab, "Save the PNG files in (on this computer)", self.shots_out_var,
+                    [("Change...", self._pick_shots_output)])
+        self.shots_out_status = StatusLine(self, tab)
+        row = self._buttons(tab, pady=(L, 0))
+        self.shots_button = self._button(row, "Convert to PNG", self._convert_shots, primary=True)
+        self.shots_open = self._button(row, "Open output folder", lambda: open_path(self.shots.output_dir))
+        self.shots_busy = Busy(self, tab)
+        self.shots_blockers = self._text(tab, "", "Caption.TLabel", full=True)
+        self.shots_result = Callout(self, tab)
+        self.shots_log_slot = Slot(self.ttk, tab, pady=(S, 0))
+        self.shots_log, self.shots_log_box = self._textbox(self.shots_log_slot.frame, height=8, pady=(0, 0))
+        self.shots_log_box.pack_forget()
+
+    def _refresh_shots(self):
+        st = self.shots
+        src = st.source
+        self.shots_src_var.set(str(src.picked) if src else "")
+        if src is None:
+            self.shots_src_status.set(NEUTRAL, "No folder chosen yet.")
+        else:
+            self.shots_src_status.set(SUCCESS if src.files else WARNING, src.describe())
+        self.shots_out_var.set(str(st.output_dir))
+        problem = st.output_problem()
+        if problem:
+            self.shots_out_status.set(DANGER, problem)
+        elif st.output_dir.is_dir():
+            self.shots_out_status.set(NEUTRAL, "This folder exists. Screenshots already converted into it are "
+                                               "skipped; existing files are never overwritten.")
+        else:
+            self.shots_out_status.set(NEUTRAL, "A new folder. It is created when you convert.")
+        blockers = st.blockers()
+        self.shots_button.configure(state="disabled" if blockers else "normal")
+        self.shots_open.configure(state="normal" if st.can_open_output() else "disabled")
+        self.shots_busy.set(st.busy)
+        shown = [b for b in blockers if b != problem and not (src and b == src.describe())] if not st.busy else []
+        self.shots_blockers.configure(text=bullets(shown))
+        self.shots_blockers.pack_configure(pady=(S, 0) if shown else (0, 0))
+        report = st.report()
+        if report is None:
+            self.shots_result.clear()
+            lines = []
+        else:
+            kind, headline, lines = report
+            self.shots_result.set(kind, headline)
+        self._set_text(self.shots_log, "\n".join(lines))
+        if lines:
+            self.shots_log_slot.show(self.shots_log_box)
+        else:
+            self.shots_log_slot.hide(self.shots_log_box)
+
+    def _pick_shots_source(self):
+        folder = self.filedialog.askdirectory(title="Choose the card's top folder, or a folder with screenshots")
+        if not folder:
+            return
+        self.shots.busy = "Looking for screenshots..."
+        self.refresh()
+
+        def done(result):
+            self.shots.busy = None
+            if isinstance(result, Exception):
+                self.shots.set_source(shots.Source(Path(folder), None, (), False))
+                self.shots.error = f"Could not look at {folder}: {result}"
+            else:
+                self.shots.set_source(result)
+            self.refresh()
+        self._background(lambda: shots.find_source(Path(folder)), done)
+
+    def _pick_shots_output(self):
+        folder = self.filedialog.askdirectory(title="Choose where to save the PNG files")
+        if folder:
+            self.shots.set_output(Path(folder))
+            self.refresh()
+
+    def _convert_shots(self):
+        st = self.shots
+        if st.blockers():
+            return
+        source, out = st.begin()
+        self.refresh()
+
+        def progress(index, total, name):
+            self.events.put((lambda _r: (st.progress(index, total, name), self._refresh_shots()), None))
+
+        def done(result):
+            st.finished(result)
+            self.refresh()
+        self._background(lambda: screenshots_mod.convert_folder(source.shots, out, picked=source.picked,
+                                                                home=st.home, on_progress=progress), done)
 
 
 def main() -> int:
