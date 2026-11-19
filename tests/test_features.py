@@ -191,7 +191,7 @@ class ManifestLoadingTests(unittest.TestCase):
         self.assertEqual(stop.choice("dong").status, "private-lab-verified")
         self.assertIsNone(stop.choice("off").status)
         # Evidence wording follows docs/usage.md: the dong ran with the ding only.
-        self.assertIn("Without a start cue it has not run on hardware", stop.choice("dong").status_detail)
+        self.assertIn("A dong-only image has not run on hardware", stop.choice("dong").status_detail)
         # Evidence wording follows docs/usage.md's evidence boundary.
         self.assertIn("private A/B trial", indicator.choice("chirp2").status_detail)
         self.assertIn("start request", indicator.choice("2k150loud").status_detail)
