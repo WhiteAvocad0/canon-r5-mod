@@ -241,6 +241,10 @@ class WindowSmokeTests(unittest.TestCase):
                     self.assertEqual(self.visible_step(app), [step.id])
                     packed = [s for s, row in app.side_rows.items() if row["parts"][0].winfo_manager()]
                     self.assertEqual(packed, app.wizard.path())
+                app._open_utility("screenshots")  # the Tools section's utility, outside the steps
+                self.root.update_idletasks()
+                self.assertEqual(self.visible_step(app), [])
+                self.assertTrue(app.utilities["screenshots"][0].winfo_manager())
 
     def test_gating_and_controls_are_unchanged(self):
         app = self.build("light")
