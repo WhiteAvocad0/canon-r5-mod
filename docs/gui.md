@@ -21,7 +21,7 @@ If Tkinter is missing, the assistant prints these hints and exits. The command-l
 
 ## What it does
 
-*Screenshot, described:* on the left is a grey sidebar with the app's name, a *Prototype* badge and the list of the nine steps. Each step shows a round mark and its status under its name: a green ✓ for *done*, – for *skipped*, and the step number for *needs action* or *blocked* (blocked steps are greyed out). The current step is highlighted in blue. On the right, an amber warning box runs across the top, with links to the **Getting started guide**, the **Prerequisites** and this page. The current step fills the space below it. At the bottom are **← Back** and the blue **Next →**, with a short note saying what is still needed.
+*Screenshot, described:* on the left is a grey sidebar with the app's name, a *Prototype* badge and the list of the nine steps, with a *Tools* section under it that holds [Screenshots](#screenshots). Each step shows a round mark and its status under its name: a green ✓ for *done*, – for *skipped*, and the step number for *needs action* or *blocked* (blocked steps are greyed out). The current step is highlighted in blue. On the right, an amber warning box runs across the top, with links to the **Getting started guide**, the **Prerequisites** and this page. The current step fills the space below it. At the bottom are **← Back** and the blue **Next →**, with a short note saying what is still needed.
 
 The window uses the system font (SF Pro on macOS, Segoe UI on Windows, Cantarell, Ubuntu or DejaVu Sans on Linux), one blue accent colour for actions and the current step, and green, amber and red only for statuses and warnings. On macOS, Windows and GNOME it starts in the desktop's light or dark appearance; set `R5_ASSISTANT_APPEARANCE=light` or `dark` to choose one yourself. The fonts, colours and spacing are defined in [`tools/gui/theme.py`](../tools/gui/theme.py).
 
@@ -40,7 +40,7 @@ Every step has the same shape:
 
 ### Step 1. Welcome and camera check
 
-*Screenshot, described:* the text says the mod works only on an original EOS R5 on firmware 2.2.1. **What you do** explains where to look: press MENU, open the yellow Setup (wrench) tab, and find *Firmware* on the last Setup page, which must read *Firmware Ver. 2.2.1*. The body of the camera must say *EOS R5*, with no *C* or *Mark II*. Then tick "My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'." Below are **Set up from the start** and **Update my card (Features > Build > Copy)**; the second is greyed out until steps 1 to 3 are done. **Details** lists what the assistant never does.
+*Screenshot, described:* the text says the mod works only on an original EOS R5 on firmware 2.2.1. **What you do** explains where to look: press MENU, open the yellow Setup (wrench) tab, and find *Firmware* on the last Setup page, which must read *Firmware Ver. 2.2.1*. The body of the camera must say *EOS R5*, with no *C* or *Mark II*. Then tick "My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'." Below are **Set up from the start** and **Update my card (Features > Build > Copy)**; the second is greyed out until steps 1 to 3 are done. **Details** lists what the assistant never does. A box headed *Screenshots from the camera* has a **Convert screenshots...** button that opens the [Screenshots](#screenshots) tool.
 
 This is your confirmation. The ROM check in step 2 verifies the firmware itself.
 
@@ -172,6 +172,33 @@ It is blocked until this build has been copied in step 8. **Open the test report
 
 Step 1's **Details** lists what is out of scope. The assistant never changes the camera by itself: the ROM dump and BootDisk steps are things you run in the camera (their guided versions are coming soon). It doesn't format or partition cards, write the MBR, write anything except the boot-marker sectors shown in [Prepare card](#step-7-prepare-the-boot-card), write the camera's firmware or NVRAM, download the toolchain, or test anything on the camera. See [Getting started → Step 2](getting-started.md#step-2-check-the-one-time-prerequisites).
 
+## Screenshots
+
+> [!NOTE]
+> **The on-camera screenshot build is a private lab feature.** It isn't in the public firmware build yet, so a public build doesn't save screenshots. This tool only converts files that the private lab build saved ([issue #15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)).
+
+The lab build saves what the camera's screen shows as `DCIM/R5SHOTS/SS_nnnnn.YCA` on the SD card. The camera's own ▶ playback can't show these files, so this tool turns them into ordinary PNG pictures on your computer. It isn't one of the setup steps: open it from **Screenshots** in the sidebar's *Tools* section or from the button on step 1. **← Back to setup** returns to the step you were on.
+
+*Screenshot, described:* the eyebrow says *Tool · Not part of setup* above the heading *Screenshots*. A blue note says the screenshot build is a private lab feature. Below are two path boxes: **Choose card or folder...** for where the screenshots are, and **Change...** for where the PNG files go, each with a status line. Then come the blue **Convert to PNG** button and **Open output folder**, a progress bar while it runs, and a result box with one line per file.
+
+1. Put the card in your computer, or copy its `R5SHOTS` folder to it. Choose the card's top folder (for example `/Volumes/EOS_DIGITAL`), its `DCIM` folder, the `R5SHOTS` folder itself, or a folder that holds a copied `R5SHOTS`. The status line says how many `SS_*.YCA` files it found and whether they're on a camera card.
+2. The PNG files go to `~/Pictures/R5 screenshots/<today's date>` unless you choose another folder. The folder must be on your computer: a folder on the card, inside the folder you chose, or the home folder or a system folder is refused.
+3. Press **Convert to PNG**. The result says how many were converted, how many were already converted, and which files couldn't be converted and why. **Open output folder** opens the folder. Eject the card before you remove it.
+
+What it does and doesn't do:
+- It **only reads** the card and the folder you chose. It never writes, renames or deletes anything there.
+- It **never overwrites** a file. A screenshot already converted into the same output folder (same name, size and contents, recorded in `.r5-screenshots.json` there) is skipped. If a different `SS_nnnnn.png` is already there, for example after the card was formatted and the numbers started again, the new picture is saved as `SS_nnnnn-<8 hex digits>.png` next to it.
+- Each file must be exactly what the lab build writes: an `R5SS` header (version 3 with a 512-byte header, or the older 32-byte versions 1 and 2), the `UYVA` layout (4:2:2 YCbCr with alpha), and the rear LCD's 1024×682 or the viewfinder's 1600×1200 layer, with a file size that adds up. Anything else is refused and listed, and the other files are still converted.
+- The picture is the camera's on-screen display layer only (menus, shooting and playback information). The live image under it isn't saved, so those areas show the colour the layer stores there. The colours use the BT.601 matrix at full range, which is what the lab used, and alpha isn't used. On the lab's seven sample files the PNGs are byte-for-byte the same as the lab converter's.
+
+The same conversion works without the window, using only the Python standard library:
+
+```sh
+python3 tools/screenshots.py /Volumes/EOS_DIGITAL "$HOME/Pictures/R5 screenshots/copy"
+```
+
+The first argument is the card's top folder, `DCIM`, `R5SHOTS` or a folder holding a copy; the second is the output folder (created if needed). `--limited-range` treats the colours as limited range (16-235) and `--matrix 709` uses BT.709; neither is needed for the lab build's files. It exits with 1 if any file wasn't converted, and with 2 if the folder or the output was refused.
+
 ## One feature list for the builder and the assistant
 
 [`config/features.json`](../config/features.json) is the single feature manifest. It lists the profiles, the WAV inputs each profile requires or forbids, opt-in options with their choices and the profiles they need, and a status for each feature (verified on a private lab build, hardware-untested public build, or experimental). [`tools/features.py`](../tools/features.py) loads and checks it.
@@ -184,6 +211,7 @@ Adding an option takes more than a manifest entry: the builder must implement it
 
 - **Prototype.** Checked by host tests, and on macOS (Apple Silicon, Python 3.11 with Tk 9.0) by a scripted run of the real window: a real-ROM build, then a copy to an ordinary temporary folder. The Prepare card tab had its own scripted run of the real window, with the device calls replaced by image files. It hasn't been tried on Windows, Linux or a real card.
 - The window's look (fonts, colours, light and dark) is checked by host tests that build every step in a hidden window (macOS, Tk 9.0). It hasn't been looked at on Windows or Linux, and it doesn't follow an appearance change while it is open.
+- **Screenshots: host-tested only.** The conversion was checked against the lab's seven sample files on the owner's Mac; the window's Screenshots tool was checked by host tests with synthetic files, not with a card. At the smallest window height the sidebar's *Tools* section can be cut off; the button on step 1 always opens it.
 - No memory estimate *before* building: the margin is reported from `build.json` after a build.
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
