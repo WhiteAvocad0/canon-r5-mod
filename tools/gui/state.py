@@ -142,11 +142,16 @@ class AssistantState:
     # -- check bookkeeping ----------------------------------------------------
 
     def rom_key(self) -> tuple | None:
-        """ROM admission depends on the profile and the indicator (extra fingerprinted pages)."""
+        """ROM admission depends on the profile and the record cues (extra fingerprinted pages).
+
+        The key is (rom path, profile, ((option id, value or None if unavailable), ...))."""
         if self.rom_path is None:
             return None
-        available, _ = self.manifest.option_availability(self.profile, "record_indicator")
-        return (str(self.rom_path), self.profile, self.options["record_indicator"] if available else None)
+        options = tuple(
+            (oid, self.options[oid] if self.manifest.option_availability(self.profile, oid)[0] else None)
+            for oid in self.manifest.options
+        )
+        return (str(self.rom_path), self.profile, options)
 
     def input_key(self, input_id: str) -> tuple | None:
         path = self.input_paths[input_id]

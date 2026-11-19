@@ -41,10 +41,12 @@ def _builder():
     return build
 
 
-def check_rom(path: Path, *, profile: str, record_indicator: str | None) -> CheckResult:
-    """Strict ROM admission for this profile/indicator, without toolchain or output."""
+def check_rom(path: Path, *, profile: str, options: dict[str, str | None]) -> CheckResult:
+    """Strict ROM admission for this profile and its record cues, without toolchain or output.
+
+    options maps manifest option ids (the builder's parameter names) to the selected value."""
     try:
-        summary = _builder().check_rom(Path(path), profile=profile, record_indicator=record_indicator)
+        summary = _builder().check_rom(Path(path), profile=profile, **options)
     except (ValueError, OSError) as exc:
         return CheckResult(False, f"ROM refused: {exc}")
     regions = summary["verified_code_regions"] + summary.get("verified_xpan_regions", 0)

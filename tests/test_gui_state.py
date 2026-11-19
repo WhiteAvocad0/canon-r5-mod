@@ -43,16 +43,18 @@ class StateTests(unittest.TestCase):
 
     def test_every_buildable_gui_selection_is_accepted_by_the_builder_cli(self):
         manifest = features.load()
-        indicator = manifest.options["record_indicator"]
+        options = manifest.options
+        indicator, stop = options["record_indicator"], options["record_stop_indicator"]
         combos = 0
-        for profile, value in itertools.product(manifest.profile_ids, indicator.values):
+        for profile, value, stop_value in itertools.product(manifest.profile_ids, indicator.values, stop.values):
             s = state.AssistantState(manifest)
             s.set_profile(profile)
             try:
                 s.set_option("record_indicator", value)
+                s.set_option("record_stop_indicator", stop_value)
             except ValueError:
-                self.assertNotIn(profile, indicator.profiles)
-                self.assertNotEqual(value, indicator.default)
+                self.assertTrue(profile not in indicator.profiles or profile not in stop.profiles)
+                self.assertTrue(value != indicator.default or stop_value != stop.default)
                 continue
             ready(s, self.tmp)
             self.assertEqual(s.blockers(), [])
@@ -60,20 +62,26 @@ class StateTests(unittest.TestCase):
             args = build_mod.build_parser().parse_args(argv)
             self.assertIsNone(build_mod.cli_selection_error(args), argv)
             self.assertEqual(args.profile, profile)
-            if profile in indicator.profiles and value != indicator.default:
-                self.assertEqual(args.record_indicator, value)
-            else:
-                self.assertIsNone(args.record_indicator)
+            for oid, chosen in (("record_indicator", value), ("record_stop_indicator", stop_value)):
+                if profile in options[oid].profiles and chosen != options[oid].default:
+                    self.assertEqual(getattr(args, oid), chosen)
+                else:
+                    self.assertIsNone(getattr(args, oid))
             if dict(manifest.profiles[profile].inputs)["startup_wav"] == "forbidden":
                 self.assertIsNone(args.startup_wav)
             combos += 1
-        self.assertEqual(combos, 1 + len(indicator.values))  # shutter-feedback (off only) + xpan-crop x 4
+        # shutter-feedback (both off only) + xpan-crop x 4 start x 2 stop cues
+        self.assertEqual(combos, 1 + len(indicator.values) * len(stop.values))
 
     def test_incompatible_option_is_disabled_with_a_reason_and_reset_on_profile_change(self):
         s = state.AssistantState()
         s.set_profile("xpan-crop")
         s.set_option("record_indicator", "ding")
-        (view,) = s.option_views()
+        s.set_option("record_stop_indicator", "dong")
+        view, stop_view = s.option_views()
+        self.assertEqual((view.id, stop_view.id), ("record_indicator", "record_stop_indicator"))
+        self.assertTrue(stop_view.enabled)
+        self.assertEqual(stop_view.value, "dong")
         self.assertTrue(view.enabled)
         self.assertEqual(view.value, "ding")
         ding = next(c for c in view.choices if c.value == "ding")
@@ -81,12 +89,14 @@ class StateTests(unittest.TestCase):
         chirp = next(c for c in view.choices if c.value == "chirp2")
         self.assertEqual(chirp.status_label, "Experimental")
         s.set_profile("shutter-feedback")
-        (view,) = s.option_views()
-        self.assertFalse(view.enabled)
-        self.assertIn("xpan-crop", view.reason)
-        self.assertEqual(view.value, "off")
+        for view in s.option_views():
+            self.assertFalse(view.enabled)
+            self.assertIn("xpan-crop", view.reason)
+            self.assertEqual(view.value, "off")
         with self.assertRaisesRegex(ValueError, "xpan-crop"):
             s.set_option("record_indicator", "ding")
+        with self.assertRaisesRegex(ValueError, "xpan-crop"):
+            s.set_option("record_stop_indicator", "dong")
         with self.assertRaises(ValueError):
             s.set_option("record_indicator", "loud")
         with self.assertRaises(ValueError):
@@ -118,6 +128,10 @@ class StateTests(unittest.TestCase):
         s.set_option("record_indicator", "ding")  # the indicator adds fingerprinted pages
         self.assertEqual(s.rom_check().status, state.UNCHECKED)
         s.set_option("record_indicator", "off")
+        self.assertEqual(s.rom_check().status, state.OK)
+        s.set_option("record_stop_indicator", "dong")  # so does the stop cue on its own
+        self.assertEqual(s.rom_check().status, state.UNCHECKED)
+        s.set_option("record_stop_indicator", "off")
         self.assertEqual(s.rom_check().status, state.OK)
 
     def test_startup_toolchain_detection_never_replaces_a_picked_toolchain(self):
@@ -155,6 +169,9 @@ class StateTests(unittest.TestCase):
         m = features.load()
         path = state.default_output_dir("xpan-crop", {"record_indicator": "ding"}, m, datetime(2026, 11, 18, 9, 5, 7))
         self.assertEqual(path, ROOT / "build" / "gui-xpan-crop-ding-20261118-090507")
+        path = state.default_output_dir("xpan-crop", {"record_indicator": "ding", "record_stop_indicator": "dong"}, m,
+                                        datetime(2026, 11, 18, 9, 5, 7))
+        self.assertEqual(path.name, "gui-xpan-crop-ding-dong-20261118-090507")
         self.assertEqual(state.default_output_dir("shutter-feedback", {"record_indicator": "off"}, m,
                                                   datetime(2026, 1, 2, 3, 4, 5)).name,
                          "gui-shutter-feedback-20260102-030405")
@@ -171,14 +188,18 @@ class CheckTests(unittest.TestCase):
             real = build_mod.check_rom
             with mock.patch.object(build_mod, "check_rom",
                                    lambda p, **k: real(p, manifest=manifest, target_contract=contract, **k)):
-                good = checks.check_rom(rom_path, profile="shutter-feedback", record_indicator=None)
+                good = checks.check_rom(rom_path, profile="shutter-feedback", options={})
                 self.assertTrue(good.ok, good.message)
                 (tmp / "short.bin").write_bytes(b"\0" * 1024)
-                bad = checks.check_rom(tmp / "short.bin", profile="shutter-feedback", record_indicator=None)
+                bad = checks.check_rom(tmp / "short.bin", profile="shutter-feedback", options={})
                 self.assertFalse(bad.ok)
                 self.assertIn("exactly", bad.message)
-                missing = checks.check_rom(tmp / "nope.bin", profile="xpan-crop", record_indicator=None)
+                missing = checks.check_rom(tmp / "nope.bin", profile="xpan-crop", options={})
                 self.assertFalse(missing.ok)
+                refused = checks.check_rom(rom_path, profile="shutter-feedback",
+                                           options={"record_indicator": None, "record_stop_indicator": "dong"})
+                self.assertFalse(refused.ok)
+                self.assertIn("--record-stop-indicator requires --profile xpan-crop", refused.message)
 
             wav = tmp / "a.wav"
             wav.write_bytes(build_wav_bytes(struct.pack("<480h", *range(480))))
@@ -233,7 +254,7 @@ class RunnerTests(unittest.TestCase):
             record = {
                 "profile": "crop-only", "build_profile": "xpan-crop",
                 "format": {"sha256": hashlib.sha256(image).hexdigest()},
-                "record_indicator": {"cue": "ding"},
+                "record_indicator": {"cue": "ding", "stop_cue": "dong"},
                 "reservation": {"remaining_user_bytes": 907256},
                 "witness": {"source_manifest_sha256": "ab" * 32},
                 "caller_input_hashes": {"rom": {"sha256": "cd" * 32}, "toolchain": {"gcc_version": "15.2.1"}},
@@ -244,11 +265,11 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(s.sha256_matches_build_json)
             self.assertEqual(s.heap_floor, 524304)
             self.assertEqual(s.heap_margin, 907256 - 524304)
-            self.assertEqual(s.options, {"record_indicator": "ding"})
+            self.assertEqual(s.options, {"record_indicator": "ding", "record_stop_indicator": "dong"})
             self.assertIn("382,952", runner.memory_line(s))
             path = runner.write_contents(s, features.load())
             text = path.read_text()
-            for needle in ("hardware-untested", "xpan-crop", "Ding", "Verified on a private lab build", "ab" * 32,
+            for needle in ("hardware-untested", "xpan-crop", "Ding", "Dong", "Verified on a private lab build", "ab" * 32,
                            "BootDisk", "extra diagnostics", "compiled images differ"):
                 self.assertIn(needle, text)
             with self.assertRaises(FileExistsError):

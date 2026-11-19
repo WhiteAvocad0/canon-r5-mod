@@ -933,7 +933,7 @@
       "sha256": "198444bb2aae902f1d78bd9194f437ba419f9bbc7eb3d055d61543ea9414a552"
     }
   ],
-  "record_indicator_note": "Opt-in --record-indicator only: the GUI_SetRecordingState hook page and its two source guard pages (RecState accessor leaf, handleMovieButton/record-start callers). Verified only when the record indicator is selected, so default xpan-crop admission is unchanged.",
+  "record_indicator_note": "Opt-in --record-indicator and/or --record-stop-indicator only: the GUI_SetRecordingState hook page and its two source guard pages (RecState accessor leaf, handleMovieButton/record-start callers). Verified only when the record indicator is selected, so default xpan-crop admission is unchanged.",
   "record_indicator_code_fingerprints": [
     {
       "name": "record_indicator_page_e07c6000",

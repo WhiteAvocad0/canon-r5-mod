@@ -55,20 +55,24 @@ PROVENANCE_FILENAMES = ("conversion.json", "pcm-facts.json")
 
 FEATURES = features.load()
 RECORD_INDICATOR = FEATURES.options["record_indicator"]
+RECORD_STOP_INDICATOR = FEATURES.options["record_stop_indicator"]
+# Option id (also the build_image parameter it fills) -> its choice catalog in record_indicator.py.
+RECORD_CUE_CATALOGS = {"record_indicator": "CHOICES", "record_stop_indicator": "STOP_CHOICES"}
 
 
 def check_feature_catalog(manifest: features.FeatureManifest = FEATURES) -> None:
     """Fail closed when the feature manifest drifts from the owners it describes."""
     if manifest.default_profile != "shutter-feedback" or set(manifest.profile_ids) != {"shutter-feedback", "xpan-crop"}:
         raise ValueError("feature manifest profiles disagree with the profiles build_image implements")
-    if set(manifest.inputs) != {"startup_wav", "shutter_wav"} or set(manifest.options) != {"record_indicator"}:
+    if set(manifest.inputs) != {"startup_wav", "shutter_wav"} or set(manifest.options) != set(RECORD_CUE_CATALOGS):
         raise ValueError("feature manifest inputs/options disagree with build_image parameters")
     for spec in (*manifest.inputs.values(), *manifest.options.values()):
         if spec.flag != "--" + spec.id.replace("_", "-"):
             raise ValueError(f"feature manifest flag {spec.flag} does not name parameter {spec.id}")
-    indicator = manifest.options["record_indicator"]
-    if indicator.values != ri.CHOICES or indicator.default != ri.OFF:
-        raise ValueError("feature manifest record indicator choices disagree with record_indicator.CHOICES")
+    for oid, catalog in RECORD_CUE_CATALOGS.items():
+        option = manifest.options[oid]
+        if option.values != getattr(ri, catalog) or option.default != ri.OFF:
+            raise ValueError(f"feature manifest {oid} choices disagree with record_indicator.{catalog}")
 
 
 check_feature_catalog()
@@ -79,13 +83,18 @@ def _flags(input_ids) -> list[str]:
 
 
 def _api_violations(
-    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, record_indicator: str | None
+    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, options: dict[str, str | None]
 ) -> list[features.Violation]:
-    """Manifest rules a build_image call breaks. The API treats an option's default ("off") as not selected."""
+    """Manifest rules a build_image call breaks. options maps option id -> build_image argument.
+
+    The API treats an option's default ("off") as not selected."""
     return FEATURES.selection_violations(
         profile,
         inputs={"startup_wav": startup_wav is not None, "shutter_wav": shutter_wav is not None},
-        options={"record_indicator": None if record_indicator in (None, RECORD_INDICATOR.default) else record_indicator},
+        options={
+            oid: None if options.get(oid) in (None, option.default) else options[oid]
+            for oid, option in FEATURES.options.items()
+        },
     )
 
 
@@ -103,12 +112,10 @@ def _api_message(v: features.Violation) -> str:
 
 
 def api_selection_error(
-    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, record_indicator: str | None
+    profile: str, *, startup_wav: Path | None, shutter_wav: Path | None, options: dict[str, str | None]
 ) -> str | None:
     """The first manifest rule a build_image call breaks, in build_image's wording."""
-    violations = _api_violations(
-        profile, startup_wav=startup_wav, shutter_wav=shutter_wav, record_indicator=record_indicator
-    )
+    violations = _api_violations(profile, startup_wav=startup_wav, shutter_wav=shutter_wav, options=options)
     return _api_message(violations[0]) if violations else None
 
 
@@ -297,6 +304,7 @@ def check_rom(
     *,
     profile: str = FEATURES.default_profile,
     record_indicator: str | None = None,
+    record_stop_indicator: str | None = None,
     manifest: dict = M,
     target_contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
@@ -307,9 +315,10 @@ def check_rom(
     Reads the ROM only: no toolchain, no output directory, no writes. Raises the
     same errors the build would raise for the ROM. Returns a short summary."""
     # WAV inputs are not part of a ROM check; every other selection rule applies.
+    options = {"record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator}
     violations = [
         v
-        for v in _api_violations(profile, startup_wav=None, shutter_wav=None, record_indicator=record_indicator)
+        for v in _api_violations(profile, startup_wav=None, shutter_wav=None, options=options)
         if v.kind != features.MISSING_INPUT
     ]
     if violations:
@@ -320,6 +329,7 @@ def check_rom(
         admitted = admit_xpan_rom(
             rom_path,
             indicator=record_indicator,
+            stop_indicator=record_stop_indicator,
             manifest=manifest,
             target_contract=target_contract,
             xpan_contract=xpan_contract,
@@ -331,7 +341,8 @@ def check_rom(
     summary = {
         "rom_admitted": True,
         "profile": profile,
-        "record_indicator": ri.admit_choice(record_indicator) if profile == "xpan-crop" else None,
+        "record_indicator": ri.admit_choice(record_indicator, "start") if profile == "xpan-crop" else None,
+        "record_stop_indicator": ri.admit_choice(record_stop_indicator, "stop") if profile == "xpan-crop" else None,
         "target": provenance["target"],
         "resolved_path": str(rom_resolved),
         "bytes": provenance["bytes"],
@@ -360,10 +371,14 @@ def build_image(
     policy_path: Path = POLICY_PATH,
     schema: dict = AUDIO_LOG_SCHEMA,
     record_indicator: str | None = None,
+    record_stop_indicator: str | None = None,
 ) -> dict:
     """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
     error = api_selection_error(
-        profile, startup_wav=startup_wav, shutter_wav=shutter_wav, record_indicator=record_indicator
+        profile,
+        startup_wav=startup_wav,
+        shutter_wav=shutter_wav,
+        options={"record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator},
     )
     if error:
         raise ValueError(error)
@@ -384,6 +399,7 @@ def build_image(
             xpan_hooks=xpan_hooks,
             policy_path=policy_path,
             record_indicator=record_indicator,
+            record_stop_indicator=record_stop_indicator,
         )
     """Execute the full offline shutter-feedback build into a fresh output directory."""
     env = controlled_environment()
@@ -967,7 +983,9 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output,
         profile=args.profile,
         record_indicator=args.record_indicator,
+        record_stop_indicator=args.record_stop_indicator,
     )
+    indicator = record.get("record_indicator") or {}
     print(
         json.dumps(
             {
@@ -978,8 +996,11 @@ def main(argv: list[str] | None = None) -> int:
                 "sha256": record["format"]["sha256"],
                 "rom_sha256": record["caller_input_hashes"]["rom"]["sha256"],
                 "reservation": record["reservation"],
-                "record_indicator": (record.get("record_indicator") or {}).get("cue", "off")
+                "record_indicator": indicator.get("cue", "off")
                 if args.profile in RECORD_INDICATOR.profiles
+                else None,
+                "record_stop_indicator": indicator.get("stop_cue", "off")
+                if args.profile in RECORD_STOP_INDICATOR.profiles
                 else None,
             }
         )

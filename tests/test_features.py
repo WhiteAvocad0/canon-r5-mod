@@ -27,7 +27,7 @@ RAW = json.loads(features.FEATURES_PATH.read_text())
 
 
 def legacy_parser():
-    """Frozen copy of the pre-manifest build.py argument parser (commit 81df0e0)."""
+    """Frozen copy of the pre-manifest build.py argument parser (main at commit 0754c4a)."""
     ap = argparse.ArgumentParser(
         description=(
             "Offline builder for Canon EOS R5 (firmware 2.2.1) shutter-feedback sound mod (default) "
@@ -38,7 +38,10 @@ def legacy_parser():
         "--profile",
         choices=("shutter-feedback", "xpan-crop"),
         default="shutter-feedback",
-        help="Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
+        help=(
+            "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop "
+            "(no WAVs; silent unless --record-indicator or --record-stop-indicator)"
+        ),
     )
     ap.add_argument("--rom", type=Path, required=True, help="Path to user's 64 MiB Canon EOS R5 2.2.1 ROM dump")
     ap.add_argument("--startup-wav", type=Path, required=False, help="Path to 48 kHz mono 16-bit PCM WAVE startup clip")
@@ -54,11 +57,20 @@ def legacy_parser():
             "(default off; 'ding' is the cue tested on a private lab build)"
         ),
     )
+    ap.add_argument(
+        "--record-stop-indicator",
+        choices=("off", "dong"),
+        default=None,
+        help=(
+            "xpan-crop only: opt-in movie record stop cue played once when a take ends "
+            "(default off; independent of --record-indicator; 'dong' is the cue tested on a private lab build)"
+        ),
+    )
     return ap
 
 
 def legacy_cli(argv):
-    """Frozen copy of the pre-manifest build.py main() argument handling (commit 81df0e0).
+    """Frozen copy of the pre-manifest build.py main() argument handling (main at commit 0754c4a).
 
     Returns ("exit", code, stderr) or ("build", kwargs)."""
     ap = legacy_parser()
@@ -72,6 +84,8 @@ def legacy_cli(argv):
             else:
                 if args.record_indicator is not None:
                     ap.error("--record-indicator requires --profile xpan-crop")
+                if args.record_stop_indicator is not None:
+                    ap.error("--record-stop-indicator requires --profile xpan-crop")
                 missing = [
                     flag
                     for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
@@ -84,7 +98,7 @@ def legacy_cli(argv):
     return ("build", dict(
         rom_path=args.rom, startup_wav=args.startup_wav, shutter_wav=args.shutter_wav,
         toolchain_dir=args.toolchain, output_dir=args.output, profile=args.profile,
-        record_indicator=args.record_indicator,
+        record_indicator=args.record_indicator, record_stop_indicator=args.record_stop_indicator,
     ))
 
 
@@ -112,14 +126,16 @@ class PassedValidation(Exception):
     pass
 
 
-def legacy_api(profile, startup_wav, shutter_wav, record_indicator):
-    """Frozen copy of the pre-manifest build_image() selection checks (commit 81df0e0)."""
+def legacy_api(profile, startup_wav, shutter_wav, record_indicator, record_stop_indicator):
+    """Frozen copy of the pre-manifest build_image() selection checks (main at commit 0754c4a)."""
     if profile != "xpan-crop" and record_indicator not in (None, "off"):
         raise ValueError("--record-indicator requires --profile xpan-crop")
+    if profile != "xpan-crop" and record_stop_indicator not in (None, "off"):
+        raise ValueError("--record-stop-indicator requires --profile xpan-crop")
     if profile == "xpan-crop":
         if startup_wav is not None or shutter_wav is not None:
             raise ValueError("--profile xpan-crop forbids --startup-wav and --shutter-wav")
-        return ("xpan", record_indicator)
+        return ("xpan", record_indicator, record_stop_indicator)
     if profile != "shutter-feedback":
         raise ValueError(f"Unsupported build profile: {profile!r}")
     if startup_wav is None or shutter_wav is None:
@@ -127,11 +143,11 @@ def legacy_api(profile, startup_wav, shutter_wav, record_indicator):
     return ("shutter-feedback", None)
 
 
-def manifest_api(profile, startup_wav, shutter_wav, record_indicator):
+def manifest_api(profile, startup_wav, shutter_wav, record_indicator, record_stop_indicator):
     import xpan_build
 
     def fake_xpan(**kwargs):
-        return ("xpan", kwargs["record_indicator"])
+        return ("xpan", kwargs["record_indicator"], kwargs["record_stop_indicator"])
 
     def stop():
         raise PassedValidation
@@ -142,6 +158,7 @@ def manifest_api(profile, startup_wav, shutter_wav, record_indicator):
             return build_mod.build_image(
                 rom_path=Path("r.bin"), startup_wav=startup_wav, shutter_wav=shutter_wav,
                 toolchain_dir=Path("t"), output_dir=Path("o"), profile=profile, record_indicator=record_indicator,
+                record_stop_indicator=record_stop_indicator,
             )
         except PassedValidation:
             return ("shutter-feedback", None)
@@ -167,6 +184,14 @@ class ManifestLoadingTests(unittest.TestCase):
         for value in ("chirp2", "2k150loud"):
             self.assertEqual(indicator.choice(value).status, "experimental")
         self.assertIsNone(indicator.choice("off").status)
+        stop = m.options["record_stop_indicator"]
+        self.assertEqual(stop.values, ri.STOP_CHOICES)
+        self.assertEqual(stop.default, ri.OFF)
+        self.assertEqual(stop.profiles, ("xpan-crop",))
+        self.assertEqual(stop.choice("dong").status, "private-lab-verified")
+        self.assertIsNone(stop.choice("off").status)
+        # Evidence wording follows docs/usage.md: the dong ran with the ding only.
+        self.assertIn("Without a start cue it has not run on hardware", stop.choice("dong").status_detail)
         # Evidence wording follows docs/usage.md's evidence boundary.
         self.assertIn("private A/B trial", indicator.choice("chirp2").status_detail)
         self.assertIn("start request", indicator.choice("2k150loud").status_detail)
@@ -215,6 +240,14 @@ class ManifestLoadingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "record_indicator.CHOICES"):
             build_mod.check_feature_catalog(features.FeatureManifest(raw))
         raw = copy.deepcopy(RAW)
+        raw["options"][1]["choices"].append({"value": "ding", "label": "Ding", "status": "experimental"})
+        with self.assertRaisesRegex(ValueError, "record_indicator.STOP_CHOICES"):
+            build_mod.check_feature_catalog(features.FeatureManifest(raw))
+        raw = copy.deepcopy(RAW)
+        raw["options"].pop(1)
+        with self.assertRaisesRegex(ValueError, "options"):
+            build_mod.check_feature_catalog(features.FeatureManifest(raw))
+        raw = copy.deepcopy(RAW)
         raw["profiles"].append({**raw["profiles"][1], "id": "new-profile"})
         with self.assertRaisesRegex(ValueError, "profiles"):
             build_mod.check_feature_catalog(features.FeatureManifest(raw))
@@ -223,11 +256,12 @@ class ManifestLoadingTests(unittest.TestCase):
 class ConflictRuleTests(unittest.TestCase):
     m = features.load()
 
-    def kinds(self, profile, startup=False, shutter=False, indicator=None):
+    def kinds(self, profile, startup=False, shutter=False, indicator=None, stop=None):
         return [
             (v.kind, v.subjects)
             for v in self.m.selection_violations(
-                profile, inputs={"startup_wav": startup, "shutter_wav": shutter}, options={"record_indicator": indicator}
+                profile, inputs={"startup_wav": startup, "shutter_wav": shutter},
+                options={"record_indicator": indicator, "record_stop_indicator": stop},
             )
         ]
 
@@ -237,6 +271,18 @@ class ConflictRuleTests(unittest.TestCase):
                          [(features.OPTION_REQUIRES_PROFILE, ("record_indicator",))])
         self.assertEqual(self.m.option_availability("xpan-crop", "record_indicator"), (True, None))
         enabled, reason = self.m.option_availability("shutter-feedback", "record_indicator")
+        self.assertFalse(enabled)
+        self.assertIn("xpan-crop", reason)
+
+    def test_record_stop_indicator_requires_xpan_crop_and_is_independent_of_the_start_cue(self):
+        for indicator in (None, "off", "ding"):
+            self.assertEqual(self.kinds("xpan-crop", indicator=indicator, stop="dong"), [])
+        self.assertEqual(self.kinds("shutter-feedback", True, True, stop="dong"),
+                         [(features.OPTION_REQUIRES_PROFILE, ("record_stop_indicator",))])
+        self.assertEqual(self.kinds("shutter-feedback", True, True, "ding", "dong"),
+                         [(features.OPTION_REQUIRES_PROFILE, ("record_indicator",)),
+                          (features.OPTION_REQUIRES_PROFILE, ("record_stop_indicator",))])
+        enabled, reason = self.m.option_availability("shutter-feedback", "record_stop_indicator")
         self.assertFalse(enabled)
         self.assertIn("xpan-crop", reason)
 
@@ -266,18 +312,19 @@ class ValidationEquivalenceTests(unittest.TestCase):
         profiles = [None, "shutter-feedback", "xpan-crop", "bogus"]
         wavs = [None, "a.wav"]
         indicators = [None, "off", "ding", "chirp2", "2k150loud", "loud"]
+        stops = [None, "off", "dong", "ding"]
         extras = [[], ["--force"], ["--skip-target-check"]]
         drops = [None, "--rom", "--toolchain", "--output"]
         seen = {"exit": 0, "build": 0}
-        for profile, startup, shutter, indicator, extra, drop in itertools.product(
-            profiles, wavs, wavs, indicators, extras, drops
+        for profile, startup, shutter, indicator, stop, extra, drop in itertools.product(
+            profiles, wavs, wavs, indicators, stops, extras, drops
         ):
             argv = []
             for flag, value in (("--rom", "r.bin"), ("--toolchain", "tc"), ("--output", "out")):
                 if flag != drop:
                     argv += [flag, value]
             for flag, value in (("--profile", profile), ("--startup-wav", startup), ("--shutter-wav", shutter),
-                                ("--record-indicator", indicator)):
+                                ("--record-indicator", indicator), ("--record-stop-indicator", stop)):
                 if value is not None:
                     argv += [flag, value]
             argv += extra
@@ -286,24 +333,25 @@ class ValidationEquivalenceTests(unittest.TestCase):
                 self.assertEqual(manifest_cli(argv), expected)
                 seen[expected[0]] += 1
         # Accepted: shutter-feedback with both WAVs (implicit or explicit profile), and
-        # xpan-crop without WAVs for each of the five indicator spellings; all else refused.
-        self.assertEqual(seen["build"], 7)
-        self.assertEqual(seen["exit"], 4 * 2 * 2 * 6 * 3 * 4 - 7)
+        # xpan-crop without WAVs for each of the five start x three stop spellings; all else refused.
+        self.assertEqual(seen["build"], 2 + 5 * 3)
+        self.assertEqual(seen["exit"], 4 * 2 * 2 * 6 * 4 * 3 * 4 - (2 + 5 * 3))
 
     def test_help_text_is_unchanged(self):
         self.assertEqual(build_mod.build_parser().format_help(), legacy_parser().format_help())
 
     def test_api_matrix_matches_the_legacy_build_image(self):
-        for profile, startup, shutter, indicator in itertools.product(
+        for profile, startup, shutter, indicator, stop in itertools.product(
             ["shutter-feedback", "xpan-crop", "bogus", None],
             [None, Path("a.wav")],
             [None, Path("b.wav")],
             [None, "off", "ding", "loud"],
+            [None, "off", "dong", "loud"],
         ):
-            with self.subTest(profile=profile, startup=startup, shutter=shutter, indicator=indicator):
+            with self.subTest(profile=profile, startup=startup, shutter=shutter, indicator=indicator, stop=stop):
                 self.assertEqual(
-                    outcome(manifest_api, profile, startup, shutter, indicator),
-                    outcome(legacy_api, profile, startup, shutter, indicator),
+                    outcome(manifest_api, profile, startup, shutter, indicator, stop),
+                    outcome(legacy_api, profile, startup, shutter, indicator, stop),
                 )
 
 
@@ -320,6 +368,7 @@ class CheckRomTests(unittest.TestCase):
             self.assertEqual(summary["bytes"], manifest["dump_bytes"])
             self.assertEqual(summary["profile"], "shutter-feedback")
             self.assertIsNone(summary["record_indicator"])
+            self.assertIsNone(summary["record_stop_indicator"])
             self.assertEqual(sorted(root.iterdir()), before)
 
             short = root / "short.bin"
@@ -334,6 +383,8 @@ class CheckRomTests(unittest.TestCase):
                 build_mod.check_rom(rom_path, manifest=manifest, target_contract=contract)
             with self.assertRaisesRegex(ValueError, "requires --profile xpan-crop"):
                 build_mod.check_rom(rom_path, record_indicator="ding", manifest=manifest, target_contract=contract)
+            with self.assertRaisesRegex(ValueError, "--record-stop-indicator requires --profile xpan-crop"):
+                build_mod.check_rom(rom_path, record_stop_indicator="dong", manifest=manifest, target_contract=contract)
             with self.assertRaisesRegex(ValueError, "Unsupported build profile"):
                 build_mod.check_rom(rom_path, profile="xpan", manifest=manifest, target_contract=contract)
 
@@ -346,13 +397,18 @@ class CheckRomTests(unittest.TestCase):
                           xpan_contract=xpan_contract, xpan_hooks=hooks)
             summary = build_mod.check_rom(rom_path, **kwargs)
             self.assertEqual(summary["record_indicator"], "off")
+            self.assertEqual(summary["record_stop_indicator"], "off")
             self.assertGreater(summary["verified_xpan_regions"], 0)
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["gang100.bin"])
             # The indicator needs its own hook and fingerprinted pages, as in a build.
             with self.assertRaisesRegex(ValueError, "record indicator"):
                 build_mod.check_rom(rom_path, record_indicator="ding", **kwargs)
+            with self.assertRaisesRegex(ValueError, "record indicator hook inventory .* --record-stop-indicator dong"):
+                build_mod.check_rom(rom_path, record_stop_indicator="dong", **kwargs)
             with self.assertRaisesRegex(ValueError, "unknown --record-indicator"):
                 build_mod.check_rom(rom_path, record_indicator="loud", **kwargs)
+            with self.assertRaisesRegex(ValueError, "unknown --record-stop-indicator"):
+                build_mod.check_rom(rom_path, record_stop_indicator="ding", **kwargs)
             hook = hooks[0]
             va = int(hook["va"], 16) if isinstance(hook["va"], str) else hook["va"]
             bad = bytearray(rom)

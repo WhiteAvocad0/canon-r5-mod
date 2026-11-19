@@ -2,7 +2,7 @@
 
 The row formats and argument names are read from rec_tone.h (REC_TONE_REPORT_ROWS),
 the single owner of their text. Rows are only emitted by builds made with
---record-indicator; a group is bound to one build by its 16-hex source id.
+--record-indicator and/or --record-stop-indicator; a group is bound to one build by its 16-hex source id.
 Counters describe what the worker observed; they do not prove what was audible.
 """
 from __future__ import annotations
@@ -74,8 +74,8 @@ def decode_records(parsed: dict, source_id: str) -> dict:
                 values[name] = _values(row, names)
             if values["begin"]["report"] != values["end"]["report"]:
                 raise ValueError("begin/end report sequence mismatch")
-            counts = {**values["begin"], **values["counts"], **values["drops"]}
-            counts.pop("report")
+            counts = {k: v for name, _, _ in rows if name not in ("begin", "end") for k, v in values[name].items()}
+            counts.update(ready=values["begin"]["ready"], fault=values["begin"]["fault"])
             groups.append({
                 "report": values["begin"]["report"],
                 "partition_index": pending[0]["partition_index"],
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     build = json.loads((args.build / "build.json").read_text())
     if not build.get("record_indicator"):
-        ap.error("this build was made without --record-indicator; it emits no R5T1 rows")
+        ap.error("this build was made without --record-indicator or --record-stop-indicator; it emits no R5T1 rows")
     print(json.dumps(decode(args.export.read_bytes(), build["observer"]["source_id"]), indent=2))
     return 0
 

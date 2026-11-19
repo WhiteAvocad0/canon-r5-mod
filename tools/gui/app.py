@@ -1099,7 +1099,7 @@ class App:
             elif choice.status_label:
                 reason.configure(text=f"Status: {choice.status_label}. {choice.status_text}")
             else:
-                reason.configure(text="Off: no indicator code, hook or memory is added.")
+                reason.configure(text="Off. With both record cues off, no indicator code, hook or memory is added.")
         for view in s.input_views():
             var, button, status = self.input_widgets[view.id]
             var.set(str(view.path or ""))
@@ -1134,8 +1134,8 @@ class App:
         s = self.state
         key = s.begin(what, input_id)
         if what == "rom":
-            rom, profile, indicator = key
-            work = lambda: checks.check_rom(Path(rom), profile=profile, record_indicator=indicator)
+            rom, profile, options = key
+            work = lambda: checks.check_rom(Path(rom), profile=profile, options=dict(options))
         elif what == "toolchain":
             work = lambda: checks.check_toolchain(Path(key[0]))
         else:

@@ -29,7 +29,7 @@
       "cli_help": "Path to 48 kHz mono 16-bit PCM WAVE shutter clip"
     }
   },
-  "profile_cli_help": "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator)",
+  "profile_cli_help": "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator or --record-stop-indicator)",
   "profile_exclusivity": "XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.",
   "profiles": [
     {
@@ -46,7 +46,7 @@
     {
       "id": "xpan-crop",
       "label": "XPan 2.71:1 crop (silent)",
-      "description": "Replaces 16:9 with a 2.71:1 XPan crop: menu and Q label, live LCD/EVF framing, saved JPEG/RAW crop, playback masking and immediate XPan bars in automatic review. Adds no sounds unless you pick a record indicator.",
+      "description": "Replaces 16:9 with a 2.71:1 XPan crop: menu and Q label, live LCD/EVF framing, saved JPEG/RAW crop, playback masking and immediate XPan bars in automatic review. Adds no sounds unless you pick a record start or stop cue.",
       "status": "private-lab-verified",
       "status_detail": "Menu, Q label, live framing, saved crop, playback masking and automatic review were confirmed on private lab builds (17-18 November 2026). Other qualities, modes and active auto-rotation are unverified.",
       "inputs": {
@@ -60,7 +60,7 @@
       "id": "record_indicator",
       "flag": "--record-indicator",
       "label": "Movie record indicator",
-      "description": "Plays a short generated cue when you press the movie REC button. No audio files are needed.",
+      "description": "Plays a short generated start cue when you press the movie REC button. Independent of the stop cue. No audio files are needed.",
       "profiles": ["xpan-crop"],
       "unavailable_reason": "The record indicator is part of the XPan profile only (it needs xpan-crop).",
       "default": "off",
@@ -68,7 +68,7 @@
       "choices": [
         {
           "value": "off",
-          "label": "Off (no indicator code linked)",
+          "label": "Off (no start cue)",
           "status": null
         },
         {
@@ -88,6 +88,29 @@
           "label": "Tone: single 2 kHz beep, 150 ms",
           "status": "experimental",
           "status_detail": "Ran on an earlier private build that used a later trigger, the start request. It has not run in this public single-cue configuration."
+        }
+      ]
+    },
+    {
+      "id": "record_stop_indicator",
+      "flag": "--record-stop-indicator",
+      "label": "Movie record stop cue",
+      "description": "Plays a short generated stop cue once when a movie take ends. Independent of the start cue. No audio files are needed.",
+      "profiles": ["xpan-crop"],
+      "unavailable_reason": "The record stop cue is part of the XPan profile only (it needs xpan-crop).",
+      "default": "off",
+      "cli_help": "xpan-crop only: opt-in movie record stop cue played once when a take ends (default off; independent of --record-indicator; 'dong' is the cue tested on a private lab build)",
+      "choices": [
+        {
+          "value": "off",
+          "label": "Off (no stop cue)",
+          "status": null
+        },
+        {
+          "value": "dong",
+          "label": "Dong: two falling notes, 250 ms",
+          "status": "private-lab-verified",
+          "status_detail": "Tested with the ding at the end of a take by the owner on a private lab build on 18 November 2026. Without a start cue it has not run on hardware in any form."
         }
       ]
     }

@@ -1,4 +1,5 @@
-/* Issue #14 movie record indicator. Host-testable through rec_tone_api. */
+/* Issue #14 movie record indicator: start cue on the REC press, stop cue once
+ * per ended take. Host-testable through rec_tone_api. */
 #include "rec_tone.h"
 #include "rec_state.h"
 #include "observer.h"
@@ -32,10 +33,21 @@ CODE static uint32_t rd(uint32_t address)
     return rec_tone_api.read(address);
 }
 
-/* rec_state.c is the only writer of the press counter. */
+CODE static uint32_t linked(uint32_t cue)
+{
+    return rec_tone_cues[cue].segment_count != 0u;
+}
+
+/* rec_state.c is the only writer of both counters. A counter whose cue is not
+ * linked is never read, so its events can never select a cue. */
 CODE static uint32_t press_seq(void)
 {
-    return atomic_load_explicit(&rec_press_seq, memory_order_acquire);
+    return linked(REC_TONE_CUE_START) ? atomic_load_explicit(&rec_press_seq, memory_order_acquire) : 0u;
+}
+
+CODE static uint32_t stop_seq(void)
+{
+    return linked(REC_TONE_CUE_STOP) ? atomic_load_explicit(&rec_stop_seq, memory_order_acquire) : 0u;
 }
 
 CODE static uint32_t in_mask(uint32_t value, uint32_t mask)
@@ -43,9 +55,10 @@ CODE static uint32_t in_mask(uint32_t value, uint32_t mask)
     return value < 32u && ((UINT32_C(1) << value) & mask) != 0u;
 }
 
-/* Worker only, once. The buffer is filled and cleaned before the descriptor
- * pointer is set, and it is never written again, so a timed-out or interrupted
- * DMA cannot race a rewrite. A fault leaves the pointer 0 (nothing published). */
+/* Worker only, once. Every linked buffer is filled and cleaned before any
+ * descriptor pointer is set, and none is written again, so a timed-out or
+ * interrupted DMA cannot race a rewrite. A fault leaves every pointer 0
+ * (nothing published). A cue that is not linked must be all zero. */
 CODE static void publish(void)
 {
     RT.publish_attempted = 1u;
@@ -53,21 +66,43 @@ CODE static void publish(void)
         RT.fault = REC_TONE_F_API;
         return;
     }
-    if (!CFG.segment_count || CFG.bytes != 2u * CFG.padded_samples ||
-        tone_gen_fill(rec_tone_pcm, CFG.padded_samples, rec_tone_segments, CFG.segment_count) !=
-            CFG.padded_samples) {
+    if (!linked(REC_TONE_CUE_START) && !linked(REC_TONE_CUE_STOP)) {
         RT.fault = REC_TONE_F_GEN;
         return;
     }
-    rec_tone_api.clean(rec_tone_pcm, CFG.bytes);
-    volatile uint32_t *d = rec_tone_descriptor;
-    if (((uintptr_t)d & 31u) || ((uintptr_t)rec_tone_pcm & 31u) || (CFG.bytes & 31u) || d[0] != 1u ||
-        d[1] != 0u || d[2] != CFG.bytes) {
-        RT.fault = REC_TONE_F_DESC;
-        return;
+    for (uint32_t i = 0; i < REC_TONE_CUES; ++i) {
+        const struct rec_tone_cue *c = &rec_tone_cues[i];
+        if (!linked(i)) {
+            if (c->segments || c->pcm || c->descriptor || c->padded_samples || c->bytes) {
+                RT.fault = REC_TONE_F_GEN;
+                return;
+            }
+            continue;
+        }
+        if (!c->segments || !c->pcm || !c->descriptor || c->bytes != 2u * c->padded_samples ||
+            tone_gen_fill(c->pcm, c->padded_samples, c->segments, c->segment_count) != c->padded_samples) {
+            RT.fault = REC_TONE_F_GEN;
+            return;
+        }
+        rec_tone_api.clean(c->pcm, c->bytes);
     }
-    d[1] = (uint32_t)(uintptr_t)rec_tone_pcm;
-    rec_tone_api.clean(rec_tone_descriptor, REC_TONE_DESC_BYTES);
+    for (uint32_t i = 0; i < REC_TONE_CUES; ++i) {
+        const struct rec_tone_cue *c = &rec_tone_cues[i];
+        volatile uint32_t *d = c->descriptor;
+        if (linked(i) && (((uintptr_t)d & 31u) || ((uintptr_t)c->pcm & 31u) || (c->bytes & 31u) || d[0] != 1u ||
+                          d[1] != 0u || d[2] != c->bytes)) {
+            RT.fault = REC_TONE_F_DESC;
+            return;
+        }
+    }
+    for (uint32_t i = 0; i < REC_TONE_CUES; ++i) {
+        const struct rec_tone_cue *c = &rec_tone_cues[i];
+        if (!linked(i))
+            continue;
+        volatile uint32_t *d = c->descriptor;
+        d[1] = (uint32_t)(uintptr_t)c->pcm;
+        rec_tone_api.clean(c->descriptor, REC_TONE_DESC_BYTES);
+    }
 #ifdef OBSERVER_FIRMWARE
     __asm__ volatile("dsb sy" ::: "memory");
 #endif
@@ -133,8 +168,8 @@ CODE uint32_t rec_tone_preflight(struct rec_tone_attempt *a, uint32_t actrl_mask
     return REC_TONE_PF_OK;
 }
 
-/* Presses that arrive while a cue is pending or observed join that cue; they
- * are counted, never replayed late. */
+/* Presses and ended takes that arrive while a cue is observed are counted and
+ * dropped, never replayed late. */
 CODE static void absorb(uint32_t seq)
 {
     if (seq != RT.seen) {
@@ -145,6 +180,49 @@ CODE static void absorb(uint32_t seq)
     }
 }
 
+CODE static void absorb_stop(uint32_t seq)
+{
+    if (seq != RT.stop_seen) {
+        uint32_t d = seq - RT.stop_seen;
+        RT.stop_seen = seq;
+        RT.stops = sat_add(RT.stops, d);
+        RT.stop_coalesced = sat_add(RT.stop_coalesced, d);
+    }
+}
+
+/* d >= 1 ended takes since the last tick, no cue in flight. A pending start
+ * cue belongs to a take that has ended: drop it. Extra ends, and ends while a
+ * stop cue already waits, join that one stop cue. */
+CODE static void stop_event(uint32_t d)
+{
+    RT.stops = sat_add(RT.stops, d);
+    if (RT.pending == REC_TONE_PENDING_STOP) {
+        RT.stop_coalesced = sat_add(RT.stop_coalesced, d);
+        return;
+    }
+    if (RT.pending == REC_TONE_PENDING_START)
+        RT.dropped_not_recording = sat_add(RT.dropped_not_recording, 1u);
+    RT.stop_coalesced = sat_add(RT.stop_coalesced, d - 1u);
+    RT.pending = REC_TONE_PENDING_STOP;
+    RT.pending_ticks = 0u;
+}
+
+/* d >= 1 presses since the last tick, no cue in flight. A new take drops a
+ * pending stop cue; presses while a start cue already waits join it. */
+CODE static void start_event(uint32_t d)
+{
+    RT.presses = sat_add(RT.presses, d);
+    if (RT.pending == REC_TONE_PENDING_START) {
+        RT.coalesced = sat_add(RT.coalesced, d);
+        return;
+    }
+    if (RT.pending == REC_TONE_PENDING_STOP)
+        RT.stop_superseded = sat_add(RT.stop_superseded, 1u);
+    RT.coalesced = sat_add(RT.coalesced, d - 1u);
+    RT.pending = REC_TONE_PENDING_START;
+    RT.pending_ticks = 0u;
+}
+
 CODE static void finish(uint32_t outcome)
 {
     RT.outcomes[outcome] = sat_add(RT.outcomes[outcome], 1u);
@@ -153,6 +231,7 @@ CODE static void finish(uint32_t outcome)
     if (outcome == REC_TONE_O_TIMEOUT && !RT.fault)
         RT.fault = REC_TONE_F_TIMEOUT;
     absorb(press_seq());
+    absorb_stop(stop_seq());
 }
 
 CODE static void observe(void)
@@ -190,7 +269,8 @@ CODE static void observe(void)
     }
     if (phase == REC_TONE_PHASE_ACTIVE) {
         RT.provisional_reject = 0u;
-        if (ptr == rec_tone_descriptor[1] && bytes == CFG.bytes) {
+        const struct rec_tone_cue *c = &rec_tone_cues[RT.last_cue];
+        if (ptr == c->descriptor[1] && bytes == c->bytes) {
             if (!RT.active_seen) {
                 RT.active_seen = 1u;
                 a->ticks_to_active = RT.obs_ticks;
@@ -226,55 +306,65 @@ CODE void rec_tone_step(void)
     if (!RT.publish_attempted)
         publish();
     uint32_t seq = press_seq();
+    uint32_t stop = stop_seq();
     if (RT.mode == REC_TONE_OBSERVE) { /* single-flight */
         observe();
         return;
     }
-    if (seq == RT.seen && !RT.pending)
+    if (seq == RT.seen && stop == RT.stop_seen && !RT.pending)
         return;
-    if (seq != RT.seen) {
-        if (RT.pending) {
-            absorb(seq);
-        } else {
-            uint32_t d = seq - RT.seen;
-            RT.seen = seq;
-            RT.presses = sat_add(RT.presses, d);
-            if (d > 1u)
-                RT.coalesced = sat_add(RT.coalesced, d - 1u);
-            RT.pending = 1u;
-            RT.pending_ticks = 0u;
-        }
+    /* Ends first, then presses: a take that starts after one ended (both in
+     * one tick) supersedes the stop cue. */
+    if (stop != RT.stop_seen) {
+        uint32_t d = stop - RT.stop_seen;
+        RT.stop_seen = stop;
+        stop_event(d);
     }
+    if (seq != RT.seen) {
+        uint32_t d = seq - RT.seen;
+        RT.seen = seq;
+        start_event(d);
+    }
+    const uint32_t is_stop = RT.pending == REC_TONE_PENDING_STOP;
     if (!__atomic_load_n(&RT.ready, __ATOMIC_ACQUIRE) || RT.fault) {
         RT.dropped_unready = sat_add(RT.dropped_unready, 1u);
-        RT.pending = 0u;
+        RT.pending = REC_TONE_PENDING_NONE;
         return;
     }
-    /* Never beep outside the admitted record states: a press whose start was
-     * refused or a take that already ended drops the pending cue. */
-    if (!in_mask(rd(CFG.rec_state_word), REC_TONE_REC_STATE_MASK)) {
-        RT.dropped_not_recording = sat_add(RT.dropped_not_recording, 1u);
-        RT.pending = 0u;
+    /* Never beep outside the admitted record states. A start cue: a press whose
+     * start was refused or a take that already ended drops it. A stop cue: only
+     * while idle; any other state drops it. */
+    if (!in_mask(rd(CFG.rec_state_word), is_stop ? REC_TONE_STOP_STATE_MASK : REC_TONE_REC_STATE_MASK)) {
+        if (is_stop)
+            RT.stop_not_idle = sat_add(RT.stop_not_idle, 1u);
+        else
+            RT.dropped_not_recording = sat_add(RT.dropped_not_recording, 1u);
+        RT.pending = REC_TONE_PENDING_NONE;
         return;
     }
     /* The last-attempt record is rewritten only here, never while observing. */
     struct rec_tone_attempt *a = &RT.last;
     clear_attempt(a);
-    uint32_t why = rec_tone_preflight(a, REC_TONE_ACTRL_MASK);
+    uint32_t why = rec_tone_preflight(a, is_stop ? REC_TONE_STOP_ACTRL_MASK : REC_TONE_ACTRL_MASK);
     a->preflight = why;
-    if (in_mask(why, REC_TONE_RETRY_MASK) && ++RT.pending_ticks <= REC_TONE_BUSY_TICKS)
+    if (in_mask(why, is_stop ? REC_TONE_STOP_RETRY_MASK : REC_TONE_RETRY_MASK) &&
+        ++RT.pending_ticks <= REC_TONE_BUSY_TICKS)
         return;
     if (why) {
         RT.preflight_drop[why] = sat_add(RT.preflight_drop[why], 1u);
-        RT.pending = 0u;
+        RT.pending = REC_TONE_PENDING_NONE;
         return;
     }
+    const uint32_t cue = is_stop ? REC_TONE_CUE_STOP : REC_TONE_CUE_START;
     a->se_id = REC_TONE_SE_ID;
     a->result_before = rd(a->context + REC_TONE_ABEEP_RESULT);
     a->last_id_before = rd(a->context + REC_TONE_ABEEP_LAST_ID);
-    int32_t rc = rec_tone_api.beep_start(REC_TONE_SE_ID, rec_tone_descriptor);
-    RT.pending = 0u;
+    int32_t rc = rec_tone_api.beep_start(REC_TONE_SE_ID, rec_tone_cues[cue].descriptor);
+    RT.pending = REC_TONE_PENDING_NONE;
+    RT.last_cue = cue;
     RT.submits = sat_add(RT.submits, 1u);
+    if (is_stop)
+        RT.stop_submits = sat_add(RT.stop_submits, 1u);
     RT.last.submit_rc = rc;
     if (rc != 0) { /* 5 = descriptor-copy allocation failure (E08B19B4); no retry */
         RT.submit_nonzero = sat_add(RT.submit_nonzero, 1u);
@@ -292,6 +382,7 @@ CODE void rec_tone_step(void)
 static const char begin_fmt[] DATA = RT_FMT_BEGIN;
 static const char counts_fmt[] DATA = RT_FMT_COUNTS;
 static const char drops_fmt[] DATA = RT_FMT_DROPS;
+static const char stop_fmt[] DATA = RT_FMT_STOP;
 static const char end_fmt[] DATA = RT_FMT_END;
 
 CODE void rec_tone_report(unsigned reports)
@@ -310,5 +401,7 @@ CODE void rec_tone_report(unsigned reports)
           RT.outcomes[REC_TONE_O_SETTLED], RT.outcomes[REC_TONE_O_STOPPED], RT.outcomes[REC_TONE_O_REJECTED]);
     debug(OBSERVER_CLASS, OBSERVER_LEVEL, drops_fmt, RT.outcomes[REC_TONE_O_TIMEOUT], other, RT.dropped_unready,
           RT.dropped_not_recording, dropped, RT.last.preflight, RT.last_rc);
+    debug(OBSERVER_CLASS, OBSERVER_LEVEL, stop_fmt, RT.stops, RT.stop_submits, RT.stop_coalesced,
+          RT.stop_superseded, RT.stop_not_idle, atomic_load_explicit(&rec_stop_seq, memory_order_acquire));
     debug(OBSERVER_CLASS, OBSERVER_LEVEL, end_fmt, reports);
 }

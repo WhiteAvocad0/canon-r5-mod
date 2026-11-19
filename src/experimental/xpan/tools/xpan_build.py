@@ -267,18 +267,20 @@ def admit_xpan_rom(
     rom_path: Path,
     *,
     indicator: str | None,
+    stop_indicator: str | None,
     manifest: dict = M,
     target_contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
     xpan_hooks: list[dict] | None = None,
 ) -> XPanRomAdmission:
-    """Strictly admit the selected ROM for an XPan build of this indicator choice.
+    """Strictly admit the selected ROM for an XPan build of this start/stop cue choice.
 
     Reads the ROM and the committed hook inventory only and derives the ROM-backed
     framing rows and menu vector in memory; writes nothing. build_xpan_image runs
     exactly this before it creates its output directory."""
-    indicator = ri.admit_choice(indicator)
-    indicator_on = indicator != ri.OFF
+    indicator = ri.admit_choice(indicator, "start")
+    stop_indicator = ri.admit_choice(stop_indicator, "stop")
+    indicator_on = ri.enabled(indicator, stop_indicator)
     optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
     rom_caller_path = str(rom_path)
     rom_resolved = Path(rom_path).resolve(strict=True)
@@ -287,7 +289,10 @@ def admit_xpan_rom(
     loaded_contract, loaded_hooks, _ = feature_contract.load_hooks(optional_extensions=optional_extensions)
     hooks_to_check = loaded_hooks if xpan_hooks is None else xpan_hooks
     if any(h["destination"] == "rec_state_entry" for h in hooks_to_check) != indicator_on:
-        raise ValueError("record indicator hook inventory disagrees with --record-indicator " + indicator)
+        raise ValueError(
+            f"record indicator hook inventory disagrees with --record-indicator {indicator} "
+            f"--record-stop-indicator {stop_indicator}"
+        )
 
     startup, rom_provenance = admit_xpan_rom_with_provenance(
         rom_bytes,
@@ -335,15 +340,18 @@ def build_xpan_image(
     xpan_hooks: list[dict] | None = None,
     policy_path: Path = POLICY_PATH,
     record_indicator: str | None = None,
+    record_stop_indicator: str | None = None,
 ) -> dict:
     """Execute the offline experimental XPan crop-only build into a fresh directory.
 
-    Silent by default. record_indicator selects the opt-in movie record indicator
-    cue (issue #14); "off" (the default) links none of its code, hook or pages."""
-    indicator = ri.admit_choice(record_indicator)
-    indicator_on = indicator != ri.OFF
+    Silent by default. record_indicator selects the opt-in movie record start cue
+    and record_stop_indicator the stop cue (issue #14); with both "off" (the
+    default) none of their code, hook or pages is linked."""
+    indicator = ri.admit_choice(record_indicator, "start")
+    stop_indicator = ri.admit_choice(record_stop_indicator, "stop")
+    indicator_on = ri.enabled(indicator, stop_indicator)
     optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
-    indicator_facts = ri.facts(indicator) if indicator_on else None
+    indicator_facts = ri.facts(indicator, stop_indicator) if indicator_on else None
     env = controlled_environment()
     _check_profile_headers_sync()
     _, toolchain_admission = admit_toolchain(toolchain_dir, policy_path=policy_path)
@@ -354,6 +362,7 @@ def build_xpan_image(
     ) = admit_xpan_rom(
         rom_path,
         indicator=indicator,
+        stop_indicator=stop_indicator,
         manifest=manifest,
         target_contract=target_contract,
         xpan_contract=xpan_contract,
@@ -663,7 +672,7 @@ def build_xpan_image(
         )
     else:
         indicator_record = None
-        retained = [n for n in ri.SYMBOLS if n in symbols]
+        retained = [n for n in ri.ALL_SYMBOLS if n in symbols]
         if retained:
             raise ValueError("record indicator retained without opt-in: " + ", ".join(retained))
 

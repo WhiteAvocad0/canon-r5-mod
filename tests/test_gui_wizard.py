@@ -17,7 +17,7 @@ from gui.state import AssistantState
 class FakeSummary:
     def __init__(self, out: Path, profile="xpan-crop", options=None, sha="ab" * 32, ok=True):
         self.output_dir, self.profile, self.sha256 = out, profile, sha
-        self.options = {"record_indicator": "off"} if options is None else options
+        self.options = {"record_indicator": "off", "record_stop_indicator": "off"} if options is None else options
         self.sha256_matches_build_json = ok
 
 
