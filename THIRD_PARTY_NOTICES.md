@@ -22,6 +22,16 @@ All original GPL-2.0-or-later copyright and license notices are preserved in the
 
 Building the target binary requires an external `arm-none-eabi` GNU toolchain (reference GCC `15.2.1`, e.g., xPack GNU Arm Embedded GCC) supplied by the user via `--toolchain`. No toolchain binaries are bundled in this repository.
 
+## macOS App (R5 Mod Assistant `.dmg`)
+
+The unsigned macOS app built by [`packaging/macos/`](packaging/macos/) carries this repository's tracked files unchanged, plus third-party runtime components that keep their own licenses:
+
+- the CPython `3.13` runtime and standard library (Python Software Foundation License Version 2, with the licenses of the libraries that build includes; see <https://docs.python.org/3.13/license.html>). Python's `LICENSE.txt` is shipped in the `.dmg`'s `Licenses` folder;
+- Tcl/Tk, used by Tkinter (Tcl/Tk license, <https://www.tcl-lang.org/software/tcltk/license.html>);
+- the PyInstaller bootloader (GPL-2.0-or-later with the PyInstaller bootloader exception, <https://github.com/pyinstaller/pyinstaller/blob/develop/COPYING.txt>).
+
+The app contains no Canon firmware, ROM data, built `autoexec.bin` images or toolchain binaries.
+
 ## User-Supplied Firmware Dumps and Audio Files
 
 This repository contains **no** proprietary Canon firmware binaries, ROM dumps, or audio clips.
