@@ -1,4 +1,4 @@
-"""Design tokens of the setup assistant, and a headless smoke test of every wizard step."""
+"""Design tokens of R5 Mod Assistant, and a headless smoke test of every wizard step."""
 import ast
 from pathlib import Path
 import re

@@ -1,4 +1,4 @@
-"""Input checks for the build assistant, delegated to the builder's own admission code.
+"""Input checks for R5 Mod Assistant, delegated to the builder's own admission code.
 
 Nothing here weakens or re-implements a builder check: the ROM goes through
 build.check_rom (the exact admission a build runs), WAVs through

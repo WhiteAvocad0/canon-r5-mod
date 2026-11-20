@@ -31,7 +31,7 @@ Short owner checks have run on two public images (the `ding` image `0adff001` an
 - [ ] [#12 29:59 recording-limit removal](https://github.com/WhiteAvocad0/canon-r5-mod/issues/12): a private build showed that the limit getter controls the auto-stop; a 59:59 test is pending.
 - [ ] [#15 Screenshots](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15): playback-overlay capture looks feasible through Canon's stock SaveVRAM event procedure (GUI layer only); full-frame-rate screen recording isn't feasible on camera, but the R5's HDMI output to an external recorder is a practical route.
 - [ ] [#13 Live Photos](https://github.com/WhiteAvocad0/canon-r5-mod/issues/13): a host-side packager works on the Mac; the iPhone check is pending. Not in this repository.
-- [ ] [#16 Build assistant](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16): a desktop *prototype* for building, preparing a camera-formatted card's boot markers (macOS; exFAT verified on the owner's Mac and camera, FAT32 untested) and copying without a terminal; see [docs/gui.md](docs/gui.md).
+- [ ] [#16 R5 Mod Assistant](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16): a desktop *prototype* for building, preparing a camera-formatted card's boot markers (macOS; exFAT verified on the owner's Mac and camera, FAT32 untested) and copying without a terminal; see [docs/gui.md](docs/gui.md).
 - [ ] [#7 Sound packs, volume and quick mute](https://github.com/WhiteAvocad0/canon-r5-mod/issues/7): host prototype only.
 - [ ] Research only: [#5 anamorphic desqueeze](https://github.com/WhiteAvocad0/canon-r5-mod/issues/5), [#6 still-photo zebras/false colour/waveform](https://github.com/WhiteAvocad0/canon-r5-mod/issues/6), [#8 preset libraries](https://github.com/WhiteAvocad0/canon-r5-mod/issues/8), [#9 JSON colour recipes](https://github.com/WhiteAvocad0/canon-r5-mod/issues/9), [#10 exposure sequences](https://github.com/WhiteAvocad0/canon-r5-mod/issues/10), [#11 M-Film](https://github.com/WhiteAvocad0/canon-r5-mod/issues/11), [#4 HNCS-inspired profiles](https://github.com/WhiteAvocad0/canon-r5-mod/issues/4).
 - [ ] [#1 R6-family ports](https://github.com/WhiteAvocad0/canon-r5-mod/issues/1): not started.
@@ -59,7 +59,7 @@ Community ports and firmware-specific validation are welcome. See [docs/porting.
 > [!TIP]
 > **New to this?** Start with the plain-language **[Getting started guide](docs/getting-started.md)**. It explains how the pieces fit together and walks through building, installing on a prepared card, testing and recovery.
 >
-> **Prefer a window to a terminal?** The **[setup assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) guides you step by step: camera check, ROM, BootDisk, features, build tools, build, boot card, copy and first test, with a check at every step and saved progress. On a Mac it can also prepare a card you formatted in the camera (backup first, one confirmation, Undo). The exFAT card path was verified on the owner's Mac and camera; FAT32 is untested. Its guided Canon Basic ROM-dump and BootDisk steps prepare a `<= 32 GB` FAT32 SDHC card for you to run in the camera and verify the returned dump or `gang200.bin`/`gang201.bin` readback (host-tested only; `DisableBootDisk` is hardware-untested). It runs the same builder and checks.
+> **Prefer a window to a terminal?** **[R5 Mod Assistant](docs/gui.md)** (*prototype*, `python3 tools/gui/app.py`) guides you step by step: camera check, ROM, BootDisk, features, build tools, build, boot card, copy and first test, with a check at every step and saved progress. On a Mac it can also prepare a card you formatted in the camera (backup first, one confirmation, Undo). The exFAT card path was verified on the owner's Mac and camera; FAT32 is untested. Its guided Canon Basic ROM-dump and BootDisk steps prepare a `<= 32 GB` FAT32 SDHC card for you to run in the camera and verify the returned dump or `gang200.bin`/`gang201.bin` readback (host-tested only; `DisableBootDisk` is hardware-untested). It runs the same builder and checks.
 
 Full prerequisites, ROM acquisition guidance, card preparation notes, and recovery limits are in **[docs/usage.md](docs/usage.md)**. For deep XPan internals, see **[docs/xpan.md](docs/xpan.md)**.
 
@@ -110,7 +110,7 @@ Add `--record-indicator ding` to the same command for the opt-in movie record st
 > [!NOTE]
 > `--profile xpan-crop` is **silent by default (no audio)** and rejects `--startup-wav` / `--shutter-wav`. It derives `target-page.bin`, `frame_row_constants.h`, `menu-vector.bin`, and `feature-targets.h` into `--output` **only after** strict verification of R5 `2.2.1` immutable code, table, and vector resource fingerprints (`tools/contracts.py`), while admitting per-camera settings variance outside immutable code and recording your actual ROM SHA-256 as provenance.
 
-Both commands never contact a camera or write removable media and produce `autoexec.bin`, `build.json`, `source-manifest.json`, `symbols.json`, and `handoff.map` inside `--output`. Next, follow **[docs/usage.md](docs/usage.md)** for card backup, existing `BootDisk` prerequisite checks, native `EOS_DEVELOP`/`BOOTDISK` card metadata, and recovery limits (no bootflag activator is provided; the only card writer is the build assistant's opt-in boot-marker step).
+Both commands never contact a camera or write removable media and produce `autoexec.bin`, `build.json`, `source-manifest.json`, `symbols.json`, and `handoff.map` inside `--output`. Next, follow **[docs/usage.md](docs/usage.md)** for card backup, existing `BootDisk` prerequisite checks, native `EOS_DEVELOP`/`BOOTDISK` card metadata, and recovery limits (no bootflag activator is provided; the only card writer is R5 Mod Assistant's opt-in boot-marker step).
 
 ---
 
@@ -143,7 +143,7 @@ Keep the silent XPan and audio profiles separate.
 Inspect the card's actual device identity, capacity, filesystem and
 writability before preparing anything. Preserve existing files and
 honor my backup instructions. This builder does not enable BootDisk
-or prepare boot sectors; only the build assistant's opt-in Prepare
+or prepare boot sectors; only R5 Mod Assistant's opt-in Prepare
 card tab writes boot markers, when I choose it. Do not invent other
 steps, format media, write camera flags, or force an unmount. If a required prerequisite
 is unknown, explain it and continue only the independent offline work.

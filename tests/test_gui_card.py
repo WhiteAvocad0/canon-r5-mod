@@ -1,4 +1,4 @@
-"""Build assistant copy-to-card logic against temporary folders (no device, no display)."""
+"""R5 Mod Assistant copy-to-card logic against temporary folders (no device, no display)."""
 from datetime import datetime
 import hashlib
 import os

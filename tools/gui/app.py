@@ -1,4 +1,4 @@
-"""Canon R5 mod build assistant (prototype, issue #16 Phase 1).
+"""R5 Mod Assistant (prototype, issue #16 Phase 1).
 
 Run:  python3 tools/gui/app.py
 
@@ -25,7 +25,7 @@ import traceback
 import webbrowser
 
 if sys.version_info < (3, 11):
-    sys.exit("The build assistant needs Python 3.11 or newer (https://www.python.org/downloads/).")
+    sys.exit("R5 Mod Assistant needs Python 3.11 or newer (https://www.python.org/downloads/).")
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 ROOT = TOOLS_DIR.parent
@@ -242,7 +242,7 @@ class App:
 
         self.root = tk.Tk() if root is None else root
         self.theme = theme.apply(self.root, ttk, tkfont, appearance=appearance)
-        self.root.title("Canon R5 mod setup assistant (prototype)")
+        self.root.title("R5 Mod Assistant (prototype)")
         self.root.minsize(*theme.MIN_WINDOW)
         width = max(theme.MIN_WINDOW[0], min(theme.DEFAULT_WINDOW[0], self.root.winfo_screenwidth() - 80))
         height = max(theme.MIN_WINDOW[1], min(theme.DEFAULT_WINDOW[1], self.root.winfo_screenheight() - 120))
@@ -396,7 +396,7 @@ class App:
         brand.pack(fill="x", padx=S)
         ttk.Label(brand, text="Canon R5 mod", style="Sidebar.Title.TLabel").pack(side="left")
         ttk.Label(brand, text="PROTOTYPE", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
-        ttk.Label(side, text="Setup assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
+        ttk.Label(side, text="R5 Mod Assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
         ttk.Label(side, text="STEPS", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
         rows = ttk.Frame(side, style="Sidebar.TFrame")
         rows.pack(fill="x")
@@ -1931,7 +1931,7 @@ def main() -> int:
         from tkinter import filedialog, font as tkfont, messagebox, ttk
     except ImportError:
         print(
-            "This Python has no Tkinter, which the build assistant needs.\n"
+            "This Python has no Tkinter, which R5 Mod Assistant needs.\n"
             "- macOS/Windows: the python.org installer includes it.\n"
             "- Homebrew Python: install the matching python-tk formula.\n"
             "- Linux: install your distribution's python3-tk package.\n"

@@ -1,4 +1,4 @@
-"""Design tokens and the ttk style of the setup assistant.
+"""Design tokens and the ttk style of R5 Mod Assistant.
 
 The tokens (fonts, type scale, spacing, palettes, window sizes) are plain data with no
 Tkinter import, so they can be tested headless and reused by a later PySide6 port.
