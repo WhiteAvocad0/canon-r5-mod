@@ -5,9 +5,21 @@
 
 R5 Mod Assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
-## Download the macOS app
+## Download the app
 
-There is a ready-made, **unsigned** app for macOS: a `.dmg` on the repository's [Releases](https://github.com/WhiteAvocad0/canon-r5-mod/releases) page (prereleases tagged `app-v<version>`). Choose `macos-arm64` for Apple Silicon or `macos-x86_64` for an Intel Mac. Windows builds are not available yet; on Windows and Linux, [launch it from source](#launch).
+There is a ready-made, **unsigned** app for macOS and Windows on the repository's [Releases](https://github.com/WhiteAvocad0/canon-r5-mod/releases) page (prereleases tagged `app-v<version>`). It is an untested prototype like the rest of the assistant. On Linux, [launch it from source](#launch).
+
+| Computer | Download |
+|---|---|
+| Mac with Apple Silicon | `R5-Mod-Assistant-<version>-macos-arm64.dmg` |
+| Intel Mac | `R5-Mod-Assistant-<version>-macos-x86_64.dmg` |
+| Windows 10 or 11 (64-bit, x64) | `R5-Mod-Assistant-<version>-windows-x64.zip` |
+
+`SHA256SUMS.txt` on the same page lists each file's SHA-256.
+
+Either way you still need the **GNU Arm toolchain** with GCC `15.2.1` ([step 5](#step-5-build-tools): xPack `arm-none-eabi-gcc` `15.2.1-1.1`, or Arm GNU Toolchain `15.2.Rel1`) and your own ROM dump. The app contains neither, and it never downloads anything.
+
+### macOS
 
 1. Open the `.dmg` and drag **R5 Mod Assistant** onto **Applications**.
 2. Open it from Applications. Because the app isn't signed with an Apple Developer ID or notarized, macOS first says it can't verify the app:
@@ -15,22 +27,33 @@ There is a ready-made, **unsigned** app for macOS: a `.dmg` on the repository's 
    - **macOS 14 or earlier:** Control-click (or right-click) the app, choose **Open**, then **Open** again.
 
    You only do this once per version. Advanced: `xattr -dr com.apple.quarantine "/Applications/R5 Mod Assistant.app"` removes the download mark instead; only do that for a `.dmg` you downloaded from this repository.
-3. You still need the **GNU Arm toolchain** (xPack `arm-none-eabi-gcc` `15.2.1-1.1`, [step 5](#step-5-build-tools)) and your own ROM dump. The app contains neither, and it never downloads anything.
+3. macOS may ask whether the app may use your **Downloads** folder (the toolchain search looks there; you can decline and choose the toolchain's `bin` folder yourself) and **removable volumes** (the card you choose).
 
-What is different from running it from source:
-- New build folders go to `~/R5-builds/` (the app itself is read-only). Saved progress is the same `~/.r5-build-assistant/wizard.json`, so the app and a checkout share it.
-- macOS may ask whether the app may use your **Downloads** folder (the toolchain search looks there; you can decline and choose the toolchain's `bin` folder yourself) and **removable volumes** (the card you choose).
-- The app carries this repository's tracked files from the tagged commit unchanged (its commit is `R5SourceCommit` in `Contents/Info.plist`), plus Python `3.13` and Tcl/Tk. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
-- Card preparation ([step 7](#step-7-prepare-the-boot-card), and the Canon Basic cards in steps 2 and 3) works on macOS only, as from source.
+### Windows
 
-Each `.dmg` is built by the `macos-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it builds the window hidden, shows every step, starts the builder with arguments it refuses, and exits). To build the app yourself on a Mac, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
+1. Right-click the `.zip` and choose **Extract All...**, for example into your Documents folder. Run the app from the extracted **R5 Mod Assistant** folder, not from inside the zip, and keep its `_internal` folder next to `R5 Mod Assistant.exe`.
+2. Open **R5 Mod Assistant.exe**. Because the app isn't signed with a code-signing certificate, Microsoft Defender SmartScreen may say *Windows protected your PC*: click **More info**, then **Run anyway**. Windows remembers this for that copy of the app.
+3. Install the toolchain from Arm's Windows installer or unpack the xPack or Arm `.zip`; the app looks in `%USERPROFILE%`, its `tools` and `Downloads` folders, `%APPDATA%\xPacks`, `C:\xpack-arm-none-eabi-gcc-15.2.1-*` and `Program Files (x86)\Arm GNU Toolchain arm-none-eabi\15.2*`, or choose its `bin` folder (the one with `arm-none-eabi-gcc.exe`) yourself.
+4. **Card preparation is macOS only.** Writing a card's boot markers ([step 7](#step-7-prepare-the-boot-card)) and the one-click Canon Basic cards in steps 2 and 3 are offered on a Mac only. On Windows, prepare the card on a Mac first, tick *My card is already prepared* in step 7, then copy `autoexec.bin` to that card in [step 8](#step-8-copy-autoexecbin).
+
+The Windows app has only been checked by its CI self-test on GitHub's `windows-latest` runner. A real build (toolchain, ROM) and the copy to a card haven't been tried on Windows.
+
+### What is different from running it from source
+
+- New build folders go to `R5-builds` in your home folder (`~/R5-builds` on macOS, `%USERPROFILE%\R5-builds` on Windows), because the app's own folder isn't meant to change. Saved progress is the same `~/.r5-build-assistant/wizard.json`, so the app and a checkout share it.
+- The app carries this repository's tracked files from the tagged commit byte for byte (`Read me first.txt` and, on macOS, `R5SourceCommit` in `Contents/Info.plist` name the commit), plus Python `3.13` and Tcl/Tk. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
+- On Windows, the programs the app starts (GCC, PowerShell, the builder) run without a console window.
+
+### Building the app yourself
+
+Each package is built by the `desktop-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it builds the window hidden, shows every step, starts the builder with arguments it refuses, and exits; on Windows it runs from the unzipped folder). To build it yourself on a Mac or a Windows PC, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
 
 ```sh
-python3 -m pip install -r packaging/macos/requirements.txt
-python3 packaging/macos/build_app.py --self-test
+python3 -m pip install -r packaging/requirements.txt
+python3 packaging/build_app.py --self-test
 ```
 
-It writes `build/macos-app/dist/R5 Mod Assistant.app` and `build/macos-app/R5-Mod-Assistant-<version>-macos-<arch>.dmg`. The version is `VERSION` in [`tools/gui/bundle.py`](../tools/gui/bundle.py).
+It writes the app under `build/desktop-app/dist/` and `build/desktop-app/R5-Mod-Assistant-<version>-<macos|windows>-<arch>.<dmg|zip>`. The version is `VERSION` in [`tools/gui/bundle.py`](../tools/gui/bundle.py).
 
 ## Launch
 
@@ -246,7 +269,7 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
 - No consented toolchain download yet. You install the toolchain yourself.
-- **macOS app: unsigned.** It has only PyInstaller's ad-hoc signature, so Gatekeeper asks once per version (see [Download the macOS app](#download-the-macos-app)). Its CI self-test runs on GitHub's macOS 15 (Intel) and latest (Apple Silicon) runners; the app hasn't been tried on other macOS versions, and GitHub's last Intel runner image is announced to be retired in 2027. No Windows app yet.
+- **Desktop app: unsigned.** The macOS app has only PyInstaller's ad-hoc signature, so Gatekeeper asks once per version, and Windows SmartScreen may warn about the Windows app (see [Download the app](#download-the-app)). Their CI self-tests run on GitHub's macOS 15 (Intel), latest macOS (Apple Silicon) and latest Windows runners; neither app has been tried on other systems, and GitHub's last Intel macOS runner image is announced to be retired in 2027. The Windows app has not built `autoexec.bin` with a real toolchain and ROM yet.
 - The assistant verifies whether BootDisk is enabled or disabled only when you give it the camera's returned `16 KiB` BootInfo dump (`gang200.bin` or `gang201.bin` from `0xE8004000`, offset `+0x04`); without a returned dump it records only your manual confirmation.
 - **Canon Basic ROM dump and BootDisk steps: host-tested only.** The Canon Basic card preparation (`SCRIPT` at FAT32 `0x1F0`, `script.req`, `extend.m`) and `gang200.bin`/`gang201.bin` BootInfo readback verifier are tested on synthetic FAT32 images and lab-derived fixtures. `EnableBootDisk()` and `SaveAllRomImageToFile()` match the script used to capture the reference camera's `gang100.bin`/`gang200.bin`/`gang101.bin`/`gang201.bin`, whereas the `DisableBootDisk()` script (`0xE0B38D74`) is derived from ROM disassembly and is **hardware-untested**. Canon Basic requires a `<= 32 GB` FAT32 SDHC card; `> 32 GB` SDXC exFAT cards are refused for Canon Basic even though they work for native `autoexec.bin` booting in step 7.
 - **Prepare card: verified for exFAT on one Mac and camera only.** On 18 November 2026 the owner's Mac (macOS 27.3) prepared a camera-formatted 128 GB exFAT card through `authopen`. The read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted it. FAT32 cards, other Macs and macOS versions, Windows and Linux are untested. The host tests use image files only: synthetic FAT32 and exFAT boot areas (including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums), plus `fsck_msdos` on a real FAT32 image file.
