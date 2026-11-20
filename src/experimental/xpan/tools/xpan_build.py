@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
-from typing import Callable
+from typing import Callable, NamedTuple
 
 XPAN_TOOLS_DIR = Path(__file__).resolve().parent
 XPAN_SRC_DIR = XPAN_TOOLS_DIR.parent
@@ -217,11 +217,14 @@ def _tracked_input_paths() -> list[Path]:
     paths.extend(XPAN_SRC_DIR / n for n in ri.SOURCE_NAMES)
     paths.extend(
         CONFIG_DIR / n
-        for n in ("firmware.json", "target_contract.json", "xpan_target_contract.json", "toolchain_policy.json")
+        for n in (
+            "firmware.json", "target_contract.json", "xpan_target_contract.json", "toolchain_policy.json",
+            "features.json",
+        )
     )
     paths.extend(
         TOOLS_DIR / n
-        for n in ("build.py", "contracts.py", "toolchain.py", "image_format.py", "input_files.py")
+        for n in ("build.py", "features.py", "contracts.py", "toolchain.py", "image_format.py", "input_files.py")
     )
     paths.extend(
         XPAN_TOOLS_DIR / n
@@ -246,6 +249,80 @@ def _tracked_input_paths() -> list[Path]:
     )
     paths.append(TOOLS_DIR / "audio_profile.py")
     return paths
+
+
+class XPanRomAdmission(NamedTuple):
+    rom_caller_path: str
+    rom_resolved: Path
+    rom_bytes: bytes
+    hooks: list[dict]
+    startup: bytes
+    rom_provenance: dict
+    row_profile: dict
+    vector_bytes: bytes
+    vector_proof: dict
+
+
+def admit_xpan_rom(
+    rom_path: Path,
+    *,
+    indicator: str | None,
+    stop_indicator: str | None,
+    manifest: dict = M,
+    target_contract: dict = TARGET_CONTRACT,
+    xpan_contract: dict = XPAN_TARGET_CONTRACT,
+    xpan_hooks: list[dict] | None = None,
+) -> XPanRomAdmission:
+    """Strictly admit the selected ROM for an XPan build of this start/stop cue choice.
+
+    Reads the ROM and the committed hook inventory only and derives the ROM-backed
+    framing rows and menu vector in memory; writes nothing. build_xpan_image runs
+    exactly this before it creates its output directory."""
+    indicator = ri.admit_choice(indicator, "start")
+    stop_indicator = ri.admit_choice(stop_indicator, "stop")
+    indicator_on = ri.enabled(indicator, stop_indicator)
+    optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
+    rom_caller_path = str(rom_path)
+    rom_resolved = Path(rom_path).resolve(strict=True)
+    rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
+
+    loaded_contract, loaded_hooks, _ = feature_contract.load_hooks(optional_extensions=optional_extensions)
+    hooks_to_check = loaded_hooks if xpan_hooks is None else xpan_hooks
+    if any(h["destination"] == "rec_state_entry" for h in hooks_to_check) != indicator_on:
+        raise ValueError(
+            f"record indicator hook inventory disagrees with --record-indicator {indicator} "
+            f"--record-stop-indicator {stop_indicator}"
+        )
+
+    startup, rom_provenance = admit_xpan_rom_with_provenance(
+        rom_bytes,
+        manifest=manifest,
+        contract=target_contract,
+        xpan_contract=xpan_contract,
+        hooks=hooks_to_check,
+        record_indicator=indicator_on,
+        guard_pages=[int(v, 16) for v in loaded_contract["source_guard_pages"]],
+    )
+
+    # Derive ROM-backed framing rows and XPan menu vector only after strict ROM admission.
+    row_profile = frame_row_profile.build_profile_from_rom(
+        rom_bytes,
+        rom_sha256=rom_provenance["sha256"],
+        expected_table_sha256=xpan_contract["framing_table"]["sha256"],
+        caller_path=rom_caller_path,
+        resolved_path=str(rom_resolved),
+    )
+    vector_bytes, _, vector_proof = menu_vector.build_from_rom(
+        rom_bytes,
+        expected_resource_sha256=xpan_contract["menu_vector_resource"]["sha256"],
+        resource_va=xpan_contract["menu_vector_resource"]["address"],
+        resource_bytes=xpan_contract["menu_vector_resource"]["bytes"],
+        linearize=True,
+    )
+    return XPanRomAdmission(
+        rom_caller_path, rom_resolved, rom_bytes, hooks_to_check, startup, rom_provenance, row_profile,
+        vector_bytes, vector_proof,
+    )
 
 
 def build_xpan_image(
@@ -279,44 +356,19 @@ def build_xpan_image(
     _check_profile_headers_sync()
     _, toolchain_admission = admit_toolchain(toolchain_dir, policy_path=policy_path)
 
-    rom_caller_path = str(rom_path)
-    rom_resolved = Path(rom_path).resolve(strict=True)
-    rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
-
-    loaded_contract, loaded_hooks, _ = feature_contract.load_hooks(optional_extensions=optional_extensions)
-    hooks_to_check = loaded_hooks if xpan_hooks is None else xpan_hooks
-    if any(h["destination"] == "rec_state_entry" for h in hooks_to_check) != indicator_on:
-        raise ValueError(
-            f"record indicator hook inventory disagrees with --record-indicator {indicator} "
-            f"--record-stop-indicator {stop_indicator}"
-        )
-
-    startup, rom_provenance = admit_xpan_rom_with_provenance(
-        rom_bytes,
+    (
+        rom_caller_path, rom_resolved, rom_bytes, hooks_to_check, startup, rom_provenance, row_profile,
+        vector_bytes, vector_proof,
+    ) = admit_xpan_rom(
+        rom_path,
+        indicator=indicator,
+        stop_indicator=stop_indicator,
         manifest=manifest,
-        contract=target_contract,
+        target_contract=target_contract,
         xpan_contract=xpan_contract,
-        hooks=hooks_to_check,
-        record_indicator=indicator_on,
-        guard_pages=[int(v, 16) for v in loaded_contract["source_guard_pages"]],
+        xpan_hooks=xpan_hooks,
     )
     actual_rom_sha256 = rom_provenance["sha256"]
-
-    # Derive ROM-backed framing rows and XPan menu vector only after strict ROM admission.
-    row_profile = frame_row_profile.build_profile_from_rom(
-        rom_bytes,
-        rom_sha256=actual_rom_sha256,
-        expected_table_sha256=xpan_contract["framing_table"]["sha256"],
-        caller_path=rom_caller_path,
-        resolved_path=str(rom_resolved),
-    )
-    vector_bytes, _, vector_proof = menu_vector.build_from_rom(
-        rom_bytes,
-        expected_resource_sha256=xpan_contract["menu_vector_resource"]["sha256"],
-        resource_va=xpan_contract["menu_vector_resource"]["address"],
-        resource_bytes=xpan_contract["menu_vector_resource"]["bytes"],
-        linearize=True,
-    )
 
     # Create output directory only after all inputs and derived resources validate cleanly.
     out = validate_output_dir(output_dir)

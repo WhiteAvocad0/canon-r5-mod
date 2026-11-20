@@ -1,8 +1,8 @@
 # Detailed Usage, Card Preparation, and Safety Notes
 
 > [!CAUTION]
-> **Source / Developer Preview for Already Boot-Enabled Cameras Only**
-> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** camera-side `EnableBootDisk` automator or card-formatting/raw-sector writer. Read every requirement and disclaimer below before putting a built image on an SD card.
+> **Source / Developer Preview for EOS R5 `2.2.1` Only**
+> This repository is **not** a turnkey installer, **not** a full Magic Lantern port, and includes **no** automatic camera-side `EnableBootDisk` runner and **no** card formatter. The command-line builder never writes cards. Only the build assistant offers opt-in card steps: guided Canon Basic card preparation for a read-only ROM dump or user-run BootDisk enable/disable on a `<= 32 GB` FAT32 SDHC card ([gui.md](gui.md#step-2-rom-dump-one-time)), and boot-marker preparation ([Card preparation](#5-card-preparation)). Read every requirement and disclaimer below before putting a built image on an SD card.
 
 ---
 
@@ -109,22 +109,23 @@ Compare the printed `sha256` with `build.json` → `format.sha256`. The footer/X
 ## 5. Card Preparation
 
 > [!WARNING]
-> **The public builder does NOT write cards.**
-> Do **not** blindly run unreviewed raw-device commands or `dd` entire disk/partition images onto an SD card.
+> **The command-line builder does NOT write cards.** The [build assistant](gui.md#step-7-prepare-the-boot-card) can write the two boot markers for you: opt-in, macOS only, and a **prototype that has not been tested on a real card** until the owner's first verification. Do **not** blindly run unreviewed raw-device commands or `dd` entire disk/partition images onto an SD card.
 
 1. **Back up the card completely first**: Copy all existing photos, `DCIM`/`MISC` files, and verify hashes before touching boot sectors.
-2. **Choose the correct filesystem for your card**: The baseline passed on `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC. The FAT32 steps below apply to SDHC; use the separate [exFAT procedure](sdxc.md#3-preparation-route-that-passed-the-first-trial) for SDXC. Do not shrink SDXC to `32 GB` as a workaround.
+2. **Format the card in the camera**: Formatting erases everything on the card, so copy your photos and videos to your computer first. No tool in this project formats cards. The camera picks the filesystem (FAT32 on SD/SDHC, exFAT on SDXC). The baseline passed on `16 GB` FAT32 SDHC and full-capacity `128 GB` exFAT SDXC. The FAT32 offsets below apply to SDHC; the exFAT route is in [sdxc.md](sdxc.md#3-preparation-route-that-passed-the-first-trial). Do not shrink SDXC to `32 GB` as a workaround. Formatting removes the markers, so prepare the card again after every format.
 3. **Keep native `BOOTDISK` markers distinct from Canon Basic `SCRIPT`**:
    - Canon Basic uses `SCRIPT` at offset `496` (`0x1F0`) plus `script.req`/`extend.m` — that is a **different** loader path.
    - Native `autoexec.bin` booting on FAT32 requires **both** ASCII markers in the **primary FAT32 boot sector** (and matching geometry):
      - `EOS_DEVELOP` (`11` ASCII bytes) at byte offset **`71`** (`0x47`)
      - `BOOTDISK` (`8` ASCII bytes) at byte offset **`92`** (`0x5C`)
-4. **Use a reviewed native-marker preparation workflow**:
-   - Re-verify the target removable SD device and FAT32 BPB geometry on your host OS before writing.
-   - Save a raw backup of the original primary boot sector (and backup boot sector if applicable) before applying `EOS_DEVELOP` and `BOOTDISK`.
-   - Verify both the written boot-sector markers and filesystem integrity (`fsck` / readback) after applying markers.
+   - On exFAT, `BOOTDISK` goes at `+122` and `EOS_DEVELOP` at `+130` of **both** boot regions, and both boot checksum sectors must be recomputed ([sdxc.md](sdxc.md#2-r5-221-native-exfat-markers-and-checksums)).
+4. **Apply the markers** in one of two ways:
+   - **Build assistant (macOS):** in the [Prepare card](gui.md#step-7-prepare-the-boot-card) tab, choose the card from the list of detected SD cards (only removable cards in an SD card slot are offered) and press **Prepare card**. It reads the card and backs up the MBR and the partition's first 24 sectors to a timestamped folder on your computer automatically, checking the backup by re-reading it. If the markers are already there it says so and writes nothing. Otherwise one dialog names the card, for example "Prepare EOS_DIGITAL (126.9 GB exFAT SD card)?". After OK it writes only the planned sectors: one on FAT32 (the backup boot sector stays unchanged, as on the lab card that booted, so a disk check may flag it) and four on exFAT. Root writes them only if the MBR and the boot area are exactly as read. It then reads every byte back, runs `diskutil verifyVolume` and mounts the card again. **Undo** restores the latest backup with the same checks, also on a card that no longer mounts. Raw access goes through macOS's own `authopen`: macOS's authorization window grants access to just that card's whole-disk device for that step, and no code runs as root. It refuses anything unexpected, such as a card whose boot sectors don't look camera-formatted, a geometry mismatch or sectors other than 512 bytes.
+   - **Any other reviewed native-marker workflow:** re-verify the target removable SD device and BPB geometry on your host OS before writing. Save a raw backup of the original boot sector(s) (both exFAT boot regions, and the MBR) before applying `EOS_DEVELOP` and `BOOTDISK`. Verify the written markers, the exFAT checksums and filesystem integrity (`fsck` / readback) afterwards.
 5. **Copy `autoexec.bin`**:
-   - Once the card's FAT32 markers and sector backup are verified, directly copy your built `autoexec.bin` to the root directory of the card (`AUTOEXEC.BIN` / `autoexec.bin`), verify its SHA-256 matches `build.json`, and safely eject the card.
+   - Once the card's markers and sector backup are verified, directly copy your built `autoexec.bin` to the root directory of the card (`AUTOEXEC.BIN` / `autoexec.bin`), verify its SHA-256 matches `build.json`, and safely eject the card. The build assistant's [Copy to card](gui.md#step-8-copy-autoexecbin) tab does this with a read-back check.
+
+Neither the builder nor the assistant enables the camera's BootDisk setting, writes the camera's firmware or NVRAM, or formats or partitions a card.
 
 ---
 
