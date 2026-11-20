@@ -1978,6 +1978,13 @@ def self_test() -> int:
 
     missing = [str(path) for path in DOCS.values() if not path.is_file()]
     check(not missing, "linked documents are present" + (f" (missing {', '.join(missing)})" if missing else ""))
+    import toolchain
+    try:
+        toolchain.controlled_environment()  # the builder refuses to run with ambient build overrides
+        refused = ""
+    except ValueError as exc:
+        refused = f" ({exc})"
+    check(not refused, "the builder accepts this environment" + refused)
     saved_state, saved_detect = wizard_mod.DEFAULT_STATE_FILE, checks.detect_toolchain
     with tempfile.TemporaryDirectory() as tmp:
         wizard_mod.DEFAULT_STATE_FILE = Path(tmp) / "wizard.json"
