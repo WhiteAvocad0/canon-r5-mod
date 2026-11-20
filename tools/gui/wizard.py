@@ -315,7 +315,8 @@ class Wizard:
             if s.card_prepared == "elsewhere":
                 return StepStatus(SKIPPED, "Skipped: you said your card is already prepared.")
             return StepStatus(NEEDS_ACTION, "Prepare the card, or say it is already prepared." if self.prep_supported
-                              else "Preparing cards is offered on macOS only; say your card is already prepared.")
+                              else "Preparing cards is offered on macOS only: prepare the card on a Mac, "
+                                   "then say it is already prepared here.")
         if step_id == COPY:
             if self.status(BUILD).status != DONE:
                 return StepStatus(BLOCKED, "Build autoexec.bin first.")

@@ -1,8 +1,10 @@
-# PyInstaller spec for "R5 Mod Assistant.app" (onedir, windowed, unsigned apart from
-# PyInstaller's ad-hoc signature). Run it through packaging/macos/build_app.py, which
-# stages the tracked tree with `git archive` and passes these settings in the environment.
+# PyInstaller spec for R5 Mod Assistant: onedir and windowed, unsigned (on macOS only
+# PyInstaller's ad-hoc signature). macOS gets "R5 Mod Assistant.app", Windows the folder
+# "R5 Mod Assistant" with "R5 Mod Assistant.exe". Run it through packaging/build_app.py,
+# which stages the tracked tree with `git archive` and passes these settings in the environment.
 import os
 from pathlib import Path
+import sys
 
 TREE = Path(os.environ["R5_APP_TREE"]).resolve()  # the staged tracked tree (git archive HEAD)
 APP_NAME = os.environ["R5_APP_NAME"]
@@ -52,24 +54,26 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
+    upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, Tree(str(TREE), prefix="r5-mod"), name=APP_NAME)
-app = BUNDLE(
-    coll,
-    name=f"{APP_NAME}.app",
-    icon=None,
-    bundle_identifier=BUNDLE_ID,
-    version=VERSION,
-    info_plist={
-        "CFBundleDisplayName": APP_NAME,
-        "CFBundleVersion": VERSION,
-        "LSApplicationCategoryType": "public.app-category.photography",
-        "NSHighResolutionCapable": True,
-        "NSDownloadsFolderUsageDescription": (
-            "R5 Mod Assistant looks for the GNU Arm toolchain you unpacked in Downloads. "
-            "You can decline and choose its folder yourself."),
-        "NSRemovableVolumesUsageDescription": (
-            "R5 Mod Assistant reads and writes only the SD card you choose."),
-        "R5SourceCommit": COMMIT,
-    },
-)
+coll = COLLECT(exe, a.binaries, a.datas, Tree(str(TREE), prefix="r5-mod"), name=APP_NAME, upx=False)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name=f"{APP_NAME}.app",
+        icon=None,
+        bundle_identifier=BUNDLE_ID,
+        version=VERSION,
+        info_plist={
+            "CFBundleDisplayName": APP_NAME,
+            "CFBundleVersion": VERSION,
+            "LSApplicationCategoryType": "public.app-category.photography",
+            "NSHighResolutionCapable": True,
+            "NSDownloadsFolderUsageDescription": (
+                "R5 Mod Assistant looks for the GNU Arm toolchain you unpacked in Downloads. "
+                "You can decline and choose its folder yourself."),
+            "NSRemovableVolumesUsageDescription": (
+                "R5 Mod Assistant reads and writes only the SD card you choose."),
+            "R5SourceCommit": COMMIT,
+        },
+    )

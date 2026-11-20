@@ -110,6 +110,21 @@ def open_path(path: Path) -> None:
         subprocess.run(["xdg-open", str(path)], check=False)
 
 
+def open_document(path: Path, *, platform: str | None = None, startfile=None, popen=subprocess.Popen,
+                  browser=webbrowser.open) -> None:
+    """Open one of the guides (a Markdown file in docs/).
+
+    Windows has no app for .md files by default, so if it can't open one, Notepad shows it."""
+    platform = sys.platform if platform is None else platform
+    if platform.startswith("win"):
+        try:
+            (os.startfile if startfile is None else startfile)(str(path))  # noqa: S606 - a bundled guide
+        except OSError:
+            popen(["notepad.exe", str(path)])
+    else:
+        browser(Path(path).as_uri())
+
+
 def bullets(lines) -> str:
     return "\n".join(f"•  {line}" for line in lines)
 
@@ -454,7 +469,7 @@ class App:
         links.grid(row=2, column=1, sticky="w", pady=(XS, 0))
         for label, path in DOCS.items():
             self.ttk.Button(links, text=label, style="Banner.Link.TButton", cursor="hand2",
-                            command=lambda p=path: webbrowser.open(p.as_uri())).pack(side="left", padx=(0, M))
+                            command=lambda p=path: open_document(p)).pack(side="left", padx=(0, M))
 
     def _footer(self, parent):
         footer = self.ttk.Frame(parent)

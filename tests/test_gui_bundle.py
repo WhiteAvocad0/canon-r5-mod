@@ -1,5 +1,6 @@
-"""The packaged macOS app's modes and frozen paths (tools/gui/bundle.py), without PyInstaller or Tkinter."""
+"""The packaged desktop app's modes, frozen paths and packaging helpers, without PyInstaller or Tkinter."""
 from datetime import datetime
+import importlib.util
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,16 @@ import build as build_mod
 import features
 from gui import app as app_mod, bundle, runner, state
 
-LAUNCHER = ROOT / "packaging" / "macos" / "launcher.py"
+LAUNCHER = ROOT / "packaging" / "launcher.py"
+BUILD_APP = ROOT / "packaging" / "build_app.py"
+
+
+def load_build_app():
+    spec = importlib.util.spec_from_file_location("build_app", BUILD_APP)
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, {"build_app": module}):  # dataclasses look their module up there
+        spec.loader.exec_module(module)
+    return module
 
 
 class FrozenPathTests(unittest.TestCase):
@@ -97,7 +107,7 @@ class DispatchTests(unittest.TestCase):
 class PackagingTests(unittest.TestCase):
     def test_version_is_one_semver_string(self):
         self.assertRegex(bundle.VERSION, r"^\d+\.\d+\.\d+$")
-        proc = subprocess.run([sys.executable, str(ROOT / "packaging" / "macos" / "build_app.py"), "--print-version"],
+        proc = subprocess.run([sys.executable, str(BUILD_APP), "--print-version"],
                               capture_output=True, text=True, timeout=60)
         self.assertEqual(proc.stdout.strip(), bundle.VERSION, proc.stderr)
 
@@ -105,13 +115,123 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("tkinter", (ROOT / "tools" / "gui" / "bundle.py").read_text())
 
     def test_workflow_checks_the_tag_against_the_version(self):
-        text = (ROOT / ".github" / "workflows" / "macos-app.yml").read_text()
+        text = (ROOT / ".github" / "workflows" / "desktop-app.yml").read_text()
         self.assertIn("app-v*", text)
         self.assertIn("--print-version", text)
         self.assertIn("--self-test", text)
-        pinned = (ROOT / "packaging" / "macos" / "requirements.txt").read_text().split()
+        for needle in ("windows-latest", "macos-latest", "macos-15-intel", "*.zip", "*.dmg", "SHA256SUMS.txt"):
+            self.assertIn(needle, text)
+        pinned = (ROOT / "packaging" / "requirements.txt").read_text().split()
         self.assertEqual(len(pinned), 1)
         self.assertRegex(pinned[0], r"^pyinstaller==\d+\.\d+\.\d+$")
+
+    def test_package_names_and_bundled_tree_locations(self):
+        build_app = load_build_app()
+        dist = Path("/d")
+        mac = build_app.target_for(dist, "R5 Mod Assistant", "darwin", "arm64")
+        self.assertEqual((mac.os, mac.arch), ("macos", "arm64"))
+        self.assertEqual(mac.exe, dist / "R5 Mod Assistant.app" / "Contents" / "MacOS" / "R5 Mod Assistant")
+        self.assertEqual(mac.tree, dist / "R5 Mod Assistant.app" / "Contents" / "Resources" / "r5-mod")
+        win = build_app.target_for(dist, "R5 Mod Assistant", "win32", "AMD64")
+        self.assertEqual((win.os, win.arch), ("windows", "x64"))
+        self.assertEqual(win.app, dist / "R5 Mod Assistant")
+        self.assertEqual(win.exe, dist / "R5 Mod Assistant" / "R5 Mod Assistant.exe")
+        self.assertEqual(win.tree, dist / "R5 Mod Assistant" / "_internal" / "r5-mod")
+        self.assertEqual(build_app.target_for(dist, "X", "win32", "ARM64").arch, "arm64")
+        with self.assertRaises(SystemExit):
+            build_app.target_for(dist, "X", "linux", "x86_64")
+
+    def test_staged_files_are_checked_against_git_blob_ids(self):
+        build_app = load_build_app()
+        data = b"line one\r\nline two\n"
+        expected = subprocess.run(["git", "hash-object", "--stdin"], input=data, capture_output=True,
+                                  check=True).stdout.decode().strip()
+        self.assertEqual(build_app.git_blob_id(data, "sha1"), expected)
+
+    def test_read_me_covers_the_unsigned_app_and_its_limits(self):
+        build_app = load_build_app()
+        windows = build_app.README["windows"] + build_app.README_COMMON
+        for needle in ("More info", "Run anyway", "GNU Arm toolchain", "macOS only", "step 8", "untested prototype",
+                       "Licenses"):
+            self.assertIn(needle, windows)
+        mac = build_app.README["macos"] + build_app.README_COMMON
+        for needle in ("Open Anyway", "Privacy & Security", "GNU Arm toolchain", "untested prototype"):
+            self.assertIn(needle, mac)
+
+
+class WindowsTests(unittest.TestCase):
+    def test_frozen_windows_app_hides_console_windows(self):
+        with mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.object(bundle, "hide_console_windows") as hide, \
+                mock.patch.object(app_mod, "main", return_value=0):
+            bundle.main([], platform="win32")
+            hide.assert_called_once_with()
+            bundle.main([], platform="darwin")
+            hide.assert_called_once_with()
+        with mock.patch.object(bundle, "hide_console_windows") as hide, mock.patch.object(app_mod, "main", return_value=0):
+            bundle.main([], platform="win32")  # from a checkout: python.exe has its own console
+            hide.assert_not_called()
+
+    def test_hide_console_windows_adds_create_no_window_once(self):
+        calls = []
+
+        class FakePopen:
+            def __init__(self, *args, **kwargs):
+                calls.append((args, kwargs))
+
+        bundle.hide_console_windows(FakePopen, flag=0x08000000)
+        bundle.hide_console_windows(FakePopen, flag=0x08000000)  # a second call changes nothing
+        FakePopen(["gcc", "--version"], stdout=-1)
+        FakePopen(["powershell"], creationflags=0x200)
+        self.assertEqual(calls[0], ((["gcc", "--version"],), {"stdout": -1, "creationflags": 0x08000000}))
+        self.assertEqual(calls[1][1]["creationflags"], 0x08000200)
+
+    def test_open_document_on_windows_falls_back_to_notepad(self):
+        opened, started = [], []
+        doc = ROOT / "docs" / "gui.md"
+        app_mod.open_document(doc, platform="win32", startfile=opened.append, popen=started.append)
+        self.assertEqual((opened, started), ([str(doc)], []))
+
+        def no_app(_path):
+            raise OSError("No application is associated with the specified file")
+        app_mod.open_document(doc, platform="win32", startfile=no_app, popen=started.append)
+        self.assertEqual(started, [["notepad.exe", str(doc)]])
+        urls = []
+        app_mod.open_document(doc, platform="darwin", browser=urls.append)
+        self.assertEqual(urls, [doc.as_uri()])
+
+    def test_windows_toolchain_candidates_include_arm_layouts(self):
+        from gui import checks
+        with tempfile.TemporaryDirectory() as tmp:
+            home, program_files = Path(tmp) / "home", Path(tmp) / "Program Files (x86)"
+            installed = program_files / "Arm GNU Toolchain arm-none-eabi" / "15.2 rel1" / "bin"
+            unpacked = home / "Downloads" / "arm-gnu-toolchain-15.2.rel1-mingw-w64-x86_64-arm-none-eabi" / "bin"
+            old = program_files / "Arm GNU Toolchain arm-none-eabi" / "14.2 rel1" / "bin"
+            for d in (installed, unpacked, old):
+                d.mkdir(parents=True)
+            found = checks.toolchain_candidates(home=home, environ={"PATH": "", "ProgramFiles(x86)": str(program_files)},
+                                                platform="win32")
+            self.assertEqual(found, [unpacked, installed])
+
+    def test_windows_toolchain_admission_finds_exe_names_without_pinned_hashes(self):
+        import json
+        import toolchain
+        policy = json.loads(toolchain.POLICY_PATH.read_text())
+        self.assertNotIn("sha256", json.dumps({k: v for k, v in policy.items() if k != "notes"}))
+        self.assertEqual(policy["required_gcc_version"], "15.2.1")
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "arm-none-eabi-gcc.exe").write_bytes(b"")
+            with mock.patch.object(toolchain.sys, "platform", "win32"):
+                self.assertEqual(toolchain._resolve_tool(Path(tmp), "arm-none-eabi-gcc"),
+                                 Path(tmp) / "arm-none-eabi-gcc.exe")
+
+    def test_card_preparation_says_macos_only_elsewhere(self):
+        from gui import wizard
+        with tempfile.TemporaryDirectory() as tmp:
+            w = wizard.Wizard(state.AssistantState(), state_file=Path(tmp) / "w.json", prep_supported=False)
+            note = w.status(wizard.BOOTCARD).message
+        self.assertIn("macOS only", note)
+        self.assertIn("on a Mac", note)
 
 
 if __name__ == "__main__":
