@@ -56,10 +56,11 @@ class FrozenPathTests(unittest.TestCase):
 
 class DispatchTests(unittest.TestCase):
     def test_run_build_calls_the_builder_main_with_the_rest(self):
-        fake = types.SimpleNamespace(main=mock.Mock(return_value=7))
-        with mock.patch.dict(sys.modules, {"build": fake}), \
+        fake = types.SimpleNamespace(main=mock.Mock(return_value=7), __file__="/r/tools/build.py")
+        with mock.patch.dict(sys.modules, {"build": fake}), mock.patch.object(sys, "argv", ["app"]), \
                 mock.patch.object(app_mod, "main", side_effect=AssertionError("window started")):
             self.assertEqual(bundle.main(["--run-build", "--profile", "xpan-crop"]), 7)
+            self.assertEqual(sys.argv, ["/r/tools/build.py", "--profile", "xpan-crop"])
         fake.main.assert_called_once_with(["--profile", "xpan-crop"])
 
     def test_self_test_and_window(self):
@@ -78,6 +79,7 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("--toolchain", proc.stdout)
         self.assertIn("--record-indicator", proc.stdout)
+        self.assertTrue(proc.stdout.startswith("usage: build.py "), proc.stdout[:40])
 
     def test_runner_starts_the_app_in_build_mode(self):
         """The frozen command line, with the launcher standing in for the app's binary."""

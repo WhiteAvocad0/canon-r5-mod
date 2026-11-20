@@ -53,6 +53,7 @@ def main(argv: list[str]) -> int:
     if argv[:1] == [BUILD_FLAG]:
         import build
 
+        sys.argv = [build.__file__, *argv[1:]]  # usage and errors name build.py, as from the CLI
         return build.main(argv[1:])
     from gui import app
 

@@ -24,6 +24,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import time
 
@@ -31,19 +32,19 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SPEC = HERE / "r5-mod-assistant.spec"
 DMG_README = """\
-R5 Mod Assistant {version} for macOS ({arch})
+R5 Mod Assistant {version} for macOS ({arch}), prototype
 
 Drag "R5 Mod Assistant" onto Applications, then open it from there.
 
-This app is not signed with an Apple Developer ID, so the first time macOS says it
-can't check the app for malicious software. To open it anyway:
-  - Control-click (or right-click) the app in Applications, choose Open, then Open; or
-  - try to open it once, then go to System Settings > Privacy & Security and click
-    "Open Anyway" next to the message about R5 Mod Assistant.
+This app is not signed with an Apple Developer ID and not notarized, so the first time
+macOS says it can't verify the app. To open it anyway:
+  - macOS 15 or later: try to open it once and click Done, then go to System Settings >
+    Privacy & Security and click "Open Anyway" next to the message about R5 Mod Assistant.
+  - macOS 14 or earlier: Control-click (or right-click) the app, choose Open, then Open.
 
-You still need the GNU Arm toolchain (xPack arm-none-eabi-gcc 15.2.1-1.1); the app
-explains where to get it. Read docs/gui.md and docs/getting-started.md first:
-https://github.com/WhiteAvocad0/canon-r5-mod
+You still need the GNU Arm toolchain (xPack arm-none-eabi-gcc 15.2.1-1.1) and your own ROM
+dump; the app explains both. Every build it makes is hardware-untested. Read the guides first:
+https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md
 """
 
 
@@ -128,6 +129,12 @@ def make_dmg(app: Path, dmg: Path, facts: dict[str, str], arch: str) -> None:
     run(["ditto", str(app), str(root / app.name)])  # keeps the bundle's symlinks and signature
     (root / "Applications").symlink_to("/Applications")
     (root / "Read me first.txt").write_text(DMG_README.format(version=facts["version"], arch=arch))
+    licenses = root / "Licenses"
+    licenses.mkdir()
+    python_license = Path(sysconfig.get_paths()["stdlib"]) / "LICENSE.txt"
+    if not python_license.is_file():
+        raise SystemExit(f"no {python_license} to ship with the bundled Python")
+    shutil.copyfile(python_license, licenses / "Python LICENSE.txt")
     argv = ["hdiutil", "create", "-volname", facts["name"], "-srcfolder", str(root), "-fs", "HFS+",
             "-format", "UDZO", "-ov", str(dmg)]
     for attempt in range(3):  # hdiutil occasionally reports "Resource busy" on CI machines
