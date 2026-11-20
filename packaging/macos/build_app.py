@@ -16,6 +16,7 @@ The app is not signed with a Developer ID and not notarized (see docs/gui.md).
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import os
 from pathlib import Path
@@ -55,15 +56,14 @@ def git(*args: str) -> str:
 
 
 def app_facts(tree: Path) -> dict[str, str]:
-    """APP_NAME, BUNDLE_ID and VERSION from the staged tools/gui/bundle.py (their one source)."""
-    sys.path.insert(0, str(tree / "tools"))
-    try:
-        from gui import bundle
-    finally:
-        sys.path.pop(0)
-    if Path(bundle.__file__).resolve() != (tree / "tools" / "gui" / "bundle.py").resolve():
-        raise SystemExit(f"loaded {bundle.__file__} instead of the staged bundle.py")
-    return {"name": bundle.APP_NAME, "bundle_id": bundle.BUNDLE_ID, "version": bundle.VERSION}
+    """APP_NAME, BUNDLE_ID and VERSION from tree/tools/gui/bundle.py (their one source).
+
+    Parsed, not imported, so no __pycache__ appears in the staged tree."""
+    module = ast.parse((tree / "tools" / "gui" / "bundle.py").read_text())
+    values = {target.id: node.value for node in module.body if isinstance(node, ast.Assign)
+              for target in node.targets if isinstance(target, ast.Name)}
+    return {key: ast.literal_eval(values[name])
+            for key, name in (("name", "APP_NAME"), ("bundle_id", "BUNDLE_ID"), ("version", "VERSION"))}
 
 
 def stage_tree(dest: Path) -> str:
@@ -81,6 +81,11 @@ def stage_tree(dest: Path) -> str:
             tar.extractall(dest, filter="data")
     if proc.returncode:
         raise SystemExit(f"git archive failed with status {proc.returncode}")
+    tracked = set(git("ls-tree", "-r", "-z", "--name-only", commit).split("\0")) - {""}
+    staged = set(file_hashes(dest))
+    if staged != tracked:
+        raise SystemExit(f"the staged tree differs from {commit[:12]}: "
+                         f"{sorted(staged ^ tracked)[:5]}")
     return commit
 
 
@@ -171,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{app}: {facts['version']} ({arch}) from {commit[:12]}, carries {files} tracked files unchanged")
     if args.self_test:
         run([str(app / "Contents" / "MacOS" / facts["name"]), "--self-test"])
+        verify_tree(app, stage)  # running the app wrote nothing into it (no __pycache__)
+    run(["codesign", "--verify", "--deep", "--strict", str(app)])  # PyInstaller's ad-hoc signature still holds
     if not args.no_dmg:
         dmg = out / f"{facts['name'].replace(' ', '-')}-{facts['version']}-macos-{arch}.dmg"
         make_dmg(app, dmg, facts, arch)
