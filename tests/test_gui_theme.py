@@ -323,5 +323,27 @@ class WindowSmokeTests(unittest.TestCase):
             yield from self._descendants(child)
 
 
+class SelfTestModeTests(unittest.TestCase):
+    """The packaged app's --self-test (gui.app.self_test), run here from the checkout."""
+
+    def test_self_test_passes_and_leaves_saved_progress_alone(self):
+        root = make_root()
+        if root is None:
+            self.skipTest("Tk is not available here (no tkinter or no display)")
+        root.destroy()
+        from gui import app as app_mod, checks, wizard
+        before = (wizard.DEFAULT_STATE_FILE, checks.detect_toolchain)
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(wizard, "DEFAULT_STATE_FILE", Path(tmp) / "own" / "wizard.json"), \
+                mock.patch("sys.stdout") as out:
+            self.assertEqual(app_mod.self_test(), 0)
+            self.assertFalse((Path(tmp) / "own").exists())
+            self.assertEqual(wizard.DEFAULT_STATE_FILE, Path(tmp) / "own" / "wizard.json")
+        self.assertEqual((wizard.DEFAULT_STATE_FILE, checks.detect_toolchain), before)
+        printed = "".join(call.args[0] for call in out.write.call_args_list)
+        self.assertIn("self-test passed", printed)
+        self.assertNotIn("FAIL", printed)
+
+
 if __name__ == "__main__":
     unittest.main()

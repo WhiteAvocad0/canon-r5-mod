@@ -1,0 +1,80 @@
+name: macos-app
+
+# Builds the unsigned "R5 Mod Assistant.app" and its .dmg (packaging/macos/), runs the
+# app's --self-test from inside the built bundle, and keeps the .dmg as an artifact.
+# A tag app-v<version> (matching tools/gui/bundle.py VERSION) also publishes the .dmgs
+# as a GitHub prerelease. No Canon ROM, built autoexec.bin or toolchain is involved.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["app-v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "tools/**"
+      - ".github/workflows/macos-app.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: app (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest   # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel # GitHub's last x86_64 macOS image (announced until fall 2027)
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check the tag against the app version
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        run: test "app-v$(python packaging/macos/build_app.py --print-version)" = "$GITHUB_REF_NAME"
+      - name: Check the architecture and Tkinter
+        run: |
+          test "$(python -c 'import platform; print(platform.machine())')" = "${{ matrix.arch }}"
+          python -c 'import tkinter; print("Tk", tkinter.TkVersion)'
+      - name: Install PyInstaller
+        run: python -m pip install -r packaging/macos/requirements.txt
+      - name: Build the app, run its self-test and make the .dmg
+        run: python packaging/macos/build_app.py --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: R5-Mod-Assistant-macos-${{ matrix.arch }}
+          path: build/macos-app/*.dmg
+          if-no-files-found: error
+
+  prerelease:
+    needs: app
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dmgs
+          merge-multiple: true
+      - name: Publish the .dmgs as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dmgs
+          sha256sum *.dmg > SHA256SUMS.txt
+          cat > notes.md <<'EOF'
+          Unsigned macOS build of R5 Mod Assistant (prototype). Choose the `arm64` .dmg for Apple Silicon and `x86_64` for Intel Macs.
+
+          The app is not signed with an Apple Developer ID or notarized. To open it the first time, Control-click it in Applications and choose **Open**, or try once and click **Open Anyway** in System Settings > Privacy & Security. See [docs/gui.md](https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md#download-the-macos-app).
+
+          You still need the GNU Arm toolchain (xPack arm-none-eabi-gcc 15.2.1-1.1) and your own ROM dump. Every build the app makes is a public repackaged build and is hardware-untested. Windows builds are not available yet.
+          EOF
+          gh release create "$GITHUB_REF_NAME" *.dmg SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
+            --verify-tag --title "R5 Mod Assistant ${GITHUB_REF_NAME#app-v} for macOS (unsigned prerelease)" --notes-file notes.md

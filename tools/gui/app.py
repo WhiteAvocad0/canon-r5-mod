@@ -33,7 +33,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 from cardprep import cbasic, devices as card_devices, workflow as card_flow
-from gui import card, checks, runner, shots, theme
+from gui import bundle, card, checks, runner, shots, theme
 import screenshots as screenshots_mod
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
@@ -1658,7 +1658,7 @@ class App:
 
     def _new_output(self):
         """A fresh, selection-named folder in the same parent (the builder needs a new folder each time)."""
-        parent = self.state.output_dir.parent if self.state.output_dir else ROOT / "build"
+        parent = self.state.output_dir.parent if self.state.output_dir else bundle.builds_root(ROOT)
         name = default_output_dir(self.state.profile, self.state.options, self.state.manifest).name
         self.state.set_output_dir(parent / name)
 
@@ -1941,6 +1941,56 @@ def main() -> int:
         return 1
     app = App(tk, ttk, filedialog, messagebox, tkfont)
     app.root.mainloop()
+    return 0
+
+
+def self_test() -> int:
+    """`--self-test`: build the window hidden, show every step in both appearances, then exit.
+
+    Saved progress goes to a temporary folder (the person's own wizard.json is never
+    read or written) and the toolchain search is skipped. It also starts the builder the
+    way a build does, with arguments the builder refuses, so nothing is built or written.
+    For CI and for checking a packaged app; prints one line per check."""
+    import tempfile
+    import tkinter as tk
+    from tkinter import filedialog, font as tkfont, messagebox, ttk
+    from gui import wizard as wizard_mod
+
+    def check(ok, what):
+        print(("ok    " if ok else "FAIL  ") + what, flush=True)
+        if not ok:
+            raise SystemExit(1)
+
+    missing = [str(path) for path in DOCS.values() if not path.is_file()]
+    check(not missing, "linked documents are present" + (f" (missing {', '.join(missing)})" if missing else ""))
+    saved_state, saved_detect = wizard_mod.DEFAULT_STATE_FILE, checks.detect_toolchain
+    with tempfile.TemporaryDirectory() as tmp:
+        wizard_mod.DEFAULT_STATE_FILE = Path(tmp) / "wizard.json"
+        checks.detect_toolchain = lambda: (None, None, [])
+        try:
+            for appearance in ("light", "dark"):
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    app = App(tk, ttk, filedialog, messagebox, tkfont, root=root, appearance=appearance)
+                    for step in STEPS:
+                        app.wizard.saved.current = step.id
+                        app.refresh()
+                        root.update_idletasks()
+                        check(app.panels[step.id][0].winfo_manager() != "", f"{appearance}: step {step.id}")
+                    app._open_utility(shots.SCREENSHOTS)
+                    root.update_idletasks()
+                    check(app.utilities[shots.SCREENSHOTS][0].winfo_manager() != "", f"{appearance}: screenshots")
+                finally:
+                    root.destroy()
+            out = Path(tmp) / "out"
+            outcome = runner.run_build(["--profile", "xpan-crop", "--rom", "r.bin", "--toolchain", "t",
+                                        "--output", str(out), "--startup-wav", "a.wav"], out, lambda _line: None)
+            check(outcome.returncode == 2 and "forbids --startup-wav" in outcome.error_text() and not out.exists(),
+                  f"builder starts and refuses bad arguments ({' '.join(bundle.builder_command(runner.BUILD_PY))})")
+        finally:
+            wizard_mod.DEFAULT_STATE_FILE, checks.detect_toolchain = saved_state, saved_detect
+    print("self-test passed", flush=True)
     return 0
 
 

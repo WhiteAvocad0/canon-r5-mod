@@ -18,6 +18,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import features
+from gui import bundle
 
 UNCHECKED, CHECKING, OK, FAILED = "unchecked", "checking", "ok", "failed"
 
@@ -72,12 +73,12 @@ class ProfileView:
 
 def default_output_dir(profile: str, options: dict[str, str], manifest: features.FeatureManifest,
                        now: datetime | None = None) -> Path:
-    """A fresh folder under the ignored build/ directory, named after the selection."""
+    """A fresh folder named after the selection, under the ignored build/ directory (or ~/R5-builds in the app)."""
     now = datetime.now() if now is None else now
     parts = [profile] + [
         v for oid, v in options.items() if v != manifest.options[oid].default
     ]
-    return ROOT / "build" / ("gui-" + "-".join(parts) + now.strftime("-%Y%m%d-%H%M%S"))
+    return bundle.builds_root(ROOT) / ("gui-" + "-".join(parts) + now.strftime("-%Y%m%d-%H%M%S"))
 
 
 class AssistantState:
