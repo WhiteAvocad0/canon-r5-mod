@@ -1,4 +1,4 @@
-"""Widget-free state of the build assistant.
+"""Widget-free state of R5 Mod Assistant.
 
 Everything the window shows or enables is derived here from the feature manifest
 and the latest check results, so it can be tested without a display. Check results

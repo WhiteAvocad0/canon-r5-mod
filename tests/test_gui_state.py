@@ -1,4 +1,4 @@
-"""Build assistant state, checks and runner logic, without a display or Tkinter."""
+"""R5 Mod Assistant state, checks and runner logic, without a display or Tkinter."""
 from datetime import datetime
 import io
 import contextlib

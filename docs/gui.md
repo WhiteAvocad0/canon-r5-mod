@@ -1,9 +1,9 @@
-# Setup assistant (prototype)
+# R5 Mod Assistant (prototype)
 
 > [!WARNING]
 > **Prototype.** This is [issue #16](https://github.com/WhiteAvocad0/canon-r5-mod/issues/16): a step-by-step setup wizard. It builds `autoexec.bin` on your computer and can write the two boot markers onto a card you formatted in the camera (macOS only; the exFAT path was verified on the owner's Mac and camera, FAT32 is untested). Then it copies `autoexec.bin` to the card. It runs the same builder and checks as the [command line](usage.md#4-build-offline). Every build is a public repackaged build and is **hardware-untested**. Read the [Getting started guide](getting-started.md) first. You use this at your own risk.
 
-The setup assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
+R5 Mod Assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
 ## Launch
 

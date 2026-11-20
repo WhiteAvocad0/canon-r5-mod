@@ -176,7 +176,7 @@ def contents_text(s: BuildSummary, manifest: features.FeatureManifest, now: date
     lines = [
         "WHAT'S IN THIS BUILD",
         "====================",
-        f"Made by the build assistant prototype on {now:%Y-%m-%d %H:%M}.",
+        f"Made by R5 Mod Assistant (prototype) on {now:%Y-%m-%d %H:%M}.",
         f"Camera: {manifest.target} only.",
         "",
         "IMPORTANT: " + manifest.public_build_note,

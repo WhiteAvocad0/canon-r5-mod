@@ -3,7 +3,7 @@
 The manifest is the single source of truth for build profiles, per-profile input
 policies (WAVs required or forbidden), opt-in options, their dependencies on a
 profile, their choices and their validation status. tools/build.py derives its
-CLI choices and selection rules from it, and the GUI build assistant derives its
+CLI choices and selection rules from it, and the GUI (R5 Mod Assistant) derives its
 checklist from it, so the GUI cannot offer a combination the builder refuses.
 
 This module parses and answers questions only. It never reads ROMs, WAVs or
