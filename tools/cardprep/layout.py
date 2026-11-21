@@ -250,7 +250,8 @@ def _fat32_facts(area: bytes, mbr: MbrFacts) -> VolumeFacts:
             else:
                 _require(observed == bytes(len(value)), "unexpected_marker_bytes",
                          "The FAT32 boot sector has unexpected bytes where BOOTDISK goes (byte 92). "
-                         "A card formatted in the camera has zeros there.")
+                         "A card formatted in the camera has zeros there; a computer format puts boot code "
+                         "there. Back up your photos, format the card in the camera, then try again.")
         markers.append(Marker(name, offset, observed, present))
     return VolumeFacts(FAT32, mbr, _u32(s, 67), total, bps * spc, tuple(markers), {
         "oem": s[3:11].decode("latin-1"), "reserved_sectors": reserved, "fats": fats, "fat_sectors": fat_size,
