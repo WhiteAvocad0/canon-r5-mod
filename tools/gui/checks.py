@@ -21,13 +21,6 @@ if str(TOOLS_DIR) not in sys.path:
 
 TOOLCHAIN_RELEASES_URL = "https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases"
 TOOLCHAIN_FOLDER = "xpack-arm-none-eabi-gcc-15.2.1-1.1"
-TOOLCHAIN_INSTRUCTIONS = (
-    "Download the xPack GNU Arm Embedded GCC 15.2.1-1.1 archive for your computer from the "
-    "releases page, unpack it anywhere (for example into a 'tools' folder in your home folder), "
-    "then choose its 'bin' folder here. This prototype never downloads anything itself."
-)
-
-
 @dataclass
 class CheckResult:
     ok: bool

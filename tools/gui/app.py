@@ -38,7 +38,7 @@ import screenshots as screenshots_mod
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 from gui.theme import BUSY, DANGER, INFO, NEUTRAL, SPACE, SUCCESS, WARNING
-from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COPY, DONE, FEATURES, GUIDE,
+from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, CARD_BADGES, COPY, DONE, FEATURES, GUIDE,
                         NEEDS_ACTION, ROM, SKIPPED, STEP_BY_ID, STEPS, TEST, TEST_CHECKLIST, TOOLCHAIN, Wizard)
 
 
@@ -92,20 +92,6 @@ Every build made here is a public repackaged build and is hardware-untested. \
 Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an \
 error, remove the battery, then the card; see the Getting started guide.
 """
-_NEEDS_COMMON = (
-    "Your EOS R5 on firmware 2.2.1, with a fully charged battery.",
-    "An SD card you can erase. For the one-time ROM dump and BootDisk steps (2 and 3) it must be 32 GB or "
-    "smaller (SDHC); any camera-formatted card works for the mod itself.",
-    "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish while you do the "
-    "camera steps.",
-    "Up to three visits to the camera: the ROM dump (step 2) and BootDisk (step 3) if you haven't done them "
-    "before, and the first test (step 9).",
-)
-NEEDS = {  # by whether this computer can prepare cards (macOS)
-    True: _NEEDS_COMMON + ("This Mac's built-in SD card slot (USB card readers are not offered).",),
-    False: _NEEDS_COMMON + ("A Mac with an SD card slot for preparing cards: on this computer the app can "
-                            "build and copy, but it can't prepare cards.",),
-}
 WARNING_TEXT = ("Experimental software for the original EOS R5 on firmware 2.2.1 only. "
                 "Public builds are hardware-untested. Read the Getting started guide first.")
 CHECK_KINDS = {OK: SUCCESS, FAILED: DANGER, CHECKING: BUSY}
@@ -342,17 +328,43 @@ class App:
         label.pack(anchor="w", fill="x", pady=pady)
         return self.wrap(label, inset, full)
 
-    def _bullet_list(self, parent, lines, inset=0):
-        """Bullets whose wrapped lines stay indented under their text."""
+    def _list(self, parent, lines, inset=0, numbered=False):
+        """A bulleted or numbered list whose wrapped lines stay indented under their text."""
         grid = self.ttk.Frame(parent)
-        grid.pack(fill="x")
+        grid.pack(fill="x", anchor="w")
         grid.columnconfigure(1, weight=1)
         for row, line in enumerate(lines):
-            self.ttk.Label(grid, text="•", style="Body.TLabel").grid(row=row, column=0, sticky="nw",
-                                                                          padx=(0, S), pady=(XS, 0))
+            self.ttk.Label(grid, text=f"{row + 1}." if numbered else "•",
+                           style="Strong.TLabel" if numbered else "Body.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, S), pady=(XS, 0))
             label = self.ttk.Label(grid, text=line, style="Body.TLabel", justify="left")
             label.grid(row=row, column=1, sticky="w", pady=(XS, 0))
-            self.wrap(label, inset + 2 * S)
+            self.wrap(label, inset + 3 * S)
+        return grid
+
+    def _badge(self, parent, card):
+        """The card size a step needs, as a small highlighted label."""
+        return self.ttk.Label(parent, text=CARD_BADGES[card].upper(), style=f"CardBadge.{card}.TLabel")
+
+    def _needs_box(self, parent, needs, title):
+        """What a step needs (SD card, computer, camera...), with the card size highlighted."""
+        box = self.ttk.Frame(parent, style="Needs.TFrame", padding=M)
+        box.pack(fill="x", pady=(L, 0))
+        self.wrap(self.ttk.Label(box, text=title, style="Needs.Title.TLabel", justify="left"),
+                  CARD_INSET, full=True).pack(anchor="w", fill="x")
+        grid = self.ttk.Frame(box, style="Needs.Inner.TFrame")
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        for row, need in enumerate(needs):
+            self.ttk.Label(grid, text=need.what, style="Needs.Strong.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, M), pady=(S, 0))
+            cell = self.ttk.Frame(grid, style="Needs.Inner.TFrame")
+            cell.grid(row=row, column=1, sticky="we", pady=(S, 0))
+            if need.card:
+                self._badge(cell, need.card).pack(anchor="w", pady=(0, XS))
+            self.wrap(self.ttk.Label(cell, text=need.detail, style="Needs.TLabel", justify="left"),
+                      CARD_INSET + 140).pack(anchor="w", fill="x")
+        return box
 
     def _card(self, parent, title=None, pady=(M, 0), style="Card.TFrame"):
         box = self.ttk.Frame(parent, style=style, padding=M)
@@ -555,11 +567,23 @@ class App:
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(inner, text=eyebrow, style="Eyebrow.TLabel").pack(anchor="w")
+        top = ttk.Frame(inner)
+        top.pack(anchor="w", fill="x")
+        ttk.Label(top, text=eyebrow, style="Eyebrow.TLabel").pack(side="left")
+        card_size = None if utility else guide.card
+        if card_size:
+            self._badge(top, card_size).pack(side="left", padx=(M, 0))
         self._text(inner, title, "Heading.TLabel", pady=(XS, 0), full=True)
         self._text(inner, guide.why, pady=(M, 0))
+        needs = getattr(guide, "needs", ())
+        if needs:
+            self._needs_box(inner, needs, "What you'll need for the whole setup" if step_id == CAMERA
+                            else "What this step needs")
         self._text(inner, "What you do", "Subheading.TLabel", pady=(L, 0))
-        self._text(inner, guide.todo, pady=(XS, 0))
+        if isinstance(guide.todo, str):
+            self._text(inner, guide.todo, pady=(XS, 0))
+        else:
+            self._list(inner, guide.todo, numbered=True).pack_configure(pady=(0, 0))
         body = ttk.Frame(inner)
         body.pack(fill="x", pady=(S, 0))
         check = None if utility else Callout(self, inner, pady=(L, 0))
@@ -587,8 +611,6 @@ class App:
         self.ttk.Checkbutton(tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
             text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
-        needs = self._card(tab, "What you'll need", pady=(L, 0))
-        self._bullet_list(needs, NEEDS[card_devices.prepare_supported()], inset=CARD_INSET)
         modes = self._card(tab, "Set up before?", pady=(M, 0))
         self._text(modes, "If you only want to change features or copy a new build, take the short path.",
                    pady=(0, 0), inset=CARD_INSET)
@@ -761,7 +783,8 @@ class App:
         bar.configure(background=p.accent if current else bg)
         title.configure(font=f["subheading"] if current else f["body"],
                         foreground=p.text_disabled if st == BLOCKED else p.text)
-        status.configure(text=SIDEBAR_STATUS[st])
+        card_size = GUIDE[step_id].card
+        status.configure(text=SIDEBAR_STATUS[st] + (f"  ·  {CARD_BADGES[card_size]}" if card_size else ""))
         if st == DONE:
             self.draw_mark(mark, SUCCESS, bg)
         elif st == SKIPPED:
@@ -1022,7 +1045,6 @@ class App:
 
     def _toolchain_tab(self):
         tab = self._panel(TOOLCHAIN)
-        self._text(tab, checks.TOOLCHAIN_INSTRUCTIONS)
         self.ttk.Button(tab, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
                         command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()

@@ -322,6 +322,17 @@ class WindowSmokeTests(unittest.TestCase):
         # The copy step's warning checkbox appears only with warnings.
         self.assertFalse(app.card_confirm_box.winfo_manager())
 
+    def test_card_size_is_highlighted(self):
+        app = self.build("light")
+        w = self.wizard_mod
+        caption = lambda step: app.side_rows[step]["parts"][4].cget("text")
+        self.assertIn("SD card ≤ 32 GB", caption(w.ROM))
+        self.assertIn("Any SD card", caption(w.BOOTCARD))
+        self.assertEqual(caption(w.FEATURES), "To do")
+        badges = {str(widget.cget("text")) for widget in self._descendants(app.panels[w.ROM][0])
+                  if widget.winfo_class() == "TLabel" and "CardBadge" in str(widget.cget("style"))}
+        self.assertEqual(badges, {"SD CARD ≤ 32 GB"})
+
     def test_finish_on_the_last_step(self):
         app = self.build("light")
         w = self.wizard_mod

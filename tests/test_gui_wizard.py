@@ -59,6 +59,18 @@ class Steps(Base):
         self.assertIn("EnableBootDisk", wz.GUIDE[wz.BOOTDISK].details)
         self.assertEqual(set(wz.GUIDE), set(wz.STEP_BY_ID))
 
+    def test_card_size_and_numbered_steps(self):
+        cards = {step: wz.GUIDE[step].card for step in wz.STEP_BY_ID}
+        self.assertEqual(cards, {wz.CAMERA: None, wz.ROM: wz.SMALL_CARD, wz.BOOTDISK: wz.SMALL_CARD,
+                                 wz.FEATURES: None, wz.TOOLCHAIN: None, wz.BUILD: None,
+                                 wz.BOOTCARD: wz.ANY_CARD, wz.COPY: wz.ANY_CARD, wz.TEST: wz.ANY_CARD})
+        overview = {n.card for n in wz.GUIDE[wz.CAMERA].needs if n.card}
+        self.assertEqual(overview, {wz.SMALL_CARD, wz.ANY_CARD}, "step 1 names both card sizes")
+        for step in (wz.CAMERA, wz.FEATURES, wz.TOOLCHAIN, wz.BUILD, wz.BOOTCARD, wz.COPY, wz.TEST):
+            todo = wz.GUIDE[step].todo
+            self.assertIsInstance(todo, tuple, step)
+            self.assertGreaterEqual(len(todo), 3, step)
+
     def test_initial_statuses(self):
         st = {k: v.status for k, v in self.w.statuses().items()}
         self.assertEqual(st[wz.CAMERA], wz.NEEDS_ACTION)

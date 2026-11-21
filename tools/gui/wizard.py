@@ -437,23 +437,60 @@ class Wizard:
 # -- the words on each step: what and why, what you do, and technical details ----------
 
 
+SMALL_CARD, ANY_CARD = "small", "any"
+CARD_BADGES = {SMALL_CARD: "SD card ≤ 32 GB", ANY_CARD: "Any SD card"}  # highlighted on the step and sidebar
+
+
+@dataclass(frozen=True)
+class Need:
+    """One thing a step needs, such as the SD card, the computer or the camera."""
+    what: str
+    detail: str
+    card: str | None = None  # SMALL_CARD or ANY_CARD: the card size this step needs
+
+
 @dataclass(frozen=True)
 class Guide:
     why: str
-    todo: str
+    todo: str | tuple[str, ...]  # numbered steps, or one paragraph
     details: str
+    needs: tuple[Need, ...] = ()
+
+    @property
+    def card(self) -> str | None:
+        """The card size this step needs (step 1's overview names several, so it has none)."""
+        sizes = {n.card for n in self.needs if n.card}
+        return sizes.pop() if len(sizes) == 1 else None
+
+
+_CAMERA_READY = Need("Camera", "Fully charged battery. Remove the CFexpress card and unplug USB and HDMI.")
+_MAC = Need("Computer", "A Mac with a built-in SD card slot (USB card readers are not offered).")
+_SMALL_CARD = Need("SD card", "32 GB or smaller (SDHC, FAT32), formatted in the camera, with at least 300 MiB "
+                   "free and no AUTOEXEC.BIN on it. Bigger SDXC cards are refused for this step.", SMALL_CARD)
 
 
 GUIDE = {
     CAMERA: Guide(
         "This mod only works on an original Canon EOS R5 with firmware 2.2.1. Other models (R5 C, R5 Mark II, "
         "R6 family) and other firmware versions are not supported, and using it there can damage your camera.",
-        "On the camera, press MENU and open the yellow Setup (wrench) tab. Find 'Firmware' (on the last Setup "
-        "page). It must say 'Firmware Ver. 2.2.1'. The camera's top or front must say 'EOS R5' with no 'C' or "
-        "'Mark II'. Then tick the box below. Never upgrade or downgrade the firmware to make it fit.",
+        ("On the camera, press MENU and open the yellow Setup (wrench) tab.",
+         "Go to the last Setup page and find 'Firmware'. It must say 'Firmware Ver. 2.2.1'. Never upgrade or "
+         "downgrade the firmware to make it fit.",
+         "Check the camera's top or front: it must say 'EOS R5', with no 'C' or 'Mark II'.",
+         "Tick the box below."),
         "Everything the builder links against is checked against an exact R5 2.2.1 ROM (strict admission, no "
         "--force). The camera check here is your confirmation; the ROM check in step 2 verifies the firmware "
-        "itself."),
+        "itself.",
+        (Need("Camera", "Your EOS R5 on firmware 2.2.1, with a fully charged battery."),
+         Need("SD card", "Steps 2 and 3 (ROM dump and BootDisk): 32 GB or smaller (SDHC). You only need these "
+              "steps once.", SMALL_CARD),
+         Need("SD card", "Steps 7 to 9 (the mod itself): any size, formatted in the camera.", ANY_CARD),
+         Need("Computer", "A Mac with a built-in SD card slot for the card steps (2, 3 and 7). On Windows or "
+              "Linux the app can build and copy, but not prepare cards."),
+         Need("Compiler", "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish "
+              "while you do the camera steps."),
+         Need("Camera visits", "Up to three: the ROM dump (step 2), BootDisk (step 3) and the first test "
+              "(step 9)."))),
     ROM: Guide(
         "The build uses small parts of Canon's firmware, read from your own camera's ROM. They can't be shared, "
         "so everyone makes their own copy once. Dumping the ROM only reads; it changes nothing in the camera.",
@@ -468,7 +505,8 @@ GUIDE = {
         "VBR byte 496 (0x1F0), 17-byte script.req ('for DC_scriptdisk'), and extend.m calling "
         "SaveAllRomImageToFile() (requires >= 300 MiB free and no AUTOEXEC.BIN or native boot markers). "
         "SDXC/exFAT cards (>= 0x4000000 sectors) check LBA-1 for SCRIPT and are untested, so guided Canon "
-        "Basic refuses them. Keep your ROM dump private; gang2NN.bin is not needed."),
+        "Basic refuses them. Keep your ROM dump private; gang2NN.bin is not needed.",
+        (_SMALL_CARD, _MAC, _CAMERA_READY)),
     BOOTDISK: Guide(
         "A stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. "
         "It is stored inside the camera, it is PERMANENT across card formats and card removal, and there is no "
@@ -485,43 +523,68 @@ GUIDE = {
         "compare the first 48 bytes against an earlier dump, and immediately remove extend.m and script.req so a "
         "stray SET cannot repeat a flash write. DisableBootDisk() (0xE0B38D74, writing 0x00000000) is the stock "
         "inverse in the R5 2.2.1 ROM, but it has NOT been tested on hardware yet. The app itself never writes "
-        "camera flash or NVRAM: you run the card in the camera."),
+        "camera flash or NVRAM: you run the card in the camera.",
+        (_SMALL_CARD, _MAC, _CAMERA_READY)),
     FEATURES: Guide(
         "The mod comes in two versions. XPan adds a 2.71:1 panoramic crop; Custom sounds plays your own startup "
         "and shutter sounds. They can't be combined.",
-        "Choose one, and any options. For Custom sounds, choose your two WAV files. Then press Next.",
+        ("Choose XPan or Custom sounds below.",
+         "For XPan, choose a movie record cue if you want one. For Custom sounds, choose your startup and "
+         "shutter WAV files.",
+         "Press Next to use these features."),
         "The choices come from config/features.json, the same manifest the command-line builder uses, so the "
         "window can't offer a combination the builder would refuse. Every public build is hardware-untested; "
-        "the status lines say what was tested on private lab builds."),
+        "the status lines say what was tested on private lab builds.",
+        (Need("Files", "Custom sounds only: two WAV files, 48 kHz, mono, 16-bit PCM."),)),
     TOOLCHAIN: Guide(
         "A free compiler (GNU Arm 15.2.1) turns the source code into autoexec.bin on your computer.",
-        "The app looks for it automatically. If it isn't found, download xPack GNU Arm Embedded GCC 15.2.1-1.1 "
-        "for your computer, unpack it, and choose its 'bin' folder.",
+        ("Look at the status line below: the app searches for the compiler when it starts. If it was found, "
+         "press Next.",
+         "Otherwise press 'Open the xPack releases page' and download xPack GNU Arm Embedded GCC 15.2.1-1.1 for "
+         "your computer.",
+         "Unpack it anywhere, for example into a 'tools' folder in your home folder.",
+         "Press 'Choose bin folder...' and choose its 'bin' folder."),
         "Each candidate goes through the builder's toolchain admission (target arm-none-eabi, GCC 15.2.1). "
-        "The app never downloads anything itself."),
+        "The app never downloads anything itself.",
+        (Need("Internet", "Once, to download the compiler yourself. The app never downloads anything."),)),
     BUILD: Guide(
         "Now the app builds the mod from your ROM and the features you chose, all on this computer.",
-        "Press Build and wait (usually under a minute). The result shows the file and its checksum.",
+        ("Press 'Build autoexec.bin'.",
+         "Wait until the result appears, usually in under a minute. It shows the file and its checksum.",
+         "Press Next."),
         "The build runs python3 tools/build.py with the exact arguments shown in the log, in a separate process. "
         "The result is re-hashed and compared with build.json, and BUILD-CONTENTS.txt lists what is inside."),
     BOOTCARD: Guide(
         "The camera only starts autoexec.bin from a card that carries two short boot markers. Formatting a card "
         "removes them, so this is needed once per format.",
-        "Format the card IN THE CAMERA first (this erases it; copy your photos off before). Then choose it below "
-        "and press Prepare card. If your card is already prepared, say so instead.",
+        ("Copy your photos and videos from the card to your computer.",
+         "Format the card IN THE CAMERA. This erases it.",
+         "Put the card in this Mac's SD card slot and press 'Find SD cards'.",
+         "Choose the card in the list and press 'Prepare card'. Check the card's name in the dialog and press OK.",
+         "If your card is already prepared, press 'My card is already prepared' at the bottom instead."),
         "Only the boot-marker sectors are written (FAT32: 1 sector; exFAT: 4), after an automatic, verified "
         "backup and one confirmation; Undo restores the backup. Raw access goes through macOS authopen; nothing "
-        "runs as root. Verified on the owner's Mac with a 128 GB exFAT card; FAT32 is untested."),
+        "runs as root. Verified on the owner's Mac with a 128 GB exFAT card; FAT32 is untested.",
+        (Need("SD card", "Any size, formatted in the camera. Verified with a 128 GB exFAT card; FAT32 cards are "
+              "untested.", ANY_CARD), _MAC)),
     COPY: Guide(
         "The camera loads the mod from a file called AUTOEXEC.BIN at the top of the card.",
-        "Use the card you prepared in step 7: if it is mounted, it is chosen for you. Otherwise choose the card's "
-        "top folder (for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Press Copy, then eject the card.",
+        ("Keep the card from step 7 in the computer. If it is mounted, it is chosen for you.",
+         "Otherwise press 'Choose card folder...' and choose the card's top folder (for example "
+         "/Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows).",
+         "Press 'Copy autoexec.bin to card'.",
+         "Eject the card in Finder (on Windows: Safely Remove Hardware)."),
         "Any existing autoexec.bin is backed up to the build folder first. The copy goes to a temporary file, is "
-        "read back, renamed, and read back again against build.json."),
+        "read back, renamed, and read back again against build.json.",
+        (Need("SD card", "The card you prepared in step 7.", ANY_CARD),)),
     TEST: Guide(
         "A short, careful first test tells you whether everything works, and helps others if you report it.",
-        "Work through the checklist with the camera. If the camera freezes or shows an error, remove the battery, "
-        "then the card, and power on without the card. Then report what you saw, including what didn't work.",
+        ("Work through the checklist below with the camera, ticking each item as you go.",
+         "If the camera freezes or shows an error, remove the battery, then the card, and power on without the "
+         "card.",
+         "Press 'Open the test report form' and report what you saw, including what didn't work."),
         "Never upload your ROM, photos or card images in a report. Quote the source_manifest_sha256 from "
-        "build.json so others can tell which build you tested."),
+        "build.json so others can tell which build you tested.",
+        (Need("SD card", "Only the card you prepared and copied to; no CFexpress card for the first test.",
+              ANY_CARD), _CAMERA_READY)),
 }

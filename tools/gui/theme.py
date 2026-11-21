@@ -289,6 +289,17 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
     _flat(style, "Card.TFrame", p.bg)
     style.configure("Details.TFrame", background=p.surface, bordercolor=p.border, relief="solid", borderwidth=1)
     _flat(style, "Details.TFrame", p.surface)
+    # "What this step needs": a tinted box, with the SD card size as a badge (amber for the small-card steps)
+    style.configure("Needs.TFrame", background=p.surface, bordercolor=p.border_strong, relief="solid", borderwidth=1)
+    _flat(style, "Needs.TFrame", p.surface)
+    style.configure("Needs.Inner.TFrame", background=p.surface, borderwidth=0, relief="flat")
+    for name, font, fg in (("Needs.TLabel", "body", p.text), ("Needs.Strong.TLabel", "subheading", p.text),
+                           ("Needs.Title.TLabel", "subheading", p.text)):
+        style.configure(name, background=p.surface, foreground=fg, font=fonts[font])
+    style.configure("CardBadge.small.TLabel", background=p.warning_bg, foreground=p.warning, font=fonts["eyebrow"],
+                    padding=(SPACE["s"], 2), bordercolor=p.warning_border, relief="solid", borderwidth=1)
+    style.configure("CardBadge.any.TLabel", background=p.accent_subtle, foreground=p.accent_text,
+                    font=fonts["eyebrow"], padding=(SPACE["s"], 2))
     style.configure("TSeparator", background=p.border)
 
     # Labels
@@ -296,7 +307,8 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
                            ("Muted.TLabel", "body", p.text_muted), ("Heading.TLabel", "heading", p.text),
                            ("Subheading.TLabel", "subheading", p.text), ("Caption.TLabel", "caption", p.text_muted),
                            ("Hint.Caption.TLabel", "caption", p.warning),
-                           ("Eyebrow.TLabel", "eyebrow", p.accent_text), ("Mono.TLabel", "mono", p.text)):
+                           ("Eyebrow.TLabel", "eyebrow", p.accent_text), ("Mono.TLabel", "mono", p.text),
+                           ("Strong.TLabel", "subheading", p.text)):
         style.configure(name, background=p.bg, foreground=fg, font=fonts[font])
     style.configure("Badge.TLabel", background=p.surface, foreground=p.text_muted, font=fonts["eyebrow"],
                     padding=(SPACE["s"], 2))
