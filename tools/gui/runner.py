@@ -1,7 +1,8 @@
 """Run tools/build.py for the assistant and summarise the result.
 
 The build runs as a separate `python tools/build.py ...` process (the documented
-CLI, with all of its checks), never in-process. The summary only reads what the
+CLI, with all of its checks), never in-process; the packaged app runs itself in
+build mode instead (bundle.builder_command). The summary only reads what the
 builder wrote; the one file this module adds to the output folder is the
 human-readable BUILD-CONTENTS.txt.
 """
@@ -27,6 +28,7 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import features
+from gui import bundle
 
 
 @dataclass
@@ -62,7 +64,7 @@ def condense_log_line(line: str) -> str | None:
 
 
 def run_build(argv: list[str], output_dir: Path, on_line: Callable[[str], None],
-              python: str = sys.executable, poll_seconds: float = 0.2) -> BuildOutcome:
+              command: list[str] | None = None, poll_seconds: float = 0.2) -> BuildOutcome:
     """Run the builder, reporting stderr lines and condensed build.log progress as they appear."""
     log = Path(output_dir) / "build.log"
     offset = 0
@@ -85,7 +87,8 @@ def run_build(argv: list[str], output_dir: Path, on_line: Callable[[str], None],
             if short:
                 on_line(short)
 
-    with subprocess.Popen([python, str(BUILD_PY), *argv], cwd=ROOT, stdout=subprocess.PIPE,
+    command = bundle.builder_command(BUILD_PY) if command is None else command
+    with subprocess.Popen([*command, *argv], cwd=ROOT, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True) as proc:
         def pump_stderr():
             for line in proc.stderr:

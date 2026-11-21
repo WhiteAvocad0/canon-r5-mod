@@ -1,0 +1,95 @@
+name: desktop-app
+
+# Builds the unsigned R5 Mod Assistant desktop app with packaging/build_app.py: a .dmg
+# for macOS (Apple Silicon and Intel) and a .zip for Windows (x64). Each job runs the
+# app's --self-test from the built app (on Windows from the unzipped .zip) and keeps the
+# package as an artifact. A tag app-v<version> (matching tools/gui/bundle.py VERSION)
+# also publishes them as a GitHub prerelease. No Canon ROM, built autoexec.bin or
+# toolchain is involved.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["app-v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "tools/**"
+      - ".github/workflows/desktop-app.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: app (${{ matrix.os }} ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest   # Apple Silicon
+            os: macos
+            arch: arm64
+            machine: arm64
+          - runner: macos-15-intel # GitHub's last x86_64 macOS image (announced until fall 2027)
+            os: macos
+            arch: x86_64
+            machine: x86_64
+          - runner: windows-latest
+            os: windows
+            arch: x64
+            machine: AMD64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check the tag against the app version
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        run: test "app-v$(python packaging/build_app.py --print-version)" = "$GITHUB_REF_NAME"
+      - name: Check the architecture and Tkinter
+        run: |
+          test "$(python -c 'import platform; print(platform.machine())')" = "${{ matrix.machine }}"
+          python -c 'import tkinter; print("Tk", tkinter.TkVersion)'
+      - name: Install PyInstaller
+        run: python -m pip install -r packaging/requirements.txt
+      - name: Build the app, package it and run its self-test
+        run: python packaging/build_app.py --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: R5-Mod-Assistant-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            build/desktop-app/*.dmg
+            build/desktop-app/*.zip
+          if-no-files-found: error
+
+  prerelease:
+    needs: app
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Publish the packages as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd packages
+          sha256sum *.dmg *.zip > SHA256SUMS.txt
+          cat > notes.md <<'EOF'
+          Unsigned desktop build of R5 Mod Assistant (prototype, untested). macOS: the `arm64` .dmg for Apple Silicon, `x86_64` for Intel Macs. Windows: the `windows-x64` .zip.
+
+          The app is not signed. On macOS, click **Open Anyway** in System Settings > Privacy & Security after the first try (macOS 14 and earlier: Control-click > **Open**). On Windows, extract the whole .zip, and if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. See [docs/gui.md](https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md#download-the-app).
+
+          You still need the GNU Arm toolchain (GCC 15.2.1) and your own ROM dump. Preparing a card's boot markers is offered on macOS only; on Windows, copy `autoexec.bin` to a card prepared on a Mac. Every build the app makes is a public repackaged build and is hardware-untested.
+          EOF
+          gh release create "$GITHUB_REF_NAME" *.dmg *.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
+            --verify-tag --title "R5 Mod Assistant ${GITHUB_REF_NAME#app-v} for macOS and Windows (unsigned prerelease)" --notes-file notes.md

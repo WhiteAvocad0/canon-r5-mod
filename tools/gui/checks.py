@@ -144,6 +144,9 @@ def toolchain_candidates(
         str(home / "opt" / "xpack-arm-none-eabi-gcc-15.2.1-*" / "bin"),
         str(home / ".local" / "xPacks" / "@xpack-dev-tools" / "arm-none-eabi-gcc" / "15.2.1-*" / ".content" / "bin"),
     ]
+    # Arm's own GNU Toolchain 15.2.Rel1 archives unpack to arm-gnu-toolchain-15.2.rel1-<host>-arm-none-eabi.
+    patterns += [str(base / "arm-gnu-toolchain-15.2.rel1-*-arm-none-eabi" / "bin")
+                 for base in (home / "tools", home, home / "Downloads", home / "opt")]
     if platform == "darwin":
         patterns.append("/Applications/ArmGNUToolchain/15.2*/arm-none-eabi/bin")
     elif platform.startswith("win"):
@@ -151,6 +154,9 @@ def toolchain_candidates(
             if environ.get(var):
                 patterns.append(str(Path(environ[var]) / "xPacks" / "@xpack-dev-tools" / "arm-none-eabi-gcc" / "15.2.1-*" / ".content" / "bin"))
         patterns.append("C:/xpack-arm-none-eabi-gcc-15.2.1-*/bin")
+        for var in ("ProgramFiles(x86)", "ProgramFiles"):  # Arm's Windows installer
+            if environ.get(var):
+                patterns.append(str(Path(environ[var]) / "Arm GNU Toolchain arm-none-eabi" / "15.2*" / "bin"))
     else:
         patterns.append("/opt/xpack-arm-none-eabi-gcc-15.2.1-*/bin")
     found: list[Path] = []

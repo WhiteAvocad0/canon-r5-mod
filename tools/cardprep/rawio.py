@@ -192,7 +192,8 @@ class RawAccess:
 
     def _open(self, device: str, flags: int, confirm: Callable[[], object] | None) -> int:
         """Open through authopen, bind the descriptor to ``device``, then call ``confirm``
-        (the caller re-identifies the card: the password window may have been open a long time)."""
+        (the caller re-identifies the card: the password window may have been open a long time).
+        Writes confirm before opening instead; see ``write``."""
         fd = open_device(device, flags, command=self.command, timeout=self.timeout)
         try:
             self.check(fd, device)
@@ -233,8 +234,13 @@ class RawAccess:
         problem = validate_ranges(ranges, after) if start > 0 and start % SECTOR == 0 else "Bad partition start."
         if problem:
             return {"ok": False, "code": "range_not_allowed", "error": problem, "written": [], "possibly_written": []}
+        # Re-identify before opening: while the whole disk is open for writing, macOS reports
+        # no partition table, so diskutil cannot confirm the card then. After the open, the
+        # MBR and boot-area hashes in _write_steps bind the descriptor to the planned card.
         try:
-            fd = self._open(device, os.O_RDWR, confirm)
+            if confirm is not None:
+                confirm()
+            fd = self._open(device, os.O_RDWR, None)
         except Cancelled:
             raise
         except (DeviceError, OSError) as exc:
