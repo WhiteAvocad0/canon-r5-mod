@@ -71,7 +71,7 @@ If Tkinter is missing, the assistant prints these hints and exits. The command-l
 
 ## What it does
 
-*Screenshot, described:* on the left is a grey sidebar with the app's name, a *Prototype* badge and the list of the nine steps, with a *Tools* section under it that holds [Screenshots](#screenshots). Each step shows a round mark and its status under its name: a green ✓ for *done*, – for *skipped*, and the step number for *needs action* or *blocked* (blocked steps are greyed out). The current step is highlighted in blue. On the right, an amber warning box runs across the top, with links to the **Getting started guide**, the **Prerequisites** and this page. The current step fills the space below it. At the bottom are **← Back** and the blue **Next →**, with a short note saying what is still needed.
+*Screenshot, described:* on the left is a grey sidebar with the app's name, a *Prototype* badge and the list of the nine steps, with a *Tools* section under it that holds [Screenshots](#screenshots). Each step shows a round mark and its status under its name: a green ✓ for *Done*, – for *Skipped*, and the step number for *To do* or *Locked* (locked steps are greyed out). The current step is highlighted in blue. Under the steps, a line names the path you are on, with a link to switch: **Update my card instead** (once steps 1 to 3 are done) or **Show all nine steps**. On the right, an amber warning box runs across the top, with links to the **Getting started guide**, the **Prerequisites** and this page. The current step fills the space below it. At the bottom are **← Back** and the blue **Next →**, with a short note saying what is still needed.
 
 The window uses the system font (SF Pro on macOS, Segoe UI on Windows, Cantarell, Ubuntu or DejaVu Sans on Linux), one blue accent colour for actions and the current step, and green, amber and red only for statuses and warnings. On macOS, Windows and GNOME it starts in the desktop's light or dark appearance; set `R5_ASSISTANT_APPEARANCE=light` or `dark` to choose one yourself. The fonts, colours and spacing are defined in [`tools/gui/theme.py`](../tools/gui/theme.py).
 
@@ -79,18 +79,18 @@ Every step has the same shape:
 - what it is and why, in plain language;
 - **What you do**;
 - the step's controls;
-- the app's own check, shown as *Check passed*, *To do* or *Blocked*;
+- the app's own check, shown as *Check passed*, *To do* or *Locked*;
 - a **Details** toggle that opens the technical facts.
 
-**Next** works only when the step's check passes (or the step was skipped). **Back** always works. Clicking a step in the list jumps to it, unless it is blocked; a blocked step says what must be finished first.
+**Next** works only when the step's check passes (or the step was skipped); on Features, pressing **Next** is what confirms your choice. On the last step the button reads **Finish** and works once that step is done; it then says what to do next. **Back** always works. Clicking a step in the list jumps to it, unless it is locked; clicking a locked step shows, next to **Next**, what must be finished first.
 
 **Progress is saved** in `~/.r5-build-assistant/wizard.json` after every change, so you can close the window and continue later. On reopening, anything that can be checked again is checked again before it counts: the ROM, the WAV files, the toolchain, and whether the last build still matches its `build.json`. A copy to the card counts only for the same, still-verified build. The file holds paths and your confirmations, never ROM or card data.
 
-**Returning owners:** once the one-time steps (1 to 3) are done, step 1 offers **Update my card**. The short path is Features, Build tools (only if they no longer pass), Build and Copy. **Set up from the start** shows all nine steps again.
+**Returning owners:** once the one-time steps (1 to 3) are done, step 1 and the sidebar offer **Update my card**. The short path is Features, Build tools (only if they no longer pass), Build, Prepare the boot card and Copy. The boot card is checked again because formatting the card in the camera removes its markers; **Prepare card** writes nothing when they are still there, and **My card is already prepared** skips it. **Show all nine steps** in the sidebar returns to the full setup from any step.
 
 ### Step 1. Welcome and camera check
 
-*Screenshot, described:* the text says the mod works only on an original EOS R5 on firmware 2.2.1. **What you do** explains where to look: press MENU, open the yellow Setup (wrench) tab, and find *Firmware* on the last Setup page, which must read *Firmware Ver. 2.2.1*. The body of the camera must say *EOS R5*, with no *C* or *Mark II*. Then tick "My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'." Below are **Set up from the start** and **Update my card (Features > Build > Copy)**; the second is greyed out until steps 1 to 3 are done. **Details** lists what the assistant never does. A box headed *Screenshots from the camera* has a **Convert screenshots...** button that opens the [Screenshots](#screenshots) tool.
+*Screenshot, described:* the text says the mod works only on an original EOS R5 on firmware 2.2.1. **What you do** explains where to look: press MENU, open the yellow Setup (wrench) tab, and find *Firmware* on the last Setup page, which must read *Firmware Ver. 2.2.1*. The body of the camera must say *EOS R5*, with no *C* or *Mark II*. Then tick "My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'." A box headed *What you'll need* lists the camera with a charged battery, an SD card you can erase (32 GB or smaller for steps 2 and 3), the compiler to start downloading now, up to three visits to the camera, and a Mac with a built-in SD slot for the card steps. A box headed *Set up before?* holds **Update my card**, which is greyed out until steps 1 to 3 are done. **Details** lists what the assistant never does. A box headed *Screenshots from the camera* has a **Convert screenshots...** button that opens the [Screenshots](#screenshots) tool.
 
 This is your confirmation. The ROM check in step 2 verifies the firmware itself.
 
@@ -119,11 +119,11 @@ The app itself never writes the camera's firmware or NVRAM; you always run the C
 
 ### Step 4. Choose features
 
-*Screenshot, described:* two cards, each with a radio button, **Custom startup and shutter sounds (shutter-feedback)** and **XPan 2.71:1 crop (silent) (xpan-crop)**; the chosen one has a blue outline. Each has a short description and a grey status line, for example "Status: Verified on a private lab build. Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
+*Screenshot, described:* two cards, each with a radio button, **Custom startup and shutter sounds** (`shutter-feedback`) and **XPan 2.71:1 crop (silent)** (`xpan-crop`); the chosen one has a blue outline. Each has a short description and a grey status line, for example "Status: Verified on a private lab build. Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
 
-Below them is a **Movie record indicator** box with a drop-down menu (Off, Ding, Chirp, Tone). The text under the menu gives the status of the chosen cue. Ding was tested on the REC press on a private lab build. Chirp ran in a private A/B trial with the same trigger, and Tone ran on an earlier private build with a different trigger (the start request). Neither has run in this public single-cue configuration, so both are marked experimental. Below it, a **Movie record stop cue** box (Off, Dong) adds a lower two-note dong once when a take ends. It is independent of the start cue. Dong was tested together with the ding on a private lab build; without a start cue it has not run on hardware. With **shutter-feedback** selected, both menus are greyed out and say the option is part of the XPan profile only (it needs xpan-crop).
+Below them is a **Movie record indicator** box with a drop-down menu (Off, Ding, Chirp, Tone). The text under the menu gives the status of the chosen cue. Ding was tested on the REC press on a private lab build. Chirp ran in a private A/B trial with the same trigger, and Tone ran on an earlier private build with a different trigger (the start request). Neither has run in this public single-cue configuration, so both are marked experimental. Below it, a **Movie record stop cue** box (Off, Dong) adds a lower two-note dong once when a take ends. It is independent of the start cue. Dong was tested together with the ding on a private lab build; without a start cue it has not run on hardware. Both menus are shown only with **xpan-crop** selected; they are part of the XPan profile only.
 
-Then come two boxes, **Startup sound (WAV)** and **Shutter sound (WAV)**, each with a **Choose WAV...** button. They work only for shutter-feedback. Under xpan-crop they are greyed out with the reason "Not used by xpan-crop: this profile adds no custom sounds." Each WAV is checked by the builder's own WAV admission, which needs 48 kHz mono 16-bit PCM. A green line then shows its length, for example "WAV accepted: 48 kHz mono 16-bit, 300 ms, 28,800 bytes embedded." A red line gives the reason the WAV was refused. [usage.md](usage.md#3-convert-your-audio-clips) has an `ffmpeg` command to convert clips.
+Then come two boxes, **Startup sound (WAV)** and **Shutter sound (WAV)**, each with a **Choose WAV...** button. They are shown only for shutter-feedback; xpan-crop adds no custom sounds. Each WAV is checked by the builder's own WAV admission, which needs 48 kHz mono 16-bit PCM. A green line then shows its length, for example "WAV accepted: 48 kHz mono 16-bit, 300 ms, 28,800 bytes embedded." A red line gives the reason the WAV was refused. [usage.md](usage.md#3-convert-your-audio-clips) has an `ffmpeg` command to convert clips.
 
 XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.
 
@@ -135,9 +135,9 @@ At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It l
 
 ### Step 6. Build and verify
 
-*Screenshot, described:* an output folder path with a **Change...** button, then a box headed "Before you can build:" with what is missing (for example "Pick your ROM dump."), or a green "Ready to build." Below these are the blue **Build autoexec.bin** button, a moving progress bar while it builds, a result box, a horizontal memory bar (after a build), two buttons, **Open output folder** and **Open 'what's in this build'**, and the build log.
+*Screenshot, described:* the folder the next build is saved in, with a **Change...** button, then a box headed "Before you can build:" with what is missing (for example "Pick your ROM dump."), or a green "Ready to build." Below these are the blue **Build autoexec.bin** button, a moving progress bar while it builds, a result box, a horizontal memory bar (after a build), two buttons, **Open output folder** and **Open 'what's in this build'**, and a folded **Build log**, which opens when you click it or when a build fails.
 
-- The output folder must be new. By default it's `build/gui-<profile>[-<cue>][-<stop cue>]-<date>-<time>` inside the repository, which git ignores.
+- The output folder must be new, so after each build the box shows a fresh folder for the next one; the result box names where the build went. By default it's `build/gui-<profile>[-<cue>][-<stop cue>]-<date>-<time>` inside the repository, which git ignores.
 - **Build** runs `python3 tools/build.py ...` with the selected arguments in a separate process. The log shows each step (for example `gcc observer.o`, `ld handoff.elf`). The first line is the exact command, so you can repeat it in a terminal.
 - On success, the result area shows the path of `autoexec.bin` and its SHA-256, which the assistant recalculates and checks against `build.json`. It also shows a memory line, for example "Canon memory left after this build: 907,256 bytes (safety floor 524,304; margin 382,952 bytes)." The bar shows the remaining Canon memory as a share of the pool.
 - It also writes `BUILD-CONTENTS.txt` in the output folder: a plain-language list of the profile, options and their status, the WAVs used, the image's SHA-256, the memory margin, the `source_manifest_sha256` to quote in test reports, and what the build does *not* include.
@@ -197,7 +197,7 @@ Each sector is flushed with `F_FULLFSYNC` (falling back to `fsync` where the dev
 
 ### Step 8. Copy autoexec.bin
 
-*Screenshot, described:* an explanation, a path box with **Choose card folder...**, a report (folder, drive size, whether a `DCIM` folder exists, any existing `autoexec.bin`, plus warnings), a confirmation checkbox, and the **Copy autoexec.bin to card** button.
+*Screenshot, described:* an explanation, a path box with **Choose card folder...**, a report (folder, drive size, whether a `DCIM` folder exists, any existing `autoexec.bin`, plus warnings), a confirmation checkbox that appears only with warnings, and the **Copy autoexec.bin to card** button. If the card chosen in step 7 is mounted, its folder is chosen and checked for you when the step opens.
 
 This is only for a card that is **already bootable**. Choose the card's top folder, for example `/Volumes/EOS_DIGITAL` on a Mac, `E:\` on Windows, or the card's mount folder on Linux. Then:
 
@@ -219,7 +219,7 @@ The copy step **never** formats or partitions a card, never opens a raw disk, ne
 - the features in this build;
 - waited for the card light before switching off.
 
-It is blocked until this build has been copied in step 8. **Open the test report form** opens the right GitHub form for the profile you built. If the camera freezes or shows an error, remove the battery, then the card, and power on without the card. Never upload your ROM, photos or card images.
+It is blocked until this build has been copied in step 8. **Open the test report form** opens the right GitHub form for the profile you built. **Finish** works once every item is ticked. If the camera freezes or shows an error, remove the battery, then the card, and power on without the card. Never upload your ROM, photos or card images.
 
 ### What this tool cannot do
 

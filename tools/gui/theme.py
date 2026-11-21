@@ -295,6 +295,7 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
     for name, font, fg in (("TLabel", "body", p.text), ("Body.TLabel", "body", p.text),
                            ("Muted.TLabel", "body", p.text_muted), ("Heading.TLabel", "heading", p.text),
                            ("Subheading.TLabel", "subheading", p.text), ("Caption.TLabel", "caption", p.text_muted),
+                           ("Hint.Caption.TLabel", "caption", p.warning),
                            ("Eyebrow.TLabel", "eyebrow", p.accent_text), ("Mono.TLabel", "mono", p.text)):
         style.configure(name, background=p.bg, foreground=fg, font=fonts[font])
     style.configure("Badge.TLabel", background=p.surface, foreground=p.text_muted, font=fonts["eyebrow"],
@@ -342,7 +343,7 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
               bordercolor=[("disabled", p.border), ("focus", p.accent_pressed)],
               foreground=[("disabled", p.text_disabled)])
     for name, bg, fg in (("Link.TButton", p.bg, p.accent_text), ("Banner.Link.TButton", p.warning_bg, p.accent_text),
-                         ("Toggle.TButton", p.bg, p.text_muted)):
+                         ("Sidebar.Link.TButton", p.surface, p.accent_text), ("Toggle.TButton", p.bg, p.text_muted)):
         style.configure(name, background=bg, foreground=fg, bordercolor=bg, padding=(0, 2), anchor="w",
                         focuscolor=p.accent, focussolid=1,
                         font=fonts["subheading" if name == "Toggle.TButton" else "body"])

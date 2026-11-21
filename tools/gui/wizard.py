@@ -283,17 +283,11 @@ class Wizard:
                 return StepStatus(NEEDS_ACTION, "BootDisk is disabled (verified by ROM readback: BootInfo +0x04 = 0x00000000). Enable it to run autoexec.bin.")
             return StepStatus(NEEDS_ACTION, "Enable and verify BootDisk with a Canon Basic card, verify from a post-enable ROM dump, or confirm it is already enabled.")
         if step_id == FEATURES:
-            missing = []
-            for view in a.input_views():
-                if view.policy == "required" and view.path is None:
-                    missing.append(f"Pick the {view.label}.")
-                elif view.policy == "required" and view.check.status != OK:
-                    missing.append(f"The {view.label} was refused: {view.check.message}" if view.check.status == FAILED
-                                   else f"The {view.label} is being checked.")
+            missing = self._feature_problems()
             if missing:
                 return StepStatus(NEEDS_ACTION, " ".join(missing))
             return StepStatus(DONE, f"{a.manifest.profiles[a.profile].label}.") if s.features_confirmed \
-                else StepStatus(NEEDS_ACTION, "Choose the features, then press 'Use these features'.")
+                else StepStatus(NEEDS_ACTION, "Check your choice, then press Next to use it.")
         if step_id == TOOLCHAIN:
             check = a.toolchain_check()
             if check.status == OK:
@@ -314,9 +308,13 @@ class Wizard:
                 return StepStatus(DONE, "The card has its boot markers.")
             if s.card_prepared == "elsewhere":
                 return StepStatus(SKIPPED, "Skipped: you said your card is already prepared.")
-            return StepStatus(NEEDS_ACTION, "Prepare the card, or say it is already prepared." if self.prep_supported
-                              else "Preparing cards is offered on macOS only: prepare the card on a Mac, "
-                                   "then say it is already prepared here.")
+            if not self.prep_supported:
+                return StepStatus(NEEDS_ACTION, "Preparing cards is offered on macOS only: prepare the card on a Mac, "
+                                                "then say it is already prepared here.")
+            if s.mode == "update":
+                return StepStatus(NEEDS_ACTION, "Formatting the card in the camera removes its boot markers. Press "
+                                                "Prepare card to check: it writes nothing if they are still there.")
+            return StepStatus(NEEDS_ACTION, "Prepare the card, or say it is already prepared.")
         if step_id == COPY:
             if self.status(BUILD).status != DONE:
                 return StepStatus(BLOCKED, "Build autoexec.bin first.")
@@ -331,6 +329,17 @@ class Wizard:
             return StepStatus(NEEDS_ACTION, f"{len(s.test_checked)} of {len(TEST_CHECKLIST)} items checked.")
         raise KeyError(step_id)
 
+    def _feature_problems(self) -> list[str]:
+        """What the chosen features still need (the WAV files), before they can be used."""
+        problems = []
+        for view in self.a.input_views():
+            if view.policy == "required" and view.path is None:
+                problems.append(f"Pick the {view.label}.")
+            elif view.policy == "required" and view.check.status != OK:
+                problems.append(f"The {view.label} was refused: {view.check.message}" if view.check.status == FAILED
+                                else f"The {view.label} is being checked.")
+        return problems
+
     def statuses(self) -> dict[str, StepStatus]:
         return {step.id: self.status(step.id) for step in STEPS}
 
@@ -342,8 +351,10 @@ class Wizard:
 
     def path(self) -> list[str]:
         if self.saved.mode == "update":
-            steps = [FEATURES] + ([TOOLCHAIN] if self.status(TOOLCHAIN).status != DONE else []) + [BUILD, COPY]
-            return steps
+            # The boot card stays on the short path: a format in the camera removes its markers, and
+            # Prepare card writes nothing when they are still there.
+            return [FEATURES] + ([TOOLCHAIN] if self.status(TOOLCHAIN).status != DONE else []) \
+                + [BUILD, BOOTCARD, COPY]
         return [s.id for s in STEPS]
 
     def start_update(self) -> list[str]:
@@ -353,11 +364,13 @@ class Wizard:
             return [f"First finish the one-time steps: {', '.join(missing)}."]
         self.saved.mode = "update"
         self.saved.features_confirmed = False
+        self.saved.card_prepared = None  # the card may have been formatted since; check it again
         self.saved.current = FEATURES
         self.save()
         return []
 
     def start_full(self) -> None:
+        """Back to all nine steps, staying on the current step."""
         self.saved.mode = "full"
         self.save()
 
@@ -371,16 +384,28 @@ class Wizard:
         """Next is allowed once the step is done or skipped."""
         return self.status(step_id or self.current).status in (DONE, SKIPPED)
 
+    def is_last(self) -> bool:
+        return self.current == self.path()[-1]
+
     def next_blockers(self) -> list[str]:
+        """Why Next (or Finish, on the last step) can't be pressed yet; empty means it can."""
         st = self.status(self.current)
         if st.status in (DONE, SKIPPED):
-            return [] if self.current != self.path()[-1] else ["This is the last step."]
+            return []
+        if self.current == FEATURES and not self._feature_problems():
+            return []  # pressing Next is what confirms the choice
         return [st.message]
 
     def next(self) -> bool:
+        """Go to the next step; False if the step isn't finished or this is the last step."""
         if self.next_blockers():
             return False
+        if self.current == FEATURES:
+            self.saved.features_confirmed = True
         path = self.path()
+        if self.is_last():
+            self.save()
+            return False
         self.saved.current = path[path.index(self.current) + 1]
         self.save()
         return True
@@ -464,7 +489,7 @@ GUIDE = {
     FEATURES: Guide(
         "The mod comes in two versions. XPan adds a 2.71:1 panoramic crop; Custom sounds plays your own startup "
         "and shutter sounds. They can't be combined.",
-        "Choose one, and any options. For Custom sounds, choose your two WAV files. Then press 'Use these features'.",
+        "Choose one, and any options. For Custom sounds, choose your two WAV files. Then press Next.",
         "The choices come from config/features.json, the same manifest the command-line builder uses, so the "
         "window can't offer a combination the builder would refuse. Every public build is hardware-untested; "
         "the status lines say what was tested on private lab builds."),
@@ -489,7 +514,8 @@ GUIDE = {
         "runs as root. Verified on the owner's Mac with a 128 GB exFAT card; FAT32 is untested."),
     COPY: Guide(
         "The camera loads the mod from a file called AUTOEXEC.BIN at the top of the card.",
-        "Choose the card's top folder (for example /Volumes/EOS_DIGITAL) and press Copy. Then eject the card.",
+        "Use the card you prepared in step 7: if it is mounted, it is chosen for you. Otherwise choose the card's "
+        "top folder (for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Press Copy, then eject the card.",
         "Any existing autoexec.bin is backed up to the build folder first. The copy goes to a temporary file, is "
         "read back, renamed, and read back again against build.json."),
     TEST: Guide(

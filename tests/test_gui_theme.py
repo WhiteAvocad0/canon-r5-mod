@@ -274,6 +274,69 @@ class WindowSmokeTests(unittest.TestCase):
             self.assertTrue(button.instate(["disabled"]))
         self.assertEqual(app.blockers.headline.cget("text"), "Before you can build:")
 
+    def test_flow_guidance(self):
+        app = self.build("light")
+        w = self.wizard_mod
+        # A locked step says why in the footer instead of doing nothing.
+        app._sidebar_clicked(w.BUILD)
+        self.assertEqual(app.wizard.current, w.CAMERA)
+        self.assertIn("Step 6 is locked", app.nav_note.cget("text"))
+        self.assertEqual(str(app.nav_note.cget("style")), "Hint.Caption.TLabel")
+        self.assertEqual(app.side_rows[w.BUILD]["parts"][4].cget("text"), "Locked")
+        app.wizard.set_camera_confirmed(True)
+        app._next()
+        self.assertNotIn("locked", app.nav_note.cget("text"))
+        # The short path is offered from the sidebar once steps 1 to 3 are done, and can be left again.
+        self.assertFalse(app.mode_link.winfo_manager())
+        app.wizard.set_bootdisk("confirmed")
+        app.state.set_rom(Path(self.tmp.name) / "gang100.bin")
+        app.state.finish("rom", app.state.rom_key(), True, "ROM accepted")
+        app.refresh()
+        self.assertTrue(app.mode_link.winfo_manager())
+        app.mode_link.invoke()
+        self.assertEqual(app.wizard.saved.mode, "update")
+        self.assertEqual(app.wizard.current, w.FEATURES)
+        self.assertEqual(app.mode_link.cget("text"), "Show all nine steps")
+        app.mode_link.invoke()
+        self.assertEqual(app.wizard.saved.mode, "full")
+        self.assertEqual(len([r for r in app.side_rows.values() if r["parts"][0].winfo_manager()]), 9)
+        # Features: XPan hides the WAV pickers, and Next confirms the choice.
+        app.state.set_profile("xpan-crop")
+        app.refresh()
+        self.root.update_idletasks()
+        self.assertFalse(any(box.winfo_manager() for *_x, box in app.input_widgets.values()))
+        self.assertTrue(all(box.winfo_manager() for *_x, box in app.option_widgets.values()))
+        app.state.set_profile("shutter-feedback")
+        app.refresh()
+        self.assertTrue(all(box.winfo_manager() for *_x, box in app.input_widgets.values()))
+        self.assertFalse(any(box.winfo_manager() for *_x, box in app.option_widgets.values()))
+        app.state.set_profile("xpan-crop")
+        app.refresh()
+        self.assertFalse(app.next_button.instate(["disabled"]))
+        app._next()
+        self.assertTrue(app.wizard.saved.features_confirmed)
+        # The build log is folded away until asked for.
+        self.assertFalse(app.log_box.winfo_manager())
+        app.log_toggle.invoke()
+        self.assertTrue(app.log_box.winfo_manager())
+        # The copy step's warning checkbox appears only with warnings.
+        self.assertFalse(app.card_confirm_box.winfo_manager())
+
+    def test_finish_on_the_last_step(self):
+        app = self.build("light")
+        w = self.wizard_mod
+        app.messagebox = mock.Mock()
+        app.wizard.saved.current = w.TEST
+        app.refresh()
+        self.assertEqual(app.next_button.cget("text"), "Finish")
+        self.assertTrue(app.next_button.instate(["disabled"]), "the test step is locked until a copy")
+        with mock.patch.object(app.wizard, "status", return_value=w.StepStatus(w.DONE, "Checklist complete.")):
+            app.refresh()
+            self.assertFalse(app.next_button.instate(["disabled"]))
+            app._next()
+        app.messagebox.showinfo.assert_called_once()
+        self.assertEqual(app.wizard.current, w.TEST)
+
     def test_results_busy_states_and_details_render(self):
         from cardprep import workflow
         app = self.build("light")
