@@ -256,6 +256,22 @@ class StartAndIdentity(Images):
         out = self.write([(0, 512)], b"\x01" * 512)
         self.assertEqual(out["code"], "start_mismatch")
 
+    def test_write_reidentifies_before_opening_for_write(self):
+        """macOS shows no partition table while the whole disk is open for writing, so the
+        diskutil check must run before the read-write open; the hash checks cover the rest."""
+        events = []
+        real_open = self.raw._open
+
+        def spy_open(device, flags, confirm):
+            events.append(("open", flags & os.O_ACCMODE, confirm))
+            return real_open(device, flags, confirm)
+        self.raw._open = spy_open
+        out = self.raw.write(str(self.disk), START, [(0, 512)], b"\x01" * 512, expect_sha256="0" * 64,
+                             expect_mbr_sha256="0" * 64, expect_area_sha256="0" * 64,
+                             confirm=lambda: events.append("confirm"))
+        self.assertEqual(events, ["confirm", ("open", os.O_RDWR, None)])
+        self.assertEqual(out["code"], "before_mismatch")  # the hashes still guard the open descriptor
+
     def test_card_is_reidentified_after_the_descriptor_arrives(self):
         order = []
 
