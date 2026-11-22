@@ -194,7 +194,7 @@ def synthetic_linked(t: dict, hooks: list[dict]):
         symbols[name] = bss
         bss = (bss + size + 31) & ~31
     symbols["_bss_objects_end"] = bss
-    return bytes(data), symbols, {"inject_shared_strip": sc.STRIP_BYTES}, hooks
+    return bytes(data), symbols, dict(bss_sizes), hooks
 
 
 class LinkedCheck(unittest.TestCase):
@@ -233,7 +233,12 @@ class LinkedCheck(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one_press_block outside aligned owned BSS"):
             self.check(symbols={**s, "one_press_block": s["_bss_objects_end"]})
         with self.assertRaisesRegex(ValueError, "shared strip"):
-            self.check(sizes={"inject_shared_strip": sc.STRIP_BYTES - 32})
+            self.check(sizes={**self.sizes, "inject_shared_strip": sc.STRIP_BYTES - 32})
+        for name, size in sc.BSS_OBJECTS.items():  # an undersized object, the expected extent still inside BSS
+            with self.subTest(undersized=name), self.assertRaisesRegex(ValueError, f"{name} is 4 bytes, not {size}"):
+                self.check(sizes={**self.sizes, name: 4})
+        with self.assertRaisesRegex(ValueError, "cue PCM"):
+            self.check(sizes={**self.sizes, "capture_cue_pcm": 32})
         with self.assertRaisesRegex(ValueError, "shared strip"):
             self.check(symbols={**s, "inject_shared_strip": s["inject_shared_strip"] + 16})
         with self.assertRaisesRegex(ValueError, "combo_worker_tick outside owned BSS"):
@@ -473,7 +478,8 @@ class MockBuild(unittest.TestCase):
     def test_hook_inventory_must_agree_with_the_choice(self):
         manifest, _, _, base_hooks, _, _ = self.inputs
         for screenshot, hooks in (("rate", base_hooks), ("off", [*base_hooks, *screenshot_hooks()]),
-                                  (None, [*base_hooks, *screenshot_hooks()])):
+                                  (None, [*base_hooks, *screenshot_hooks()]),
+                                  ("rate", [*base_hooks, screenshot_hooks()[0]])):  # one of the three hooks only
             with self.subTest(screenshot=screenshot):
                 call, out = self.build(screenshot, hooks=hooks)
                 with self.assertRaisesRegex(ValueError, "screenshot hook inventory disagrees"):

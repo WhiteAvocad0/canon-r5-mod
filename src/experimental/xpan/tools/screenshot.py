@@ -202,6 +202,8 @@ def verify_linked(data: bytes, symbols: dict, sizes: dict, t: dict, hooks: list[
     for name, size in BSS_OBJECTS.items():
         if symbols[name] % 32 or not bss(name, size):
             raise ValueError(name + " outside aligned owned BSS")
+        if sizes.get(name) != size:  # the extent the native code uses must be the linked object itself
+            raise ValueError(f"{name} is {sizes.get(name)} bytes, not {size}")
     if symbols["inject_shared_strip"] % 32 or sizes.get("inject_shared_strip") != STRIP_BYTES or not bss(
             "inject_shared_strip", STRIP_BYTES):
         raise ValueError("shared strip must be one aligned 38400-byte BSS strip")
@@ -215,7 +217,8 @@ def verify_linked(data: bytes, symbols: dict, sizes: dict, t: dict, hooks: list[
     loc = lambda name: symbols["_resident_load_offset"] + symbols[name] - symbols["_resident_start"]
     f = t["cues"]
     pcm_at, desc_at = symbols["capture_cue_pcm"], symbols["capture_cue_descriptor"]
-    if pcm_at % 32 or not bss("capture_cue_pcm", 2 * f["capacity_samples"]):
+    if pcm_at % 32 or not bss("capture_cue_pcm", 2 * f["capacity_samples"]) or sizes.get(
+            "capture_cue_pcm") != 2 * f["capacity_samples"]:
         raise ValueError("screenshot cue PCM outside aligned owned BSS")
     desc = b"".join(ri.pending_descriptor(c) for c in f["cues"])
     if desc_at % 32 or data[loc("capture_cue_descriptor"):loc("capture_cue_descriptor") + len(desc)] != desc:

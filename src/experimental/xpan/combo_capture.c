@@ -193,9 +193,6 @@ CODE static void write_pic(struct pl_entry *e, const struct combo_marv *m)
 {
     uint32_t lo = 0u, hi = 0u, bytes = 0u, us0 = capture_api.timer_us();
     e->us_start = us0;
-    e->outcome = pl_select(e, m->width, m->height, &lo, &hi, &bytes, capture_header);
-    if (e->outcome != PL_OK)
-        return;
     uint32_t n = 0;
     for (; capture_path[n] && n + 1u < CAPTURE_PATH_BYTES; ++n)
         capture_pic_path[n] = capture_path[n];
@@ -207,7 +204,12 @@ CODE static void write_pic(struct pl_entry *e, const struct combo_marv *m)
     capture_pic_path[n - 3u] = 'P';
     capture_pic_path[n - 2u] = 'I';
     capture_pic_path[n - 1u] = 'C';
-    (void)capture_api.remove(capture_pic_path); /* a stale .PIC of the same number */
+    /* A stale .PIC of the same number (its .YCA deleted by hand) goes first, even
+     * when no picture layer is written: the Y22 build must never composite it. */
+    (void)capture_api.remove(capture_pic_path);
+    e->outcome = pl_select(e, m->width, m->height, &lo, &hi, &bytes, capture_header);
+    if (e->outcome != PL_OK)
+        return;
     int32_t fd = capture_api.create(capture_pic_path);
     e->us_create = capture_api.timer_us() - us0;
     e->rc_create = fd;

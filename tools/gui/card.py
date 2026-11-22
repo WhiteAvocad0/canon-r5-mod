@@ -290,11 +290,16 @@ def ensure_screenshot_folder(root: Path) -> str:
 
     Creates nothing else and changes nothing that exists; returns a message for the person."""
     root = Path(root)
-    dcim = [p for p in root.iterdir() if p.name.casefold() == "dcim" and p.is_dir() and not p.is_symlink()]
-    if len(dcim) != 1:
-        return ("There is no DCIM folder on the card yet, so the screenshot folder was not created. "
-                "Format the card in the camera, then create DCIM/R5SHOTS before taking screenshots.")
-    found = [p for p in dcim[0].iterdir() if p.name.casefold() == SCREENSHOT_FOLDER.casefold()]
+    try:
+        dcim = [p for p in root.iterdir() if p.name.casefold() == "dcim" and p.is_dir() and not p.is_symlink()]
+        if len(dcim) != 1:
+            # Never suggest formatting here: the mod was just copied to this card.
+            return ("There is no DCIM folder on the card yet, so the screenshot folder was not created. Take one "
+                    "photo with the camera (it creates DCIM), then create the folder DCIM/R5SHOTS yourself.")
+        found = [p for p in dcim[0].iterdir() if p.name.casefold() == SCREENSHOT_FOLDER.casefold()]
+    except OSError as exc:  # the mod itself is already copied and verified
+        return (f"The card's DCIM folder could not be read ({exc}), so the screenshot folder was not checked. "
+                "Make sure DCIM/R5SHOTS exists before taking screenshots.")
     if found:
         if len(found) == 1 and found[0].is_dir() and not found[0].is_symlink():
             return f"The screenshot folder {dcim[0].name}/{found[0].name} is already on the card."

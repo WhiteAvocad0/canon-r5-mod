@@ -51,13 +51,14 @@ class Writer(CaptureBase):
         self.assertEqual((r["outcome"], r["number"], r["width"], r["height"], r["bytes"]), (O["OK"], 1, 1024, 682, LCD_BYTES))
         self.assertEqual(len(c.files[SS1]), 512 + LCD_BYTES)
         self.assertEqual([x[0] for x in c.calls],
-                         ["mount", "open", "open", "create", "map", "write", "unmap", "map", "write", "unmap", "close", "flush"])
+                         ["mount", "open", "open", "create", "map", "write", "unmap", "map", "write", "unmap", "close", "flush",
+                          "remove"])  # a stale SS_00001.PIC goes even when no picture layer is written
         hdr_va = self.lib.capture_host_header() & 0xFFFFFFFF
         self.assertEqual(c.calls[4], ("map", hdr_va, 512, 0, 1), "one whole sector")
         self.assertEqual(c.calls[5][1:], (5, 0, hdr_va ^ 0x80000000, 1, 512))
         self.assertEqual(c.calls[7], ("map", 0x22400000, LCD_BYTES, 0, 1), "selected buffer 1 - cur (B)")
         self.assertEqual(c.calls[8][1:], (5, 0, 0x22400000 ^ 0x80000000, 1, LCD_BYTES))
-        self.assertEqual(c.calls[10:], [("close", 5), ("flush", "B:/")])
+        self.assertEqual(c.calls[10:], [("close", 5), ("flush", "B:/"), ("remove", "B:/DCIM/R5SHOTS/SS_00001.PIC")])
         h = c.header()
         self.assertEqual(h[:4], b"R5SS")
         self.assertEqual(struct.unpack("<HHIIII4sI", h[4:32]), (3, 512, 1024, 682, 3072, LCD_BYTES, b"UYVA", 1 << 16 | 1 << 8))
@@ -216,6 +217,18 @@ class Writer(CaptureBase):
         self.assertEqual(sectors[2][:4], b"R5PI", "a .PIC header filled the shared sector in between")
         for k in (0, 4):  # SS_00001.YCA and SS_00002.YCA headers
             self.assertEqual((sectors[k][:4], sectors[k][32:]), (b"R5SS", bytes(480)), "the YCA header is zero-padded")
+
+    def test_a_stale_picture_layer_is_removed_even_without_a_new_one(self):
+        """A .PIC left behind (its .YCA deleted by hand) must never be composited into a
+        new screenshot of the same number when the picture layer cannot be written."""
+        c = self.c
+        pic = SS1[:-3] + "PIC"
+        c.files[pic] = b"an older photo layer"
+        c.tap(200)  # no picture layer is set up in this harness state: pl_select refuses
+        self.assertEqual(c.result(1)["outcome"], O["OK"])
+        self.assertNotEqual(c.op()["pic_outcome"], 1)
+        self.assertNotIn(pic, c.files)
+        self.assertEqual(c.calls[-1], ("remove", pic))
 
     def test_ok_capture_builds_the_y22_and_marks_it_pending(self):
         c = self.c

@@ -196,7 +196,7 @@ This is only for a card that is **already bootable**. Choose the card's top fold
 3. An existing `autoexec.bin`, found in any upper/lower-case spelling, is copied first to `card-backup/` inside the build folder **on your computer** and read back. If it's already identical to the new build, nothing is written.
 4. The new file is written to a temporary `R5GUI-XXXXXXXX.TMP` on the card, read back and compared. It is then renamed to `AUTOEXEC.BIN`, or to the existing file's spelling.
 5. The final file is read back and its SHA-256 compared with `build.json`. If they differ, you're told where the backup is and not to use the card.
-6. For a build with the **One-press screenshot**, the empty folder `DCIM/R5SHOTS` that the camera writes screenshots into is created inside the card's existing `DCIM` folder. A folder that is already there, and everything in it, is left alone; with no `DCIM` folder nothing is created and you're told to make it after formatting the card in the camera.
+6. For a build with the **One-press screenshot**, the empty folder `DCIM/R5SHOTS` that the camera writes screenshots into is created inside the card's existing `DCIM` folder. A folder that is already there, and everything in it, is left alone; with no `DCIM` folder nothing is created and you're told to take one photo first (the camera then makes `DCIM`) and create the folder yourself.
 7. You're told to eject the card using your operating system (Finder eject, "Safely Remove Hardware", or your file manager).
 
 The copy step **never** formats or partitions a card, never opens a raw disk, never writes boot sectors, and never deletes anything except its own temporary file from the current copy. Temporary files left by an interrupted earlier copy are reported and left alone.

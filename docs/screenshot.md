@@ -35,7 +35,7 @@ What you hear:
 | a click, then two low bips | No JPEG: the photo on screen is not one Canon's Resize accepts (RAW only, HEIF, an earlier screenshot, or a size it can't resize), or ▶ was left before RATE was released. The screen files were saved. |
 | a click, then three low bips | The camera started the JPEG and cancelled it. |
 | one low bip instead of the click | The screen could not be saved: `DCIM/R5SHOTS` is missing, the card is full or not ready, a photo was taken or saved less than about 2 s ago, the camera has only just started, or another screenshot is still being made. In ▶, two more bips may follow. |
-| nothing | A movie is recording (screenshots stay silent then), or RATE was pressed again within 2 s. |
+| nothing | A movie is recording (screenshots stay silent then), or RATE was pressed again within about a second. |
 
 RATE in **live view** saves the screen files only (see below). No JPEG is made.
 
@@ -67,8 +67,8 @@ flowchart LR
     Save --> End["INDEV_DevelopEnd hook 0xE0549258:<br/>job done, guard released"]
 ```
 
-- **Three hooks.** The GUI dispatch hook (`0xE04A8028`) sees the RATE press and release. The JPEG encode hook (`0xE0CCB284`, ShtVfxEncJpg_Encode) feeds `HWJPG.Y22` to the encoder instead of the resized photo, only for the one job the screenshot started. The develop-end hook (`0xE0549258`) closes that job. Their pages and the pages of every Canon function the feature calls are admitted through `screenshot_code_fingerprints` in `config/xpan_target_contract.json`, only when `--screenshot` is selected.
-- **The Y22 build.** The OSD row and the picture-layer row are composited and converted to the encoder's 2400×1600 Y/C layout. The work buffer is one 1,179,648-byte block borrowed from Canon's RscMgr pool (type 4, the pool Canon's GUI dialogs use) for the length of one build. If the pool cannot lend it within 200 ms, or lends an unusable block, the build falls back to 38,400-byte strips, which is slower but gives the same bytes. A block that arrives after the build stopped waiting is freed by its own callback.
+- **Three hooks.** The GUI dispatch hook (`0xE04A8028`) sees the RATE press and release. The JPEG encode hook (`0xE0CCB284`, ShtVfxEncJpg_Encode) feeds `HWJPG.Y22` to the encoder instead of the resized photo whenever a 2400×1600 (S2) Resize is saved while an unused screenshot is pending (up to 10 minutes; see [Live view and manual Resize](#live-view-and-manual-resize)). The develop-end hook (`0xE0549258`) closes that job. Their pages and the pages of every Canon function the feature calls are admitted through `screenshot_code_fingerprints` in `config/xpan_target_contract.json`, only when `--screenshot` is selected.
+- **The Y22 build.** The OSD row and the picture-layer row are composited and converted to the encoder's 2400×1600 Y/C layout. The work buffer is one 1,179,648-byte block borrowed from Canon's RscMgr pool (type 4, the pool Canon's GUI dialogs use) for the length of one build. If the pool cannot lend it within 200 ms (400 ms in the worst case), or lends an unusable block, the build falls back to 38,400-byte strips, which is slower but gives the same bytes. A block that arrives after the build stopped waiting is freed by its own callback.
 - **The one-press job.** At the RATE release, the feature re-checks that ▶ is still shown and asks Canon's own Resize check whether the current photo can be resized (`FM_GetFileObjectForResize` on its JPEG sub-handle). Only then does it start `INDEV_DevelopStart` on that photo. Canon builds and names the new file as for an in-camera resize.
 - **Feedback.** The click and the low bip are generated in the camera (`tone_ref.SCREENSHOT_CUES`, 33 ms and 40 ms) and played through Canon's speaker API (SE id 2) after the same readiness checks as the record cues. With the record indicator selected, a screenshot sound never interrupts a record cue.
 - **Capacity.** A screenshot build has `37` hooks, `23` pages and `11` L2 tables, and admits `25` extra fingerprinted pages (`38/24/11` with the record indicator); the default build stays at `34/20/10`. The linked check refuses an image below Canon's heap floor. With the reference ROM a screenshot-only image leaves `834,968` bytes against the `524,304`-byte floor.
@@ -77,8 +77,15 @@ flowchart LR
 
 - **SD card only.** The files go to the SD card (`B:`); the CFexpress slot is not used.
 - **JPEG photos in ▶ only.** RAW-only and HEIF photos and earlier screenshots are refused (two bips). The index view, zoom and menus are not supported and make no JPEG.
-- **Live view** saves `SS_n.YCA`, `SS_n.PIC` and `HWJPG.Y22`, and freezes the screen for the Y22 build, but makes no JPEG.
+- **Live view** saves `SS_n.YCA`, `SS_n.PIC` and `HWJPG.Y22`, and freezes the screen for the Y22 build, but makes no JPEG by itself (see below).
+- **Overlays only, sometimes.** If the picture layer can't be read (a format other than the full-range one, or a `.PIC` that could not be written), the JPEG shows the on-screen display without the photo.
+- **XPan and RAW+JPEG photos.** On the first public-image check, RATE on an XPan RAW+JPEG photo gave three bips (Canon cancelled the job). Whether the XPan crop or the RAW pairing causes it is being tested.
+- **A card read error** while the encoder reads `HWJPG.Y22` can leave a JPEG that mixes the screenshot and the resized photo.
 - **Not tested:** the EVF in ▶, the refusal and cancel bips on hardware (they never occurred), the late-block path (never seen; the block arrived in about 0.14 ms each time), and movie playback screens.
+
+## Live view and manual Resize
+
+A RATE whose screenshot did not become a JPEG (in live view, or refused in ▶) leaves it pending for up to 10 minutes. The next in-camera **Resize to S2** saved in that time (▶ → Playback menu → Resize, any JPEG) produces the screenshot instead of the resized photo, and clears it. This is how a live-view screen becomes a JPEG. A Resize to another size, or after 10 minutes, is unaffected.
 
 ## Evidence boundary
 

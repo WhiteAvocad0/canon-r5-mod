@@ -304,8 +304,11 @@ def admit_xpan_rom(
             f"record indicator hook inventory disagrees with --record-indicator {indicator} "
             f"--record-stop-indicator {stop_indicator}"
         )
-    screenshot_destinations = {d for *_, d in sc.HOOKS}
-    if any(h["destination"] in screenshot_destinations for h in hooks_to_check) != screenshot_on:
+    screenshot_records = sorted(
+        (int(h["va"], 16), h["length"], h["original_hex"].lower(), h["destination"])
+        for h in hooks_to_check if h["destination"] in {d for *_, d in sc.HOOKS}
+    )
+    if screenshot_records != (sorted((va, n, o, d) for va, n, o, d in sc.HOOKS) if screenshot_on else []):
         raise ValueError(f"screenshot hook inventory disagrees with --screenshot {screenshot}")
 
     startup, rom_provenance = admit_xpan_rom_with_provenance(
