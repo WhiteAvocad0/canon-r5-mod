@@ -118,6 +118,10 @@ class OnePressState(ctypes.Structure):
                 + _u("view_info0 view_info2"))
 
 
+class OnePressDefer(ctypes.Structure):
+    _fields_ = _u("defer why xpan marked starts fallbacks last_good") + _i("last_good_rc") + _u("decisions play_since held_since")
+
+
 class InjectBuild(ctypes.Structure):
     _fields_ = (_u("builds failures number stage") + _i("rc") + _u("source_bytes y22_written us source_wh pic_status")
                 + _i("pic_rc") + _u("us_yca us_pic us_comp us_fill us_map us_write band us_band band_addr band_size"))
@@ -143,7 +147,7 @@ class InjectRing(ctypes.Structure):
 
 SIZED = (("capture_state", CaptureState), ("capture_feedback", CaptureFeedback), ("one_press_state", OnePressState),
          ("inject_build", InjectBuild), ("inject_pending", InjectPending), ("inject_guard", InjectGuard),
-         ("inject_ring", InjectRing))
+         ("inject_ring", InjectRing), ("one_press_defer", OnePressDefer))
 
 
 def as_dict(s: ctypes.Structure) -> dict:
@@ -169,6 +173,7 @@ uint32_t host_sizeof(uint32_t which)
     case 0: return HOST_SIZE_0; case 1: return HOST_SIZE_1; case 2: return (uint32_t)sizeof(struct one_press_state);
     case 3: return (uint32_t)sizeof(struct inject_build); case 4: return (uint32_t)sizeof(struct inject_pending);
     case 5: return (uint32_t)sizeof(struct inject_guard); case 6: return (uint32_t)sizeof(struct inject_ring);
+    case 7: return (uint32_t)sizeof(struct one_press_defer);
     default: return 0u;
     }
 }
@@ -586,7 +591,9 @@ const struct inject_band_api inject_band_api = {b_create, b_take, b_give, b_allo
 '''
 
 # one_press_api: Canon's FM / GUI / INDEV calls. Like ctgGetObject, the fake FM answers
-# only the JPEG sub-handle (sub 2); any other sub is "FileType Not Found".
+# only the JPEG sub-handle (sub 2); any other sub is "FileType Not Found". With a list of
+# good group handles (op_fm_good), only those photos are found. op_xpan is the playback
+# cache's AspectInfo pre-check (one_press.c op_view_xpan).
 OP_STUB = r'''
 #include <stdint.h>
 #include <string.h>
@@ -599,14 +606,22 @@ static uint32_t rd(uint32_t a) { return combo_observe_api.read(a); }
 static uint32_t tm(void) { return host_us; }
 char op_log[512]; uint32_t op_log_n;
 static void lg(char c) { if (op_log_n < sizeof op_log - 1) { op_log[op_log_n++] = c; op_log[op_log_n] = 0; } }
-uint32_t op_fm_words[8], op_fm_handle, op_fm_calls, op_fm_subs; int32_t op_fm_rc;
+uint32_t op_fm_words[8], op_fm_handle, op_fm_calls, op_fm_subs, op_fm_good[4], op_fm_seen[8], op_xpan; int32_t op_fm_rc;
+static uint32_t found(uint32_t h)
+{
+    uint32_t any = 0u;
+    for (int i = 0; i < 4; i++) { any |= op_fm_good[i]; if (op_fm_good[i] && op_fm_good[i] == (h & ~15u)) return 1u; }
+    return !any;
+}
 static int32_t o_fm(uint32_t h, uint32_t *info)
 {
-    lg('F'); op_fm_calls++; op_fm_subs = op_fm_subs << 4 | (h & 15u); op_fm_handle = h;
-    if ((h & 15u) != 2u) { for (int i = 0; i < 5; i++) info[i] = 0; return (int32_t)0x82100019u; }
+    lg('F'); if (op_fm_calls < 8) op_fm_seen[op_fm_calls] = h;
+    op_fm_calls++; op_fm_subs = op_fm_subs << 4 | (h & 15u); op_fm_handle = h;
+    if ((h & 15u) != 2u || !found(h)) { for (int i = 0; i < 5; i++) info[i] = 0; return (int32_t)0x82100019u; }
     for (int i = 0; i < 5; i++) info[i] = op_fm_words[i];
     return op_fm_rc;
 }
+static uint32_t o_xpan(void) { return op_xpan; }
 static void o_release(void) { lg('R'); }
 uint32_t op_gui_busy, op_indev_busy;
 static void o_set_gui(uint32_t v) { lg(v ? 'G' : 'g'); op_gui_busy = v; }
@@ -624,12 +639,15 @@ static void o_end(uint32_t save, void *blk, op_cb_fn e)
     inject_record(INJECT_HOOK_DEVELOP_END, saved, 0x00328ce8u);
     op_end_calls++; op_end_save = save; memcpy(op_end_block, blk, 284); op_end_cb = (uintptr_t)e;
 }
-const struct one_press_api one_press_api = {rd, tm, o_fm, o_release, o_set_gui, o_set_indev, o_gui, o_indev, o_start, o_end};
+const struct one_press_api one_press_api = {rd, tm, o_fm, o_release, o_set_gui, o_set_indev, o_gui, o_indev, o_start, o_end,
+                                            o_xpan};
 uintptr_t host_done_ptr(void) { return (uintptr_t)one_press_done; }
 uintptr_t host_end_ptr(void) { return (uintptr_t)one_press_end; }
 void host_op_reset(void)
 {
     memset(&one_press_state, 0, sizeof one_press_state); memset(one_press_block, 0, sizeof one_press_block);
+    memset(&one_press_defer, 0, sizeof one_press_defer); memset(op_fm_good, 0, sizeof op_fm_good);
+    memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u;
     op_log_n = 0; op_log[0] = 0; op_end_calls = op_start_calls = op_fm_calls = op_fm_subs = op_fm_handle = op_start_handle = 0;
     op_gui_busy = op_indev_busy = 0; op_fm_rc = 0;
     memset(op_fm_words, 0, sizeof op_fm_words); memset(&inject_ring, 0, sizeof inject_ring);
@@ -675,6 +693,7 @@ IO = ctypes.CFUNCTYPE(I, U, U, U, U, U, U)
 QUERY = ctypes.CFUNCTYPE(I, U)
 CALLBACK = ctypes.CFUNCTYPE(None, U)
 TRIGGER = 50  # RATE (combo_observe.h COMBO_TRIGGER_CODE)
+INFO_UP = int(re.search(r"^#define COMBO_INFO_RELEASE (\d+)$", _header("combo_observe.h"), re.M).group(1))
 TFT_LO, TFT_HI = 0x2A000000, 3
 EVF_LO, EVF_HI = 0x2B000000, 3
 DV, MASKP = 0x00300000, 0x00310000   # fake dvctrl object; *(0x10684) -> MASKP, mask at +0x18
@@ -834,6 +853,23 @@ class CaptureCamera:
         self.mem[VIEW_WORD] = handle
         self.fm(type_bits, size, rc)
 
+    def view(self, handle):
+        """The photo playback shows (0 = none)."""
+        self.mem[VIEW_WORD] = handle
+
+    def good(self, *handles):
+        """The only group handles whose JPEG sub FM finds (none given: every handle)."""
+        arr = (U * 4).in_dll(self.lib, "op_fm_good")
+        for i in range(4):
+            arr[i] = handles[i] if i < len(handles) else 0
+
+    def xpan(self, v):
+        """The playback cache's AspectInfo pre-check of the shown photo (OP_XPAN_*)."""
+        U.in_dll(self.lib, "op_xpan").value = v
+
+    def fm_seen(self):
+        return list((U * 8).in_dll(self.lib, "op_fm_seen"))[:min(self.g("op_fm_calls"), 8)]
+
     def fm(self, type_bits=4, size=14, rc=0):
         (U * 8).in_dll(self.lib, "op_fm_words")[0] = size << 16 | type_bits
         I.in_dll(self.lib, "op_fm_rc").value = rc
@@ -853,6 +889,10 @@ class CaptureCamera:
 
     def release(self):
         self.lib.combo_capture_gui((U * 4)(0, TRIGGER + 1, 0, 1))
+
+    def key_up(self, code=INFO_UP):
+        """A class-0 release the H2 hook passes to combo_capture_gui (only INFO on camera)."""
+        self.lib.combo_capture_gui((U * 4)(0, code, 0, 1))
 
     def tap(self, tick):
         self.press(tick)
@@ -877,6 +917,9 @@ class CaptureCamera:
 
     def op(self):
         return as_dict(self._s(OnePressState, "one_press_state"))
+
+    def defer(self):
+        return as_dict(self._s(OnePressDefer, "one_press_defer"))
 
     def pending(self):
         return as_dict(self._s(InjectPending, "inject_pending"))
@@ -1040,7 +1083,7 @@ static void zs(uint32_t v) { (void)v; }
 static uint32_t zg(void) { return 0; }
 static void zst(uint32_t h, void *b, op_cb_fn s, op_cb_fn d, uint32_t r) { (void)h; (void)b; (void)s; (void)d; (void)r; }
 static void zen(uint32_t s, void *b, op_cb_fn e) { (void)s; (void)b; (void)e; }
-const struct one_press_api one_press_api = {zr, h_timer, zm, zv, zs, zs, zg, zg, zst, zen};
+const struct one_press_api one_press_api = {zr, h_timer, zm, zv, zs, zs, zg, zg, zst, zen, zg};
 void host_op_state(uint32_t st) { one_press_state.state = st; one_press_state.dry_seen = one_press_state.dry_ok = one_press_state.dry_wh = 0; }
 void host_composite(uint8_t *osd, const uint8_t *pic, uint32_t w) { y22_composite_row(osd, pic, w); }
 #define HOST_SIZE_0 0u
