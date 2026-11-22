@@ -120,8 +120,13 @@ class VisibleWindowScenario(WindowFixture):
         self.assertEqual(reopened.wizard.current, self.wizard_mod.FEATURES)
         self.assertEqual(reopened.state.options["record_indicator"], "ding")
         self.assertEqual(reopened.next_button.cget("text"), "Siguiente")
+        self.root.deiconify()
+        self.root.update()
+        self.assertTrue(reopened.language_menu.winfo_ismapped())
         reopened.language_menu.current(0)
         reopened.language_menu.event_generate("<<ComboboxSelected>>")
+        self.root.update()
+        self.assertEqual(reopened.words.language, "en")
         self.assertEqual(reopened.next_button.cget("text"), "Next")
 
     def compact_navigation(self):
