@@ -7,8 +7,8 @@ font modules of the standard GUI toolkit, so this module never imports Tk itself
 
 Design rules the window follows:
 
-- one accent colour for actions, focus and the current step; the success, warning and
-  danger colours are used only for statuses and warning callouts;
+- graphite controls, neutral panels and one-pixel borders; keyboard focus, warnings
+  and errors carry the limited colour accents;
 - an 8-px spacing grid (4 px only for a label and the line it belongs to);
 - body text wraps at about ``LINE_LENGTH`` characters, everything left-aligned;
 - the platform's own UI font (SF Pro on macOS, Segoe UI on Windows, Cantarell, Ubuntu
@@ -17,6 +17,7 @@ Design rules the window follows:
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from math import hypot
 import os
 import subprocess
 import sys
@@ -49,12 +50,12 @@ class TextStyle:
 
 BODY_PX = 13
 TYPE_SCALE = {
-    "heading": TextStyle(22, bold=True),     # the step's name
+    "heading": TextStyle(24, bold=True),     # the step's name
     "title": TextStyle(15, bold=True),       # the app's name in the sidebar
     "subheading": TextStyle(13, bold=True),  # "What you do", section names, callout headlines
     "body": TextStyle(13),
-    "caption": TextStyle(11),                # statuses, hints, details
-    "eyebrow": TextStyle(11, bold=True),     # "STEP 4", badges
+    "caption": TextStyle(12),                # statuses, hints, details
+    "eyebrow": TextStyle(11),     # "STEP 4", badges
     "mono": TextStyle(12, mono=True),        # paths, hashes, logs
 }
 MIN_FONT_PX = 9
@@ -105,7 +106,7 @@ CONTENT_MAX_WIDTH = 680   # the step column never grows wider than this (px)
 SIDEBAR_WIDTH = 272
 MIN_WINDOW = (900, 640)
 DEFAULT_WINDOW = (1120, 780)
-BUTTON_PADDING = (16, 8)
+BUTTON_PADDING = (16, 5)
 FIELD_PADDING = (8, 6)
 
 # -- colour ------------------------------------------------------------------------------
@@ -121,44 +122,32 @@ class Palette:
     text: str
     text_muted: str
     text_disabled: str
-    accent: str          # primary buttons, current step, focus
+    accent: str          # primary buttons and checked controls
     accent_hover: str
     accent_pressed: str
     accent_subtle: str   # current step background, info callouts
     accent_text: str     # links and the step eyebrow on bg
     on_accent: str       # text on accent
-    success: str
-    success_bg: str
-    success_border: str
+    focus: str           # keyboard focus on neutral controls
     warning: str
-    warning_bg: str
-    warning_border: str
     danger: str
-    danger_bg: str
-    danger_border: str
     field: str
     selection: str
 
 
 LIGHT = Palette(
-    bg="#FFFFFF", surface="#F5F6F8", hover="#EBEDF0", border="#E1E4E8", border_strong="#AEB4BD",
-    text="#1C1E21", text_muted="#5B636D", text_disabled="#A0A6AE",
-    accent="#2456D3", accent_hover="#1D49B6", accent_pressed="#183D99", accent_subtle="#EAF0FC",
-    accent_text="#2456D3", on_accent="#FFFFFF",
-    success="#1B7A3A", success_bg="#EAF5ED", success_border="#B6DCC2",
-    warning="#855000", warning_bg="#FFF5DE", warning_border="#EDCB80",
-    danger="#B3261E", danger_bg="#FCEEEC", danger_border="#F0BFBA",
-    field="#FFFFFF", selection="#CCDBFA",
+    bg="#FFFFFF", surface="#F5F5F7", hover="#ECECEE", border="#DEDEE1", border_strong="#B9B9BF",
+    text="#1D1D1F", text_muted="#636368", text_disabled="#939398",
+    accent="#303033", accent_hover="#434347", accent_pressed="#1C1C1E", accent_subtle="#E7E7EA",
+    accent_text="#424246", on_accent="#FFFFFF", focus="#0067C0",
+    warning="#825610", danger="#A7352C", field="#FFFFFF", selection="#DADAE0",
 )
 DARK = Palette(
-    bg="#1C1D20", surface="#242529", hover="#2E3035", border="#36393F", border_strong="#4C5058",
-    text="#E8EAED", text_muted="#A3AAB3", text_disabled="#61666F",
-    accent="#3567D8", accent_hover="#4676E2", accent_pressed="#2B58BF", accent_subtle="#1F2C47",
-    accent_text="#8BADF7", on_accent="#FFFFFF",
-    success="#62C482", success_bg="#1B2D22", success_border="#2D5A3B",
-    warning="#E9B54E", warning_bg="#322817", warning_border="#5E4A21",
-    danger="#F2837A", danger_bg="#38201F", danger_border="#6B3532",
-    field="#17181B", selection="#2E4877",
+    bg="#1C1C1E", surface="#252527", hover="#303033", border="#404043", border_strong="#626267",
+    text="#F5F5F7", text_muted="#B2B2B7", text_disabled="#77777C",
+    accent="#DCDCE0", accent_hover="#EEEEF0", accent_pressed="#C4C4C8", accent_subtle="#39393D",
+    accent_text="#D2D2D7", on_accent="#202022", focus="#83BFFF",
+    warning="#E2B977", danger="#F29D96", field="#222224", selection="#47474E",
 )
 PALETTES = {"light": LIGHT, "dark": DARK}
 
@@ -170,14 +159,9 @@ GLYPHS = {NEUTRAL: "•", INFO: "i", SUCCESS: "✓", WARNING: "!", DANGER: "!", 
 
 def kind_colours(p: Palette, kind: str) -> tuple[str, str, str]:
     """(foreground, background, border) of a status kind."""
-    return {
-        NEUTRAL: (p.text_muted, p.surface, p.border),
-        INFO: (p.accent_text, p.accent_subtle, p.accent_subtle),
-        SUCCESS: (p.success, p.success_bg, p.success_border),
-        WARNING: (p.warning, p.warning_bg, p.warning_border),
-        DANGER: (p.danger, p.danger_bg, p.danger_border),
-        BUSY: (p.text_muted, p.surface, p.border),
-    }[kind]
+    fg = {NEUTRAL: p.text_muted, INFO: p.accent_text, SUCCESS: p.accent_text,
+          WARNING: p.warning, DANGER: p.danger, BUSY: p.text_muted}[kind]
+    return fg, p.surface, p.border
 
 
 def _luminance(hex_colour: str) -> float:
@@ -249,6 +233,52 @@ def _flat(style, name, colour, **extra):
     style.configure(name, lightcolor=colour, darkcolor=colour, **extra)
 
 
+def _button_face(root, name, radius, outside, edge, fill):
+    """A small anti-aliased corner tile. ttk stretches its centre to fit each label."""
+    def rgb(colour):
+        return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+
+    outer, stroke, inner = map(rgb, (outside, edge, fill))
+    side = 2 * radius + 1
+    pixels = bytearray()
+    for y in range(side):
+        for x in range(side):
+            distance = hypot(abs(x - radius), abs(y - radius))
+            coverage = max(0, min(1, radius + 0.5 - distance))
+            interior = max(0, min(1, radius - 0.5 - distance))
+            for a, b, c in zip(outer, stroke, inner):
+                pixels.append(round(a * (1 - coverage) + b * (coverage - interior) + c * interior))
+    ppm = f"P6\n{side} {side}\n255\n".encode() + pixels
+    root.tk.call("image", "create", "photo", name, "-format", "ppm", "-data", ppm)
+    return name
+
+
+def _push_buttons(root, style, p, appearance, radius):
+    """Keep ttk's button bindings and label, replacing the square clam border."""
+    for role, widget_style in (("standard", "TButton"), ("primary", "Primary.TButton")):
+        primary = role == "primary"
+        element = f"R5.{appearance}.{role}.{radius}"
+        if element not in style.element_names():
+            normal = p.accent if primary else p.field
+            pressed = p.accent_pressed if primary else p.hover
+            hover = p.accent_hover if primary else p.surface
+            outline = p.accent if primary else p.border_strong
+
+            def face(state, edge, fill):
+                return _button_face(root, f"{element}.{state}", radius, p.bg, edge, fill)
+
+            style.element_create(element, "image", face("normal", outline, normal),
+                                 ("disabled", face("disabled", p.border, p.surface)),
+                                 ("pressed", "focus", face("focusPressed", p.focus, pressed)),
+                                 ("pressed", face("pressed", outline, pressed)),
+                                 ("focus", face("focus", p.focus, normal)),
+                                 ("active", face("hover", outline, hover)),
+                                 border=radius, padding=2, sticky="nswe")
+        style.layout(widget_style, [(element, {"sticky": "nswe", "children": [
+            ("Button.padding", {"sticky": "nswe", "children": [("Button.label", {"sticky": "nswe"})]})
+        ]})])
+
+
 def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | None = None) -> Theme:
     """Configure fonts and ttk styles on ``root`` and return the resolved theme."""
     appearance = appearance or detect_appearance(platform)
@@ -277,7 +307,7 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
     style.theme_use("clam")  # the one built-in theme whose colours, borders and padding all follow the style
     root.configure(background=p.bg)
     style.configure(".", background=p.bg, foreground=p.text, font=fonts["body"], bordercolor=p.border,
-                    lightcolor=p.bg, darkcolor=p.bg, troughcolor=p.border, focuscolor=p.accent,
+                    lightcolor=p.bg, darkcolor=p.bg, troughcolor=p.border, focuscolor=p.focus,
                     selectbackground=p.selection, selectforeground=p.text, fieldbackground=p.field,
                     insertcolor=p.text, arrowcolor=p.text_muted)
     style.map(".", foreground=[("disabled", p.text_disabled)])
@@ -289,13 +319,26 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
     _flat(style, "Card.TFrame", p.bg)
     style.configure("Details.TFrame", background=p.surface, bordercolor=p.border, relief="solid", borderwidth=1)
     _flat(style, "Details.TFrame", p.surface)
-    style.configure("TSeparator", background=p.border)
+    # Equipment groups and capacity badges share one neutral surface.
+    style.configure("Needs.TFrame", background=p.surface, bordercolor=p.border, relief="solid", borderwidth=1)
+    _flat(style, "Needs.TFrame", p.surface)
+    style.configure("Needs.Inner.TFrame", background=p.surface, borderwidth=0, relief="flat")
+    for name, font, fg in (("Needs.TLabel", "body", p.text), ("Needs.Strong.TLabel", "subheading", p.text),
+                           ("Needs.Title.TLabel", "subheading", p.text)):
+        style.configure(name, background=p.surface, foreground=fg, font=fonts[font])
+    for badge in ("small", "any"):
+        style.configure(f"CardBadge.{badge}.TLabel", background=p.hover, foreground=p.text_muted,
+                        font=fonts["eyebrow"], padding=(SPACE["s"], 2))
+    style.configure("TSeparator", background=p.border, bordercolor=p.border, lightcolor=p.border, darkcolor=p.border)
+
 
     # Labels
     for name, font, fg in (("TLabel", "body", p.text), ("Body.TLabel", "body", p.text),
                            ("Muted.TLabel", "body", p.text_muted), ("Heading.TLabel", "heading", p.text),
                            ("Subheading.TLabel", "subheading", p.text), ("Caption.TLabel", "caption", p.text_muted),
-                           ("Eyebrow.TLabel", "eyebrow", p.accent_text), ("Mono.TLabel", "mono", p.text)):
+                           ("Hint.Caption.TLabel", "caption", p.text_muted),
+                           ("Eyebrow.TLabel", "eyebrow", p.text_muted), ("Mono.TLabel", "mono", p.text),
+                           ("Strong.TLabel", "subheading", p.text)):
         style.configure(name, background=p.bg, foreground=fg, font=fonts[font])
     style.configure("Badge.TLabel", background=p.surface, foreground=p.text_muted, font=fonts["eyebrow"],
                     padding=(SPACE["s"], 2))
@@ -303,52 +346,42 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
                            ("Sidebar.Caption.TLabel", "caption", p.text_muted),
                            ("Sidebar.Eyebrow.TLabel", "eyebrow", p.text_muted)):
         style.configure(name, background=p.surface, foreground=fg, font=fonts[font])
-    style.configure("SidebarBadge.TLabel", background=p.warning_bg, foreground=p.warning, font=fonts["eyebrow"],
+    style.configure("SidebarBadge.TLabel", background=p.hover, foreground=p.text_muted, font=fonts["eyebrow"],
                     padding=(SPACE["s"], 2))
-    style.configure("Banner.TFrame", background=p.warning_bg)
-    style.configure("Details.TLabel", background=p.surface, foreground=p.text_muted, font=fonts["body"])
+    style.configure("Details.TLabel", background=p.bg, foreground=p.text_muted, font=fonts["body"])
     for kind in KINDS:
         fg, bg, border = kind_colours(p, kind)
         style.configure(f"Callout.{kind}.TFrame", background=bg, bordercolor=border, relief="solid", borderwidth=1)
         _flat(style, f"Callout.{kind}.TFrame", bg)
         style.configure(f"Callout.{kind}.TLabel", background=bg, foreground=p.text, font=fonts["body"])
         style.configure(f"Callout.{kind}.Headline.TLabel", background=bg,
-                        foreground=p.text if kind in (NEUTRAL, BUSY) else fg, font=fonts["subheading"])
+                        foreground=p.text, font=fonts["subheading"])
         style.configure(f"Callout.{kind}.Mono.TLabel", background=bg, foreground=p.text, font=fonts["mono"])
         style.configure(f"Status.{kind}.TLabel", background=p.bg, font=fonts["body"],
-                        foreground=p.danger if kind == DANGER else (p.text_muted if kind in (NEUTRAL, BUSY) else p.text))
+                        foreground=p.text_muted if kind in (NEUTRAL, BUSY) else p.text)
         style.configure(f"Status.{kind}.Icon.TLabel", background=p.bg, font=fonts["subheading"],
                         foreground=p.text_muted if kind in (NEUTRAL, BUSY) else fg)
-    style.configure("Selected.Card.TFrame", background=p.bg, bordercolor=p.accent, relief="solid", borderwidth=1)
+    style.configure("Selected.Card.TFrame", background=p.bg, bordercolor=p.text_muted, relief="solid", borderwidth=1)
     _flat(style, "Selected.Card.TFrame", p.bg)
 
     # Buttons: secondary (default), primary, link and the Details toggle
-    style.configure("TButton", background=p.bg, foreground=p.text, bordercolor=p.border_strong,
-                    padding=BUTTON_PADDING, relief="flat", borderwidth=1, focusthickness=1, focuscolor=p.accent,
-                    focussolid=1,
-                    anchor="center", font=fonts["body"])
-    _flat(style, "TButton", p.bg)
-    style.map("TButton",
-              background=[("disabled", p.bg), ("pressed", p.border), ("active", p.hover)],
-              lightcolor=[("disabled", p.bg), ("pressed", p.border), ("active", p.hover)],
-              darkcolor=[("disabled", p.bg), ("pressed", p.border), ("active", p.hover)],
-              bordercolor=[("disabled", p.border), ("focus", p.accent)],
-              foreground=[("disabled", p.text_disabled)])
-    style.configure("Primary.TButton", background=p.accent, foreground=p.on_accent, bordercolor=p.accent,
-                    focuscolor=p.on_accent, font=fonts["subheading"])
-    _flat(style, "Primary.TButton", p.accent)
-    primary_bg = [("disabled", p.hover), ("pressed", p.accent_pressed), ("active", p.accent_hover)]
-    style.map("Primary.TButton", background=primary_bg, lightcolor=primary_bg, darkcolor=primary_bg,
-              bordercolor=[("disabled", p.border), ("focus", p.accent_pressed)],
-              foreground=[("disabled", p.text_disabled)])
-    for name, bg, fg in (("Link.TButton", p.bg, p.accent_text), ("Banner.Link.TButton", p.warning_bg, p.accent_text),
-                         ("Toggle.TButton", p.bg, p.text_muted)):
-        style.configure(name, background=bg, foreground=fg, bordercolor=bg, padding=(0, 2), anchor="w",
-                        focuscolor=p.accent, focussolid=1,
-                        font=fonts["subheading" if name == "Toggle.TButton" else "body"])
+    style.configure("TButton", padding=BUTTON_PADDING, anchor="center", foreground=p.text, font=fonts["body"])
+    style.map("TButton", foreground=[("disabled", p.text_disabled)])
+    style.configure("Primary.TButton", foreground=p.on_accent)
+    _push_buttons(root, style, p, appearance, max(6, round(0.52 * font_px("body", base))))
+    # Text-only actions need a keyboard focus outline but no button face.
+    text_layout = [("Button.focus", {"sticky": "nswe", "children": [
+        ("Button.padding", {"sticky": "nswe", "children": [("Button.label", {"sticky": "nswe"})]})
+    ]})]
+    for name, bg, fg in (("Link.TButton", p.bg, p.accent_text),
+                         ("Sidebar.Link.TButton", p.surface, p.accent_text), ("Toggle.TButton", p.bg, p.text_muted)):
+        style.layout(name, text_layout)
+        style.configure(name, background=bg, foreground=fg, bordercolor=bg, padding=(1, 3), anchor="w",
+                        focuscolor=p.focus, focusthickness=1, focussolid=1,
+                        font=fonts["body"])
         _flat(style, name, bg)
         style.map(name, background=[("active", bg)], lightcolor=[("active", bg)], darkcolor=[("active", bg)],
-                  bordercolor=[("active", bg)],
+                  bordercolor=[("focus", p.focus), ("active", bg)],
                   foreground=[("disabled", p.text_disabled), ("pressed", p.accent_pressed),
                               ("active", p.accent_hover if name != "Toggle.TButton" else p.text)])
 
@@ -357,12 +390,12 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
         style.configure(name, background=p.bg, foreground=p.text, indicatorbackground=p.field,
                         indicatorforeground=p.on_accent, upperbordercolor=p.border_strong,
                         lowerbordercolor=p.border_strong, indicatormargin=(0, 2, SPACE["s"], 0),
-                        padding=(0, SPACE["xs"]), focuscolor=p.accent, focusthickness=1, focussolid=1,
+                        padding=(0, SPACE["xs"]), focuscolor=p.focus, focusthickness=1, focussolid=1,
                         wraplength=text_wrap)
         style.map(name, background=[("active", p.bg)],
                   indicatorbackground=[("disabled", p.surface), ("selected", p.accent), ("pressed", p.accent_subtle)],
-                  upperbordercolor=[("disabled", p.border), ("selected", p.accent), ("focus", p.accent)],
-                  lowerbordercolor=[("disabled", p.border), ("selected", p.accent), ("focus", p.accent)],
+                  upperbordercolor=[("disabled", p.border), ("selected", p.accent), ("focus", p.focus)],
+                  lowerbordercolor=[("disabled", p.border), ("selected", p.accent), ("focus", p.focus)],
                   foreground=[("disabled", p.text_disabled)])
     style.configure("Strong.TRadiobutton", font=fonts["subheading"])
 
@@ -373,8 +406,8 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
                         background=p.field, arrowcolor=p.text_muted, arrowsize=12)
         style.map(name,
                   fieldbackground=[("disabled", p.surface), ("readonly", p.surface if name == "TEntry" else p.field)],
-                  bordercolor=[("focus", p.accent), ("disabled", p.border)],
-                  lightcolor=[("focus", p.accent)],
+                  bordercolor=[("focus", p.focus), ("disabled", p.border)],
+                  lightcolor=[("focus", p.field)],
                   foreground=[("disabled", p.text_disabled)],
                   background=[("disabled", p.surface), ("active", p.hover)],
                   arrowcolor=[("disabled", p.text_disabled)],
@@ -396,7 +429,7 @@ def apply(root, ttk, tkfont, *, appearance: str | None = None, platform: str | N
             style.element_create(element, "from", "default")
     style.layout("Accent.Horizontal.TProgressbar", [("R5.trough", {"sticky": "nswe", "children": [
         ("R5.pbar", {"side": "left", "sticky": "ns"})]})])
-    style.configure("Accent.Horizontal.TProgressbar", thickness=6, background=p.accent, troughcolor=p.border,
+    style.configure("Accent.Horizontal.TProgressbar", thickness=6, background=p.accent, troughcolor=p.hover,
                     borderwidth=0, troughborderwidth=0, pbarrelief="flat", troughrelief="flat")
     style.configure("Thin.Vertical.TScrollbar", background=p.border_strong, troughcolor=p.bg, bordercolor=p.bg,
                     lightcolor=p.border_strong, darkcolor=p.border_strong, arrowsize=10, gripcount=0)

@@ -59,6 +59,18 @@ class Steps(Base):
         self.assertIn("EnableBootDisk", wz.GUIDE[wz.BOOTDISK].details)
         self.assertEqual(set(wz.GUIDE), set(wz.STEP_BY_ID))
 
+    def test_card_size_and_numbered_steps(self):
+        cards = {step: wz.GUIDE[step].card for step in wz.STEP_BY_ID}
+        self.assertEqual(cards, {wz.CAMERA: None, wz.ROM: wz.SMALL_CARD, wz.BOOTDISK: wz.SMALL_CARD,
+                                 wz.FEATURES: None, wz.TOOLCHAIN: None, wz.BUILD: None,
+                                 wz.BOOTCARD: wz.ANY_CARD, wz.COPY: wz.ANY_CARD, wz.TEST: wz.ANY_CARD})
+        overview = {n.card for n in wz.GUIDE[wz.CAMERA].needs if n.card}
+        self.assertEqual(overview, {wz.SMALL_CARD, wz.ANY_CARD}, "step 1 names both card sizes")
+        for step in (wz.CAMERA, wz.FEATURES, wz.TOOLCHAIN, wz.BUILD, wz.BOOTCARD, wz.COPY, wz.TEST):
+            todo = wz.GUIDE[step].todo
+            self.assertIsInstance(todo, tuple, step)
+            self.assertGreaterEqual(len(todo), 3, step)
+
     def test_initial_statuses(self):
         st = {k: v.status for k, v in self.w.statuses().items()}
         self.assertEqual(st[wz.CAMERA], wz.NEEDS_ACTION)
@@ -83,9 +95,10 @@ class Gating(Base):
         self.w.set_bootdisk("confirmed")
         self.assertIn("not verified", self.w.status(wz.BOOTDISK).message)
         self.walk(wz.BOOTDISK)
-        self.assertFalse(self.w.next())
-        self.w.confirm_features()
+        self.assertEqual(self.w.status(wz.FEATURES).status, wz.NEEDS_ACTION, "not confirmed yet")
+        self.assertEqual(self.w.next_blockers(), [], "Next is what confirms the choice")
         self.walk(wz.FEATURES)
+        self.assertTrue(self.w.saved.features_confirmed)
         self.toolchain_ok()
         self.walk(wz.TOOLCHAIN)
         self.assertEqual(self.w.status(wz.BUILD).status, wz.NEEDS_ACTION)
@@ -101,7 +114,10 @@ class Gating(Base):
         for i in range(len(wz.TEST_CHECKLIST)):
             self.w.set_test_item(i, True)
         self.assertEqual(self.w.status(wz.TEST).status, wz.DONE)
+        self.assertTrue(self.w.is_last())
+        self.assertEqual(self.w.next_blockers(), [], "Finish can be pressed on a finished last step")
         self.assertFalse(self.w.next(), "the last step has no next")
+        self.assertEqual(self.w.current, wz.TEST)
         self.assertTrue(self.w.back())
         self.assertEqual(self.w.current, wz.COPY)
 
@@ -115,7 +131,7 @@ class Gating(Base):
         self.assertFalse(self.w.can_goto(wz.BUILD))
         self.assertFalse(self.w.goto(wz.COPY))
         self.rom_ok(False, "Input size must be exactly 67108864 bytes")
-        self.assertIn("ROM dump", self.w.status(wz.BUILD).message)
+        self.assertIn(wz.STEP_BY_ID[wz.ROM].title, self.w.status(wz.BUILD).message)
         self.toolchain_ok()
         self.rom_ok()
         self.assertTrue(self.w.goto(wz.BUILD))
@@ -240,25 +256,51 @@ class ReturningUser(Base):
         self.assertEqual(self.w.saved.mode, "full")
         self.one_time()
         self.assertEqual(self.w.start_update(), [])
-        self.assertEqual(self.w.path(), [wz.FEATURES, wz.TOOLCHAIN, wz.BUILD, wz.COPY])
+        self.assertEqual(self.w.path(), [wz.FEATURES, wz.TOOLCHAIN, wz.BUILD, wz.BOOTCARD, wz.COPY])
         self.assertEqual(self.w.current, wz.FEATURES)
 
     def test_update_path_skips_a_working_toolchain_and_walks_to_copy(self):
         self.one_time()
         self.toolchain_ok()
+        self.w.set_card_prepared("prepared")
         self.w.start_update()
-        self.assertEqual(self.w.path(), [wz.FEATURES, wz.BUILD, wz.COPY])
-        self.assertFalse(self.w.next(), "features must be confirmed again")
-        self.w.confirm_features()
+        self.assertEqual(self.w.path(), [wz.FEATURES, wz.BUILD, wz.BOOTCARD, wz.COPY])
+        self.assertFalse(self.w.saved.features_confirmed, "features must be looked at again")
         self.walk(wz.FEATURES)
         self.w.set_build(FakeSummary(self.tmp / "out"))
         self.walk(wz.BUILD)
+        # A format in the camera removes the markers, so the boot card is checked again.
+        self.assertEqual(self.w.status(wz.BOOTCARD).status, wz.NEEDS_ACTION)
+        self.assertIn("Formatting the card in the camera", self.w.status(wz.BOOTCARD).message)
+        self.assertFalse(self.w.next())
+        self.w.set_card_prepared("prepared")
+        self.walk(wz.BOOTCARD)
         self.assertEqual(self.w.current, wz.COPY)
+        self.assertTrue(self.w.is_last())
+        self.assertEqual(self.w.next_blockers(), ["Copy autoexec.bin to the prepared card."])
         self.w.set_copied("ab" * 32)
-        self.assertEqual(self.w.next_blockers(), ["This is the last step."])
+        self.assertEqual(self.w.next_blockers(), [], "Finish can be pressed")
         self.assertFalse(self.w.goto(wz.CAMERA), "one-time steps are not on the short path")
+
+    def test_the_short_path_can_be_left_from_any_step(self):
+        self.one_time()
+        self.w.start_update()
+        self.w.confirm_features()
+        self.assertTrue(self.w.goto(wz.TOOLCHAIN))
         self.w.start_full()
+        self.assertEqual(self.w.saved.mode, "full")
         self.assertEqual(len(self.w.path()), 9)
+        self.assertEqual(self.w.current, wz.TOOLCHAIN, "switching keeps the current step")
+        self.assertTrue(self.w.goto(wz.CAMERA))
+        saved = json.loads(self.file.read_text())
+        self.assertEqual(saved["mode"], "full")
+
+    def test_features_need_their_wav_files_before_next(self):
+        self.a.set_profile("shutter-feedback")
+        self.w.saved.current = wz.FEATURES
+        self.assertIn("Pick the", self.w.next_blockers()[0])
+        self.assertFalse(self.w.next())
+        self.assertFalse(self.w.saved.features_confirmed)
 
 
 if __name__ == "__main__":

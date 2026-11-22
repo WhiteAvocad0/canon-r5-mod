@@ -32,13 +32,13 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from cardprep import cbasic, devices as card_devices, workflow as card_flow
+from cardprep import cbasic, devices as card_devices, layout, workflow as card_flow
 from gui import bundle, card, checks, runner, shots, theme
 import screenshots as screenshots_mod
 from gui.prep_state import EXPLAIN, FORMAT_WARNING, PrepState
 from gui.state import CHECKING, FAILED, OK, AssistantState, default_output_dir
 from gui.theme import BUSY, DANGER, INFO, NEUTRAL, SPACE, SUCCESS, WARNING
-from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, COPY, DONE, FEATURES, GUIDE,
+from gui.wizard import (BLOCKED, BOOTCARD, BOOTDISK, BUILD, CAMERA, CARD_BADGES, COPY, DONE, FEATURES, GUIDE, CAMERA_CARD_CHECKLIST, TEST_RECOVERY,
                         NEEDS_ACTION, ROM, SKIPPED, STEP_BY_ID, STEPS, TEST, TEST_CHECKLIST, TOOLCHAIN, Wizard)
 
 
@@ -68,7 +68,7 @@ def verify_bootdisk(rom_path: Path, expected_sha256: str) -> bool:
 
 
 DOCS = {
-    "Getting started guide": ROOT / "docs" / "getting-started.md",
+    "Command-line getting started guide": ROOT / "docs" / "getting-started.md",
     "Prerequisites": ROOT / "docs" / "usage.md",
     "About this assistant": ROOT / "docs" / "gui.md",
 }
@@ -92,11 +92,10 @@ Every build made here is a public repackaged build and is hardware-untested. \
 Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an \
 error, remove the battery, then the card; see the Getting started guide.
 """
-WARNING_TEXT = ("Experimental software for the original EOS R5 on firmware 2.2.1 only. "
-                "Public builds are hardware-untested. Read the Getting started guide first.")
 CHECK_KINDS = {OK: SUCCESS, FAILED: DANGER, CHECKING: BUSY}
 STEP_KINDS = {DONE: SUCCESS, SKIPPED: NEUTRAL, BLOCKED: WARNING, NEEDS_ACTION: INFO}
-STEP_HEADLINES = {DONE: "Check passed", SKIPPED: "Skipped", BLOCKED: "Blocked", NEEDS_ACTION: "To do"}
+STEP_HEADLINES = {DONE: "Check passed", SKIPPED: "Skipped", BLOCKED: "Locked", NEEDS_ACTION: "To do"}
+SIDEBAR_STATUS = {DONE: "Done", SKIPPED: "Skipped", BLOCKED: "Locked", NEEDS_ACTION: "To do"}
 XS, S, M, L, XL = (SPACE[k] for k in ("xs", "s", "m", "l", "xl"))
 CARD_INSET = 2 * M + 2  # a card's padding and border, for the width of the text inside it
 
@@ -148,7 +147,7 @@ class Slot:
 
 
 class Callout:
-    """A tinted box with a status icon, a short headline and optional details."""
+    """A neutral panel with a status icon, a short headline and optional details."""
 
     def __init__(self, app, parent, *, pady=(M, 0), fill="x"):
         tk, ttk = app.tk, app.ttk
@@ -249,6 +248,7 @@ class App:
         self.prep = PrepState()
         self.shots = shots.ShotsState()
         self.utility: str | None = None  # a utility shown instead of the current setup step
+        self._hint: str | None = None  # why the step clicked in the sidebar is locked; cleared on the next move
         self.wizard = Wizard(self.state, prep_supported=card_devices.prepare_supported())
         self._wrapped: list = []
         self._inners = {}  # step -> the scrolled frame holding its content
@@ -269,7 +269,7 @@ class App:
         ttk.Separator(shell, orient="vertical").pack(side="left", fill="y")
         main = ttk.Frame(shell)
         main.pack(side="left", fill="both", expand=True)
-        self._banner(main)
+        self._help_menu()
         footer = self._footer(main)
         self.content = ttk.Frame(main)
         self.content.pack(fill="both", expand=True)
@@ -325,6 +325,44 @@ class App:
         label = self.ttk.Label(parent, text=text, style=style, justify="left")
         label.pack(anchor="w", fill="x", pady=pady)
         return self.wrap(label, inset, full)
+
+    def _list(self, parent, lines, inset=0, numbered=False):
+        """A bulleted or numbered list whose wrapped lines stay indented under their text."""
+        grid = self.ttk.Frame(parent)
+        grid.pack(fill="x", anchor="w")
+        grid.columnconfigure(1, weight=1)
+        for row, line in enumerate(lines):
+            self.ttk.Label(grid, text=f"{row + 1}." if numbered else "•",
+                           style="Strong.TLabel" if numbered else "Body.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, S), pady=(XS, 0))
+            label = self.ttk.Label(grid, text=line, style="Body.TLabel", justify="left")
+            label.grid(row=row, column=1, sticky="w", pady=(XS, 0))
+            self.wrap(label, inset + 3 * S)
+        return grid
+
+    def _badge(self, parent, card):
+        """The card size a step needs, as a small highlighted label."""
+        return self.ttk.Label(parent, text=CARD_BADGES[card], style=f"CardBadge.{card}.TLabel")
+
+    def _needs_box(self, parent, needs, title):
+        """What a step needs (SD card, computer, camera...), with the card size highlighted."""
+        box = self.ttk.Frame(parent, style="Needs.TFrame", padding=M)
+        box.pack(fill="x", pady=(L, 0))
+        self.wrap(self.ttk.Label(box, text=title, style="Needs.Title.TLabel", justify="left"),
+                  CARD_INSET, full=True).pack(anchor="w", fill="x")
+        grid = self.ttk.Frame(box, style="Needs.Inner.TFrame")
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        for row, need in enumerate(needs):
+            self.ttk.Label(grid, text=need.what, style="Needs.Strong.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, M), pady=(S, 0))
+            cell = self.ttk.Frame(grid, style="Needs.Inner.TFrame")
+            cell.grid(row=row, column=1, sticky="we", pady=(S, 0))
+            if need.card:
+                self._badge(cell, need.card).pack(anchor="w", pady=(0, XS))
+            self.wrap(self.ttk.Label(cell, text=need.detail, style="Needs.TLabel", justify="left"),
+                      CARD_INSET + 140).pack(anchor="w", fill="x")
+        return box
 
     def _card(self, parent, title=None, pady=(M, 0), style="Card.TFrame"):
         box = self.ttk.Frame(parent, style=style, padding=M)
@@ -392,7 +430,7 @@ class App:
         canvas.configure(background=background)
         canvas.delete("all")
         if ring:
-            canvas.create_oval(1, 1, size - 2, size - 2, outline=fg, width=1.5)
+            canvas.create_oval(1, 1, size - 2, size - 2, outline=fg, width=1)
             glyph_colour = fg
         else:
             canvas.create_oval(1, 1, size - 2, size - 2, fill=fg, outline=fg)
@@ -400,7 +438,7 @@ class App:
         canvas.create_text(size / 2, size / 2, text=text or theme.GLYPHS[kind], fill=glyph_colour,
                            font=self.theme.fonts["eyebrow"])
 
-    # -- frame: sidebar, banner, footer --------------------------------------------
+    # -- frame: sidebar, menu, footer --------------------------------------------
 
     def _sidebar(self, parent):
         ttk, tk, p, f = self.ttk, self.tk, self.theme.palette, self.theme.fonts
@@ -410,9 +448,9 @@ class App:
         brand = ttk.Frame(side, style="Sidebar.TFrame")
         brand.pack(fill="x", padx=S)
         ttk.Label(brand, text="Canon R5 mod", style="Sidebar.Title.TLabel").pack(side="left")
-        ttk.Label(brand, text="PROTOTYPE", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
+        ttk.Label(brand, text="Prototype", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
         ttk.Label(side, text="R5 Mod Assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
-        ttk.Label(side, text="STEPS", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
+        ttk.Label(side, text="Steps", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
         rows = ttk.Frame(side, style="Sidebar.TFrame")
         rows.pack(fill="x")
         self.side_rows = {}
@@ -423,10 +461,14 @@ class App:
             self.side_rows[info.id] = {"parts": parts, "hover": False}
         self._side_path = None
         self.mode_label = ttk.Label(side, text="", style="Sidebar.Caption.TLabel", justify="left",
-                                    wraplength=theme.SIDEBAR_WIDTH - 2 * M - 2 * S)
+                                    wraplength=theme.SIDEBAR_WIDTH - 3 * M - 2 * S)
         self.mode_label.pack(anchor="w", padx=S, pady=(M, 0))
+        # Switches between the full setup and the short "Update my card" path, from any step.
+        self.mode_link = ttk.Button(side, text="", style="Sidebar.Link.TButton", cursor="hand2",
+                                    command=self._switch_mode)
+        self.mode_link.pack(anchor="w", padx=S, pady=(XS, 0))
         # Below the steps: at the smallest window height this can be cut off; step 1 links to it too.
-        ttk.Label(side, text="TOOLS", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M, XS))
+        ttk.Label(side, text="Tools", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M, XS))
         tools = ttk.Frame(side, style="Sidebar.TFrame")
         tools.pack(fill="x")
         self.tool_rows = {}
@@ -438,9 +480,9 @@ class App:
     def _side_row(self, parent, key, text, on_click):
         """A sidebar row: a focus bar, a round mark, a title and a status caption."""
         tk, p, f = self.tk, self.theme.palette, self.theme.fonts
-        row = tk.Frame(parent, background=p.surface, highlightthickness=2, highlightbackground=p.surface,
-                       highlightcolor=p.accent, takefocus=1, cursor="hand2")
-        bar = tk.Frame(row, width=3, background=p.surface)
+        row = tk.Frame(parent, background=p.surface, highlightthickness=1, highlightbackground=p.surface,
+                       highlightcolor=p.focus, takefocus=1, cursor="hand2")
+        bar = tk.Frame(row, width=1, background=p.surface)
         bar.grid(row=0, column=0, rowspan=2, sticky="ns")
         mark = tk.Canvas(row, width=22, height=22, highlightthickness=0, borderwidth=0, background=p.surface)
         mark.grid(row=0, column=1, rowspan=2, padx=(S, 10), pady=S)
@@ -460,16 +502,30 @@ class App:
             row.bind(binding, lambda _e: on_click())
         return parts
 
-    def _banner(self, parent):
-        holder = self.ttk.Frame(parent, padding=(XL, M, XL, 0))
-        holder.pack(fill="x")
-        self.banner = Callout(self, holder, pady=(0, 0), fill=None)
-        self.banner.set(WARNING, "", WARNING_TEXT)
-        links = self.ttk.Frame(self.banner.frame, style="Banner.TFrame")
-        links.grid(row=2, column=1, sticky="w", pady=(XS, 0))
+    def _help_menu(self):
+        bar = self.tk.Menu(self.root)
+        help_menu = self.tk.Menu(bar, name="help", tearoff=False)
         for label, path in DOCS.items():
-            self.ttk.Button(links, text=label, style="Banner.Link.TButton", cursor="hand2",
-                            command=lambda p=path: open_document(p)).pack(side="left", padx=(0, M))
+            help_menu.add_command(label=label, command=lambda p=path: open_document(p))
+        bar.add_cascade(label="Help", menu=help_menu)
+        self.root.configure(menu=bar)
+
+    def _disclosure(self, parent, title):
+        """Return a content frame opened by the labelled disclosure above it."""
+        button = self.ttk.Button(parent, text=f"▸  {title}", style="Toggle.TButton")
+        button.pack(anchor="w", pady=(M, 0))
+        body = self.ttk.Frame(parent)
+
+        def toggle():
+            if body.winfo_manager():
+                body.pack_forget()
+                button.configure(text=f"▸  {title}")
+            else:
+                body.pack(fill="x", after=button)
+                button.configure(text=f"▾  {title}")
+
+        button.configure(command=toggle)
+        return body
 
     def _footer(self, parent):
         footer = self.ttk.Frame(parent)
@@ -477,9 +533,9 @@ class App:
         self.ttk.Separator(footer, orient="horizontal").pack(fill="x")
         nav = self.ttk.Frame(footer, padding=(XL, M))
         nav.pack(fill="x")
-        self.back_button = self.ttk.Button(nav, text="←  Back", command=self._back)
+        self.back_button = self.ttk.Button(nav, text="Back", command=self._back)
         self.back_button.pack(side="left")
-        self.next_button = self.ttk.Button(nav, text="Next  →", command=self._next, style="Primary.TButton")
+        self.next_button = self.ttk.Button(nav, text="Next", command=self._next, style="Primary.TButton")
         self.next_button.pack(side="right")
         self.nav_note = self.ttk.Label(nav, text="", style="Caption.TLabel", wraplength=380, justify="right")
         self.nav_note.pack(side="right", padx=M)
@@ -494,11 +550,11 @@ class App:
         tk, ttk, p = self.tk, self.ttk, self.theme.palette
         if utility:
             title, guide = shots.TITLE, shots.GUIDE
-            eyebrow = "TOOL   ·   NOT PART OF SETUP"
+            eyebrow = "Tool  ·  Outside setup"
         else:
             info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
             title = info.title
-            eyebrow = f"STEP {info.number}" + ("   ·   ONE TIME" if info.one_time else "")
+            eyebrow = f"Step {info.number}" + ("  ·  One-time setup" if info.one_time else "")
         frame = ttk.Frame(self.content)
         canvas = tk.Canvas(frame, highlightthickness=0, borderwidth=0, background=p.bg, yscrollincrement=1)
         bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview, style="Thin.Vertical.TScrollbar")
@@ -523,48 +579,43 @@ class App:
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(inner, text=eyebrow, style="Eyebrow.TLabel").pack(anchor="w")
+        top = ttk.Frame(inner)
+        top.pack(anchor="w", fill="x")
+        ttk.Label(top, text=eyebrow, style="Eyebrow.TLabel").pack(side="left")
+        card_size = None if utility else guide.card
+        if card_size and step_id != ROM:
+            self._badge(top, card_size).pack(side="left", padx=(M, 0))
         self._text(inner, title, "Heading.TLabel", pady=(XS, 0), full=True)
         self._text(inner, guide.why, pady=(M, 0))
-        self._text(inner, "What you do", "Subheading.TLabel", pady=(L, 0))
-        self._text(inner, guide.todo, pady=(XS, 0))
         body = ttk.Frame(inner)
         body.pack(fill="x", pady=(S, 0))
-        check = None if utility else Callout(self, inner, pady=(L, 0))
-        details_box = ttk.Frame(inner, style="Details.TFrame", padding=M)
-        self.wrap(ttk.Label(details_box, text="\n\n".join(t for t in (guide.details, extra_details) if t),
-                            style="Details.TLabel", justify="left"), CARD_INSET).pack(anchor="w")
-        toggle = ttk.Button(inner, text="▸  Details", style="Toggle.TButton", cursor="hand2")
-
-        def flip():
-            if details_box.winfo_manager():
-                details_box.pack_forget()
-                toggle.configure(text="▸  Details")
+        check = None if utility or step_id == ROM else Callout(self, inner, pady=(L, 0))
+        if step_id not in (ROM, BOOTDISK, CAMERA):
+            help_box = self._disclosure(inner, "Step-by-step instructions")
+            if isinstance(guide.todo, str):
+                self._text(help_box, guide.todo)
             else:
-                details_box.pack(fill="x", pady=(S, 0), after=toggle)
-                toggle.configure(text="▾  Details")
-        toggle.configure(command=flip)
-        toggle.pack(anchor="w", pady=(M, 0))
+                self._list(help_box, guide.todo, numbered=True)
+            if getattr(guide, "needs", ()):
+                self._needs_box(help_box, guide.needs, "What you’ll need")
+        details_box = self._disclosure(inner, "Details")
+        self._text(details_box, "\n\n".join(t for t in (guide.details, extra_details) if t),
+                   "Details.TLabel", inset=CARD_INSET)
         (self.utilities if utility else self.panels)[step_id] = (frame, check, canvas)
         self._inners[step_id] = inner
         return body
 
     def _camera_panel(self):
         tab = self._panel(CAMERA, extra_details=CANNOT_DO)
+        self._list(tab, GUIDE[CAMERA].todo, numbered=True)
         self.camera_var = self.tk.BooleanVar(value=False)
         self.ttk.Checkbutton(tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
             text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
-        modes = self._card(tab, "Choose your path", pady=(L, 0))
-        row = self._buttons(modes, pady=(S, 0))
-        self._button(row, "Set up from the start", self._full_path)
-        self.update_button = self._button(row, "Update my card (Features > Build > Copy)", self._update_path)
-        self.update_note = self._text(modes, "", "Caption.TLabel", pady=(S, 0), inset=CARD_INSET)
-        tools = self._card(tab, "Screenshots from the camera", pady=(M, 0))
-        self._text(tools, "Turn screenshots a lab build saved on the card into PNG pictures. Not part of the setup.",
-                   pady=(0, 0), inset=CARD_INSET)
-        row = self._buttons(tools, pady=(S, 0))
-        self.shots_entry = self._button(row, "Convert screenshots...", lambda: self._open_utility(shots.SCREENSHOTS))
+        self.returning_owner = self.ttk.Frame(tab)
+        self.update_button = self._button(self._buttons(self.returning_owner), "Update my card", self._update_path)
+        needs = self._disclosure(tab, "What will I need for setup?")
+        self._needs_box(needs, GUIDE[CAMERA].needs, "Equipment and files")
 
     def _cbasic_card_selector(self, parent):
         row = self.ttk.Frame(parent)
@@ -586,54 +637,77 @@ class App:
 
     def _bootdisk_panel(self):
         tab = self._panel(BOOTDISK)
-        Callout(self, tab, pady=(S, 0)).set(
-            WARNING, "BootDisk is permanent",
-            "It stays enabled inside the camera, formatting cards doesn't clear it, and there is no official way back.")
         self.bootdisk_ack = self.tk.BooleanVar(value=False)
-        self.ttk.Checkbutton(tab, variable=self.bootdisk_ack, command=self.refresh, text=(
-            "I understand that BootDisk is a permanent setting inside the camera, that there is no official way "
-            "back, and that I use this at my own risk.")).pack(anchor="w", pady=(M, 0))
-        guide = self._card(tab, "Guided BootDisk (Canon Basic card + ROM readback verification)", pady=(L, 0))
-        self._text(guide,
-                   "Tick the risk acknowledgement above first. Use a camera-formatted FAT32 SDHC card (up to 32 GB, "
-                   ">= 300 MiB free, no AUTOEXEC.BIN, no native boot markers). Full battery, NO USB or AC, REMOVE any "
-                   "CFexpress card, and never power off or open card/battery doors while the card light is on.\n"
-                   "In the camera: power on -> press Playback -> press SET once -> wait until the card light stops "
-                   "plus 60 s -> power off -> return the card and click 'Verify returned card (readback)'.",
-                   "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
-        self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note = \
-            self._cbasic_card_selector(guide)
-        row1 = self._buttons(guide, pady=(S, 0))
-        self.bd_enable_button = self._button(
-            row1, "Prepare Enable-BootDisk card...",
-            lambda: self._prepare_cbasic_card("enable_bootdisk", self.bootdisk_guide_status), primary=True)
-        self.bd_disable_button = self._button(
-            row1, "Prepare Disable-BootDisk card (hardware-untested)...",
-            lambda: self._prepare_cbasic_card("disable_bootdisk", self.bootdisk_guide_status))
-        row2 = self._buttons(guide, pady=(S, 0))
-        self.bd_stage_button = self._button(
-            row2, "Stage Enable files on folder...",
-            lambda: self._stage_cbasic_folder("enable_bootdisk", self.bootdisk_guide_status))
-        self.bd_verify_card_button = self._button(
-            row2, "Verify returned card (readback)...",
-            self._verify_bootdisk_card, primary=True)
-        self.bd_verify_file_button = self._button(
-            row2, "Verify from a ROM dump file...",
-            self._verify_bootdisk_file)
-        self.bd_cbasic_busy = Busy(self, guide)
-        self.bootdisk_guide_status = Callout(self, guide)
         self.bootdisk_var = self.tk.BooleanVar(value=False)
-        self.bootdisk_box = self.ttk.Checkbutton(tab, variable=self.bootdisk_var, command=self._bootdisk_changed,
-                                                 text="BootDisk is already enabled on my camera (it was confirmed "
-                                                      "with a readback when it was enabled).")
+        self.bd_pages = {key: self.ttk.Frame(tab) for key in ("setup", "camera", "verify", "complete")}
+        setup = self.bd_pages["setup"]
+        self.ttk.Checkbutton(setup, variable=self.bootdisk_ack, command=self.refresh,
+            text="I understand this changes a permanent camera setting and there is no official way back."
+            ).pack(anchor="w", pady=(M, S))
+        self._text(setup, "At your computer", "Subheading.TLabel")
+        guide = self.ttk.Frame(setup)
+        guide.pack(fill="x")
+        if self.prep.supported:
+            self._text(guide, "Use your Mac’s built-in SD slot and a camera-formatted FAT32 SDHC card "
+                       "with at least 300 MiB free. Back up your photos first.")
+        else:
+            self._text(guide, "Preparing a fresh card requires a Mac with a built-in SD slot. You can check "
+                       "a returned card or use a card already marked for scripts on this computer.")
+        selector = self.ttk.Frame(guide)
+        if self.prep.supported:
+            selector.pack(fill="x")
+        self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note = self._cbasic_card_selector(selector)
+        self.bd_enable_button = self._button(self._buttons(selector), "Prepare card to enable card startup…",
+            lambda: self._prepare_cbasic_card("enable_bootdisk", self.bootdisk_guide_status), primary=True)
+        self.ttk.Button(guide, text="I’m returning with a card from the camera", style="Link.TButton",
+                        command=lambda: self._bootdisk_page("verify")).pack(anchor="w", pady=(M, 0))
+        existing = self._disclosure(guide, "My camera already starts from a card")
+        self.bd_verify_file_button = self._button(self._buttons(existing), "Check an existing firmware copy…",
+                                                self._verify_bootdisk_file)
+        self.bootdisk_box = self.ttk.Checkbutton(existing, variable=self.bootdisk_var, command=self._bootdisk_changed,
+            text="I previously confirmed this setting by checking a firmware copy from this camera.")
         self.bootdisk_box.pack(anchor="w", pady=(M, 0))
+        advanced = self._disclosure(guide, "Other card options and recovery")
+        self.bd_stage_button = self._button(self._buttons(advanced), "Use a card already marked for scripts…",
+            lambda: self._stage_cbasic_folder("enable_bootdisk", self.bootdisk_guide_status))
+        self.bd_disable_button = self._button(self._buttons(advanced), "Prepare a disable card (hardware-untested)…",
+            lambda: self._prepare_cbasic_card("disable_bootdisk", self.bootdisk_guide_status))
+        camera = self.bd_pages["camera"]
+        self.bd_camera_title = self._text(camera, "", "Subheading.TLabel")
+        self._text(camera, "Disconnect AC power and use a fully charged battery.")
+        self._list(camera, CAMERA_CARD_CHECKLIST, numbered=True)
+        self._button(self._buttons(camera), "I’ve returned the card to my computer",
+                     lambda: self._bootdisk_page("verify"), primary=True)
+        verify = self.bd_pages["verify"]
+        self._text(verify, "Back at your computer", "Subheading.TLabel")
+        self._text(verify, "Insert the returned card and choose its folder. The Assistant reads the files "
+                   "from the camera to check whether card startup is enabled.")
+        self.bd_verify_card_button = self._button(self._buttons(verify), "Check the returned card…",
+                                                self._verify_bootdisk_card, primary=True)
+        self._text(self.bd_pages["complete"], "Camera startup is enabled. Continue to choose your features.")
+        for page in ("camera", "verify", "complete"):
+            self.ttk.Button(self.bd_pages[page], text="Show setup and recovery options", style="Link.TButton",
+                            command=lambda: self._bootdisk_page("setup")).pack(anchor="w", pady=(M, 0))
+        self.bd_cbasic_busy = Busy(self, tab)
+        self.bootdisk_guide_status = Callout(self, tab)
+
+    def _bootdisk_page(self, page):
+        if self._card_busy():
+            return
+        self.wizard.saved.bootdisk_page = page
+        self.wizard.save()
+        self.bootdisk_guide_status.clear()
+        self.refresh()
+        self.panels[BOOTDISK][2].yview_moveto(0)
 
     def _bootdisk_changed(self):
+        self.wizard.saved.bootdisk_page = "auto"
         self.wizard.set_bootdisk("confirmed" if self.bootdisk_var.get() else "unknown")
         self.refresh()
 
     def _test_panel(self):
         tab = self._panel(TEST)
+        self._text(tab, "Check each item as you test the camera", "Subheading.TLabel")
         self.test_vars, self.test_boxes = [], []
         for i, text in enumerate(TEST_CHECKLIST):
             var = self.tk.BooleanVar(value=False)
@@ -642,6 +716,7 @@ class App:
             box.pack(anchor="w", pady=(S, 0))
             self.test_vars.append(var)
             self.test_boxes.append(box)
+        self._text(tab, TEST_RECOVERY, "Muted.TLabel", pady=(M, 0))
         row = self._buttons(tab, pady=(L, 0))
         self._button(row, "Open the test report form  ↗", lambda: webbrowser.open(self.wizard.report_url()))
 
@@ -653,12 +728,22 @@ class App:
         reasons = self.wizard.start_update()
         if reasons:
             self.messagebox.showinfo("Update my card", "\n".join(reasons))
+        self.utility = None
+        self._hint = None
         self.refresh()
+
+    def _switch_mode(self):
+        if self.wizard.saved.mode == "update":
+            self._full_path()
+        else:
+            self._update_path()
 
     def _sidebar_clicked(self, step_id):
         self.utility = None
-        if step_id in self.wizard.path():
-            self.wizard.goto(step_id)
+        self._hint = None
+        if step_id in self.wizard.path() and not self.wizard.goto(step_id):
+            info = STEP_BY_ID[step_id]
+            self._hint = f"Step {info.number} is locked. {self.wizard.status(step_id).message}"
         self.refresh()
         return "break"
 
@@ -716,7 +801,8 @@ class App:
         bar.configure(background=p.accent if current else bg)
         title.configure(font=f["subheading"] if current else f["body"],
                         foreground=p.text_disabled if st == BLOCKED else p.text)
-        status.configure(text=st.capitalize())
+        card_size = GUIDE[step_id].card
+        status.configure(text=SIDEBAR_STATUS[st] + (f"  ·  {CARD_BADGES[card_size]}" if card_size else ""))
         if st == DONE:
             self.draw_mark(mark, SUCCESS, bg)
         elif st == SKIPPED:
@@ -728,10 +814,30 @@ class App:
                            colour=p.text_disabled if st == BLOCKED else p.text_muted)
 
     def _next(self):
-        self.wizard.next()
+        self._hint = None
+        w = self.wizard
+        if w.is_last() and not w.next_blockers():
+            w.next()  # records the step; there is no step after it
+            self.refresh()
+            self._finish()
+            return
+        w.next()
         self.refresh()
 
+    def _finish(self):
+        if self.wizard.saved.mode == "update":
+            text = ("Your card has the new build and it was read back.\n\n"
+                    "Eject the card, put it in the camera and switch the camera on. If the camera freezes or "
+                    "shows an error, remove the battery, then the card, and power on without the card.")
+        else:
+            text = ("Setup is complete. Thank you for testing.\n\n"
+                    "Please send a test report with 'Open the test report form' on this step, including what "
+                    "didn't work. Next time, choose 'Update my card' in the sidebar to change features and "
+                    "copy a new build.")
+        self.messagebox.showinfo("All done", text)
+
     def _back(self):
+        self._hint = None
         if self.utility is not None:
             self.utility = None  # back to the setup step that was open
         else:
@@ -749,8 +855,18 @@ class App:
             self._side_path = list(path)
         for step_id in path:
             self._paint_row(step_id)
-        self.mode_label.configure(text="Path: Update my card (one-time steps already done)." if w.saved.mode == "update"
-                                  else "Path: full setup. Done one-time steps stay done when you come back.")
+        missing = w.one_time_done()
+        if w.saved.mode == "update":
+            self.mode_label.configure(text="Path: Update my card. The one-time steps are already done.")
+            self.mode_link.configure(text="Show all nine steps")
+            self.mode_link.pack(anchor="w", padx=S, pady=(XS, 0), after=self.mode_label)
+        else:
+            self.mode_label.configure(text="Path: full setup. Done steps stay done when you come back.")
+            self.mode_link.configure(text="Update my card instead")
+            if missing:  # the short path needs the one-time steps
+                self.mode_link.pack_forget()
+            else:
+                self.mode_link.pack(anchor="w", padx=S, pady=(XS, 0), after=self.mode_label)
         for key, (frame, _check, _canvas) in self.utilities.items():
             if key == self.utility:
                 if not frame.winfo_manager():
@@ -762,29 +878,32 @@ class App:
         for step_id, (frame, check, _canvas) in self.panels.items():
             if step_id == current and self.utility is None:
                 st = w.status(step_id)
-                check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: "))
+                if check is not None:
+                    check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: "))
                 if not frame.winfo_manager():
                     frame.pack(fill="both", expand=True)
             elif frame.winfo_manager():
                 frame.pack_forget()
         if self.utility is not None:
-            self.back_button.configure(state="normal", text="←  Back to setup")
-            self.next_button.configure(state="disabled", text="Next  →")
+            self.back_button.configure(state="normal", text="Back to setup")
+            self.next_button.configure(state="disabled", text="Next")
             self.nav_note.configure(text="")
         else:
-            self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled", text="←  Back")
+            self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled", text="Back")
             blockers = w.next_blockers()
-            last = current == path[-1]
-            self.next_button.configure(state="disabled" if blockers else "normal", text="Finish" if last else "Next  →")
-            self.nav_note.configure(text="" if not blockers or last else blockers[0])
+            self.next_button.configure(state="disabled" if blockers else "normal",
+                                       text="Finish" if w.is_last() else "Continue" if current == ROM else "Next")
+            self.nav_note.configure(text=self._hint or (blockers[0] if blockers else ""),
+                                    style="Hint.Caption.TLabel" if self._hint else "Caption.TLabel")
         self.camera_var.set(w.saved.camera_confirmed)
-        missing = w.one_time_done()
         self.update_button.configure(state="disabled" if missing else "normal")
-        self.update_note.configure(text=("For returning owners, after the one-time steps: "
-                                         + ", ".join(missing) + " still to do.") if missing else
-                                   "One-time steps are done: 'Update my card' takes you straight to Features.")
+        if missing:
+            self.returning_owner.pack_forget()
+        else:
+            self.returning_owner.pack(fill="x")
         self.bootdisk_var.set(w.saved.bootdisk in ("confirmed", "verified"))
-        self.bootdisk_box.configure(state="normal" if self.bootdisk_ack.get() or self.bootdisk_var.get() else "disabled")
+        self.bootdisk_box.configure(state="normal" if not self._card_busy() and (self.bootdisk_ack.get() or
+                                   self.bootdisk_var.get()) else "disabled")
         test_blocked = w.status(TEST).status == BLOCKED
         for i, (var, box) in enumerate(zip(self.test_vars, self.test_boxes)):
             var.set(i in w.saved.test_checked)
@@ -870,52 +989,107 @@ class App:
 
     def _rom_tab(self):
         tab = self._panel(ROM)
-        self._text(tab, "Pick your own 64 MiB ROM dump (often gang100.bin). It is read on this computer only and never "
-                        "copied anywhere. The builder's own strict firmware check runs on it; there is no way to force it.")
-        self.rom_var = self.tk.StringVar()
-        self._field(tab, "ROM dump", self.rom_var, [("Choose ROM...", self._pick_rom)])
-        self.rom_status = StatusLine(self, tab)
-        guide = self._card(tab, "Make a ROM dump with a Canon Basic card (read-only)", pady=(L, 0))
-        self._text(guide,
-                   "Use a camera-formatted FAT32 SDHC card (up to 32 GB, >= 300 MiB free, no AUTOEXEC.BIN, no native "
-                   "boot markers). Full battery, REMOVE any CFexpress card, and unplug USB/HDMI.\n"
-                   "In the camera: insert only the SD card -> power on -> press Playback -> press SET once -> wait "
-                   "until the card light stops plus 60 s -> power off -> return the card and import the dump below.",
-                   "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
-        self.rom_find_button, self.rom_card_choice, self.rom_card_combo, self.rom_card_note = \
-            self._cbasic_card_selector(guide)
-        row = self._buttons(guide, pady=(S, 0))
-        self.rom_prep_button = self._button(
-            row, "Prepare ROM-dump card...",
+        host = self.ttk.Frame(tab)
+        host.pack(fill="x", pady=(M, 0))
+        self.rom_pages = {name: self.ttk.Frame(host) for name in ("prepare", "camera", "return", "file")}
+        start = self.rom_pages["prepare"]
+        self._text(start, "At your computer", "Subheading.TLabel", pady=(0, S))
+        self._badge(start, GUIDE[ROM].card).pack(anchor="w")
+        if self.prep.supported:
+            self._text(start, "Back up your photos first. Insert a camera-formatted SDHC card into your Mac’s "
+                       "built-in SD slot. Use FAT32 with at least 300 MiB free.")
+        else:
+            self._text(start, "Preparing a new card requires a Mac with a built-in SD slot. On this computer, "
+                       "you can use an existing firmware copy or import one from a returned card.")
+        selector = self.ttk.Frame(start)
+        if self.prep.supported:
+            selector.pack(fill="x")
+        self.rom_find_button, self.rom_card_choice, self.rom_card_combo, self.rom_card_note = (
+            self._cbasic_card_selector(selector))
+        self.rom_prep_row = self.ttk.Frame(selector)
+        self.rom_prep_button = self._button(self.rom_prep_row, "Prepare this card…",
             lambda: self._prepare_cbasic_card("dump", self.rom_guide_status), primary=True)
-        self.rom_stage_button = self._button(
-            row, "Stage files on a chosen folder...",
+
+        saved_copy = self.ttk.Button(start, text="I already have a firmware copy…", command=self._pick_rom,
+                                     style="Link.TButton" if self.prep.supported else "Primary.TButton")
+        saved_copy.pack(anchor="w", pady=(M, 0))
+        self.ttk.Button(start, text="I’m returning with a card from the camera", style="Link.TButton",
+                        command=lambda: self._rom_page("return")).pack(anchor="w")
+        help_box = self.ttk.Frame(start)
+        help_toggle = self.ttk.Button(start, text="▸  Which SD card can I use?", style="Toggle.TButton")
+        help_toggle.pack(anchor="w", pady=(M, 0))
+
+        def toggle_card_help():
+            if help_box.winfo_manager():
+                help_box.pack_forget()
+                help_toggle.configure(text="▸  Which SD card can I use?")
+            else:
+                help_box.pack(fill="x")
+                help_toggle.configure(text="▾  Which SD card can I use?")
+
+        help_toggle.configure(command=toggle_card_help)
+        self._text(help_box, "For a fresh copy, use a card formatted in the camera, without the mod file "
+                   "AUTOEXEC.BIN or boot markers. A USB reader cannot prepare it. If you already have a "
+                   "firmware copy on this computer, you can choose that file without a card.")
+        self.rom_stage_button = self._button(self._buttons(help_box, pady=(XS, 0)),
+            "Use a card already marked for scripts…",
             lambda: self._stage_cbasic_folder("dump", self.rom_guide_status))
-        self.rom_import_button = self._button(
-            row, "Import ROM dump from returned card...",
-            self._import_rom_from_card, primary=True)
-        self.rom_cbasic_busy = Busy(self, guide)
-        self.rom_guide_status = Callout(self, guide)
+
+        camera = self.rom_pages["camera"]
+        self._text(camera, "At your camera", "Subheading.TLabel", pady=(0, S))
+        self._list(camera, CAMERA_CARD_CHECKLIST, numbered=True)
+        self._button(self._buttons(camera), "I’ve returned the card to my computer",
+                     lambda: self._rom_page("return"), primary=True)
+
+        returned = self.rom_pages["return"]
+        self._text(returned, "Back at your computer", "Subheading.TLabel", pady=(0, S))
+        self._text(returned, "Choose the SD card in the folder picker. The Assistant will find the firmware "
+                   "copy, save it on this computer and verify it.")
+        self.rom_import_button = self._button(self._buttons(returned), "Import and check firmware copy…",
+                                             self._import_rom_from_card, primary=True)
+        self._button(self._buttons(returned), "Review camera instructions", lambda: self._rom_page("camera"))
+
+        file = self.rom_pages["file"]
+        self.rom_result_title = self._text(file, "", "Subheading.TLabel", pady=(0, S))
+        self.rom_var = self.tk.StringVar()
+        self._field(file, "Local firmware file", self.rom_var, [("Choose a different file…", self._pick_rom)])
+        self.rom_status = StatusLine(self, file)
+        for page in (camera, returned, file):
+            self._button(self._buttons(page, pady=(S, 0)), "Back to firmware copy options",
+                         lambda: self._rom_page("prepare"))
+        self.rom_cbasic_busy = Busy(self, tab)
+        self.rom_guide_status = Callout(self, tab)
+
+    def _rom_page(self, page):
+        if self._card_busy():
+            return
+        self.wizard.saved.rom_page = page
+        self.wizard.save()
+        self.rom_guide_status.clear()
+        self.refresh()
+        self.panels[ROM][2].yview_moveto(0)
 
     def _features_tab(self):
         tab = self._panel(FEATURES)
-        self._text(tab, self.state.manifest.profile_exclusivity, "Muted.TLabel")
+        self._text(tab, "Choose one feature set", "Subheading.TLabel")
         self.profile_var = self.tk.StringVar(value=self.state.profile)
-        self.profile_status, self.profile_cards = {}, {}
+        self.profile_cards = {}
         for view in self.state.profile_views():
             box = self._card(tab, pady=(M if not self.profile_cards else S, 0))
-            self.ttk.Radiobutton(box, text=f"{view.label} ({view.id})", value=view.id, variable=self.profile_var,
+            self.ttk.Radiobutton(box, text=view.label, value=view.id, variable=self.profile_var,
                                  style="Strong.TRadiobutton", command=self._profile_changed).pack(anchor="w")
             indent = self.ttk.Frame(box, padding=(26, 0, 0, 0))
             indent.pack(fill="x")
             self._text(indent, view.description, pady=(XS, 0), inset=CARD_INSET + 26)
-            self.profile_status[view.id] = self._text(indent, f"Status: {view.status_label}. {view.status_text}",
-                                                      "Caption.TLabel", inset=CARD_INSET + 26)
+            evidence = self._disclosure(indent, "What has been tested?")
+            self._text(evidence, f"{view.status_label}. {view.status_text}", "Caption.TLabel", inset=CARD_INSET + 26)
             self.profile_cards[view.id] = box
 
+        # Options and WAV inputs that the chosen profile doesn't use are hidden, not greyed out.
         self.option_widgets = {}
         for view in self.state.option_views():
-            box = self._card(tab, view.label, pady=(L, 0))
+            slot = Slot(self.ttk, tab, pady=(L, 0))
+            box = self._card(slot.frame, view.label, pady=(0, 0))
             self._text(box, view.description, pady=(0, 0), inset=CARD_INSET)
             var = self.tk.StringVar()
             combo = self.ttk.Combobox(box, textvariable=var, state="readonly", width=40,
@@ -923,41 +1097,50 @@ class App:
             combo.pack(anchor="w", pady=(S, 0))
             combo.bind("<<ComboboxSelected>>", lambda _e, oid=view.id: self._option_changed(oid))
             reason = self._text(box, "", "Caption.TLabel", inset=CARD_INSET)
-            self.option_widgets[view.id] = (combo, var, reason)
+            self.option_widgets[view.id] = (combo, var, reason, slot, box)
+            slot.hide(box)  # refresh() shows it with the slot's spacing when the profile uses it
 
         self.input_widgets = {}
         for i, view in enumerate(self.state.input_views()):
-            box = self._card(tab, view.label, pady=(L if i == 0 else S, 0))
+            slot = Slot(self.ttk, tab, pady=(L if i == 0 else S, 0))
+            box = self._card(slot.frame, view.label, pady=(0, 0))
             var = self.tk.StringVar()
-            (button,) = self._field(box, None, var, [("Choose WAV...", lambda i=view.id: self._pick_wav(i))],
+            (button,) = self._field(box, None, var, [("Choose WAV…", lambda i=view.id: self._pick_wav(i))],
                                     pady=(S, 0))
             status = StatusLine(self, box)
-            self.input_widgets[view.id] = (var, button, status)
-        self._text(tab, "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
-                        "They are embedded unchanged; nothing is trimmed or normalised.", "Caption.TLabel")
-        row = self._buttons(tab, pady=(L, 0))
-        self._button(row, "Use these features", lambda: (self.wizard.confirm_features(), self.refresh()), primary=True)
+            self.input_widgets[view.id] = (var, button, status, slot, box)
+            slot.hide(box)
+        self.wav_note_slot = Slot(self.ttk, tab, pady=(S, 0))
+        self.wav_note = self.ttk.Label(self.wav_note_slot.frame, style="Caption.TLabel", justify="left", text=(
+            "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
+            "They are embedded unchanged; nothing is trimmed or normalised."))
+        self.wrap(self.wav_note)
 
     def _toolchain_tab(self):
         tab = self._panel(TOOLCHAIN)
-        self._text(tab, checks.TOOLCHAIN_INSTRUCTIONS)
-        self.ttk.Button(tab, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
+        self.tc_status = StatusLine(self, tab)
+        self.tc_install = self.ttk.Frame(tab)
+        self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
+                   "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
+        self.ttk.Button(self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
                         command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()
-        self._field(tab, "Toolchain bin folder", self.tc_var, [
-            ("Choose bin folder...", self._pick_toolchain),
+        self.tc_fields = self.ttk.Frame(tab)
+        self.tc_fields.pack(fill="x")
+        self._field(self.tc_fields, "Compiler’s bin folder", self.tc_var, [
+            ("Choose bin folder…", self._pick_toolchain),
             ("Detect again", lambda: self._detect_toolchain(explicit=True))])
-        self.tc_status = StatusLine(self, tab)
 
     def _build_tab(self):
         tab = self._panel(BUILD)
         self.out_var = self.tk.StringVar()
-        self._field(tab, "Output folder (must be new)", self.out_var, [("Change...", self._pick_output)])
         self.blockers = Callout(self, tab)
         row = self._buttons(tab, pady=(L, 0))
-        self.build_button = self._button(row, "Build autoexec.bin", self._build, primary=True)
+        self.build_button = self._button(row, "Build my mod", self._build, primary=True)
         self.build_busy = Busy(self, tab)
         self.result = Callout(self, tab)
+        destination = self._disclosure(tab, "Build folder")
+        self._field(destination, "Save the next build in", self.out_var, [("Change…", self._pick_output)])
         self.memory_slot = Slot(self.ttk, tab, pady=(M, 0))
         self.memory = self.ttk.Frame(self.memory_slot.frame)
         self.ttk.Label(self.memory, text="Canon memory left after this build", style="Caption.TLabel").pack(anchor="w")
@@ -969,25 +1152,36 @@ class App:
         self.open_contents = self._button(buttons, "Open 'what's in this build'",
                                           lambda: open_path(self.summary.output_dir / runner.CONTENTS_NAME),
                                           state="disabled")
-        self._text(tab, "Build log", "Caption.TLabel", pady=(L, 0))
-        self.log, _ = self._textbox(tab, height=10, pady=(XS, 0))
+        self.log_toggle = self.ttk.Button(tab, text="▸  Build log", style="Toggle.TButton", cursor="hand2",
+                                          command=lambda: self._show_log(not self.log_box.winfo_manager()))
+        self.log_toggle.pack(anchor="w", pady=(L, 0))
+        self.log_slot = Slot(self.ttk, tab, fill="both", pady=(XS, 0))
+        self.log, self.log_box = self._textbox(self.log_slot.frame, height=10, pady=(0, 0))
+        self.log_box.pack_forget()
+
+    def _show_log(self, show: bool):
+        """The build log is folded away; it opens on request and when a build fails."""
+        if show:
+            self.log_box.pack(in_=self.log_slot.frame, fill="both", expand=True)
+        else:
+            self.log_slot.hide(self.log_box)
+        self.log_toggle.configure(text=("▾" if show else "▸") + "  Build log")
 
     def _card_tab(self):
         tab = self._panel(COPY)
-        self._text(tab, "Only for a card that is already bootable (step 7, or prepared separately). Choose the card's "
-                        "top folder (for example /Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows). Any existing "
-                        "autoexec.bin is backed up to the build folder on this computer first; nothing on the card is "
-                        "deleted and the card is never formatted.")
+        self._text(tab, "Select the card’s top folder if it isn’t already shown.")
+        self._text(tab, "Any existing autoexec.bin is backed up to the build folder on this computer first; nothing "
+                        "on the card is deleted and the card is never formatted.", "Muted.TLabel")
         self.card_var = self.tk.StringVar()
-        self._field(tab, "Card folder", self.card_var, [("Choose card folder...", self._pick_card)])
+        self._field(tab, "Card folder", self.card_var, [("Choose card folder…", self._pick_card)])
         self.card_report = Callout(self, tab)
         self.card_confirm = self.tk.BooleanVar(value=False)
+        self.card_confirm_slot = Slot(self.ttk, tab, pady=(M, 0))  # shown only when there are warnings
         self.card_confirm_box = self.ttk.Checkbutton(
-            tab, variable=self.card_confirm, command=self.refresh,
+            self.card_confirm_slot.frame, variable=self.card_confirm, command=self.refresh,
             text="I have checked the warnings above and this really is my prepared camera card.")
-        self.card_confirm_box.pack(anchor="w", pady=(M, 0))
         row = self._buttons(tab)
-        self.copy_button = self._button(row, "Copy autoexec.bin to card", self._copy, primary=True)
+        self.copy_button = self._button(row, "Copy mod to this card", self._copy, primary=True)
         self.copy_busy = Busy(self, tab)
         self.copy_result = Callout(self, tab)
 
@@ -1013,12 +1207,12 @@ class App:
         self.prep_log_slot = Slot(self.ttk, tab, pady=(S, 0))
         self.prep_log, self.prep_log_box = self._textbox(self.prep_log_slot.frame, height=8, pady=(0, 0))
         self.prep_log_box.pack_forget()
-        undo = self._card(tab, "Undo a preparation", pady=(L, 0))
+        undo = self._disclosure(tab, "Restore a card backup")
         self._text(undo, "Puts back the boot sectors from a backup, with the same read, backup and confirmation "
                          "as Prepare.", "Caption.TLabel", pady=(0, 0), inset=CARD_INSET)
         buttons = self._buttons(undo, pady=(S, 0))
         self.prep_undo = self._button(buttons, "Undo (restore the latest backup)", lambda: self._prep_run("undo"))
-        self.prep_restore = self._button(buttons, "Restore from a chosen backup...", lambda: self._prep_run("restore"))
+        self.prep_restore = self._button(buttons, "Restore from a chosen backup…", lambda: self._prep_run("restore"))
         row = self._buttons(tab, pady=(L, 0))
         self._button(row, "My card is already prepared (skip this step)",
                      lambda: (self.wizard.set_card_prepared("elsewhere"), self.refresh()))
@@ -1040,13 +1234,15 @@ class App:
         values = [c.summary() for c in accepted]
         selected_text = p.selected.summary() if p.selected else ""
         lines: list[str] = []
+        unsuitable = p.selected and (p.selected.filesystem != "FAT32" or
+                                     (p.selected.disk_bytes or 0) >= layout.SDHC_MAX_SECTORS * layout.SECTOR)
         if p.selected:
             lines.append(f"Selected: {p.selected.summary()}")
-            if p.selected.filesystem != "FAT32" or (p.selected.disk_bytes and p.selected.disk_bytes >= 0x4000000 * 512):
+            if unsuitable:
                 lines.append("Note: guided Canon Basic requires a FAT32 SDHC card (up to 32 GB); "
                              "SDXC / exFAT cards are untested and refused.")
         elif p.searched and not accepted:
-            lines.append("No usable SD card found.")
+            lines.append(p.error or "No usable SD card found. Check the card is in the built-in SD slot and search again.")
         elif p.searched:
             lines.append("Choose your FAT32 SDHC card above.")
         elif not p.supported:
@@ -1067,17 +1263,59 @@ class App:
             choice.set(selected_text)
             note_label.configure(text=note)
 
-        can_raw = p.supported and p.selected is not None and not busy
+        self.rom_card_note.configure(text=note if p.searched or p.selected else "")
+        if accepted:
+            self.rom_card_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
+        else:
+            self.rom_card_combo.pack_forget()
+        self.rom_find_button.configure(style="TButton" if p.selected else "Primary.TButton",
+                                       text="Search again" if p.searched else "Find my SD card")
+        if p.selected and not unsuitable:
+            self.rom_prep_row.pack(fill="x", pady=(S, 0))
+        else:
+            self.rom_prep_row.pack_forget()
+        for name, frame in self.rom_pages.items():
+            if name == self.wizard.saved.rom_page:
+                if not frame.winfo_manager():
+                    frame.pack(fill="x")
+            else:
+                frame.pack_forget()
+        can_raw = p.supported and p.selected is not None and not unsuitable and not busy
         self.rom_prep_button.configure(state="normal" if can_raw else "disabled")
         self.rom_stage_button.configure(state="normal" if not busy else "disabled")
         self.rom_import_button.configure(state="normal" if not busy else "disabled")
+        page = self.wizard.saved.bootdisk_page
+        if page == "auto":
+            page = "complete" if self.wizard.saved.bootdisk in ("confirmed", "verified") else "setup"
+        elif page.startswith("camera_"):
+            self.bd_camera_title.configure(text="At your camera · " + ("disable" if page == "camera_disable" else "enable")
+                                           + " card startup")
+            page = "camera"
+        for name, frame in self.bd_pages.items():
+            if name == page:
+                if not frame.winfo_manager():
+                    frame.pack(fill="x", before=self.bd_cbasic_busy.slot.frame)
+            else:
+                frame.pack_forget()
         ack = self.bootdisk_ack.get()
+        self.bd_find_button.configure(state="normal" if ack and not busy else "disabled",
+                                      style="TButton" if p.selected else "Primary.TButton")
+        if not p.searched:
+            self.bd_card_note.configure(text="")
+        if accepted:
+            self.bd_card_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
+        else:
+            self.bd_card_combo.pack_forget()
+        if p.selected and not unsuitable:
+            self.bd_enable_button.pack(side="left")
+        else:
+            self.bd_enable_button.pack_forget()
         self.bd_enable_button.configure(state="normal" if (ack and can_raw) else "disabled")
         self.bd_disable_button.configure(state="normal" if (ack and can_raw) else "disabled")
         self.bd_stage_button.configure(state="normal" if (ack and not busy) else "disabled")
         self.bd_verify_card_button.configure(state="normal" if not busy else "disabled")
         self.bd_verify_file_button.configure(state="normal" if not busy else "disabled")
-        self.rom_cbasic_busy.set(self.cbasic_busy if self.wizard.current == ROM else None)
+        self.rom_cbasic_busy.set((self.cbasic_busy or p.busy) if self.wizard.current == ROM else None)
         self.bd_cbasic_busy.set(self.cbasic_busy if self.wizard.current == BOOTDISK else None)
 
     @staticmethod
@@ -1207,7 +1445,9 @@ class App:
         if not mount_point:
             self.cbasic_busy = None
             msg = ("SCRIPT marker is on the card, but the card did not report a mount folder.\n"
-                   "Mount the card and click 'Stage files on a chosen folder...'.")
+                   "Mount the card and stage the files on its folder.")
+            if task == "dump":
+                msg += " Open ‘Which SD card can I use?’ and choose ‘Use a card already marked for scripts’."
             self._set_cbasic_status(status_callout, msg, WARNING)
             self.refresh()
             self.messagebox.showinfo("Canon Basic card preparation", msg)
@@ -1282,16 +1522,12 @@ class App:
                 return
             mode_key = "dump" if task == "dump" else "bootdisk"
             self.cbasic_baselines[mode_key] = (staged.card_root, staged.baseline_gang1)
-            camera_steps = (
-                "Next on the camera (full battery, NO CFexpress/USB/HDMI): insert only this SD card -> "
-                "power on -> press Playback -> press SET once -> wait until the card light stops plus 60 s -> "
-                "power off -> return the card here."
-            )
-            lines = list(prefix_lines) + staged.messages + [camera_steps]
-            text = "\n".join(lines)
-            self._set_cbasic_status(status_callout, text, SUCCESS)
-            self.refresh()
-            self.messagebox.showinfo("Canon Basic card ready", text)
+            if task == "dump":
+                self._rom_page("camera")
+                self._set_cbasic_status(status_callout, "\n".join(list(prefix_lines) + staged.messages), SUCCESS)
+                return
+            self._bootdisk_page("camera_disable" if task == "disable_bootdisk" else "camera_enable")
+            self._set_cbasic_status(status_callout, "\n".join(list(prefix_lines) + staged.messages), SUCCESS)
 
         self._background(
             lambda: cbasic.stage_script_files(info.root, task, backup_dir, confirmed_warnings=info.warnings),
@@ -1341,10 +1577,14 @@ class App:
             self.cbasic_baselines.pop(mode_key, None)
             if mode == "rom":
                 self.state.set_rom(returned.local_path)
+                self.wizard.saved.rom_page = "file"
+                self.wizard.save()
                 if returned.bootinfo.state == "enabled":
+                    self.wizard.saved.bootdisk_page = "auto"
                     self.wizard.set_bootdisk("verified", rom_path=returned.local_path, rom_sha256=returned.sha256)
                 kind = SUCCESS
             else:
+                self.wizard.saved.bootdisk_page = "auto"
                 if returned.bootinfo.state == "enabled":
                     self.wizard.set_bootdisk("verified", rom_path=returned.local_path, rom_sha256=returned.sha256)
                     if self.state.rom_path is None:
@@ -1397,16 +1637,21 @@ class App:
         if self.state.rom_path is not None and self.state.rom_path.is_file() and target != self.state.rom_path:
             before_path = self.state.rom_path
         profile, options = self._selected_rom_args()
-        self._set_cbasic_status(self.bootdisk_guide_status, "Checking ROM admission and BootInfo +0x04...", INFO)
+        self.cbasic_busy = "Checking the camera startup setting…"
+        self._set_cbasic_status(self.bootdisk_guide_status, self.cbasic_busy, INFO)
+        self.refresh()
 
         def done(result):
+            self.cbasic_busy = None
             if isinstance(result, Exception):
+                self.refresh()
                 self._set_cbasic_status(self.bootdisk_guide_status, f"Check failed\n{result}", DANGER)
                 return
             if not result.ok:
                 self._set_cbasic_status(self.bootdisk_guide_status, f"ROM refused\n{result.message}", DANGER)
                 self.refresh()
                 return
+            self.wizard.saved.bootdisk_page = "auto"
             if result.facts.get("boot_disk_state") == "enabled":
                 self.wizard.set_bootdisk("verified", rom_path=target, rom_sha256=result.facts["rom_sha256"])
                 self._set_cbasic_status(self.bootdisk_guide_status, f"BootDisk enabled\n{result.message}", SUCCESS)
@@ -1433,14 +1678,23 @@ class App:
         self.prep_choice.set(p.selected.summary() if p.selected else "")
         lines = p.selected.details() if p.selected else []
         if p.searched and not accepted:
-            lines.append("No usable SD card found.")
+            lines.append(p.error or "No usable SD card found. Check the card is in the built-in SD slot and search again.")
         if p.refused:
             lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
                                                      for c in p.refused))
         self.prep_details.configure(text="\n".join(lines))
         self.prep_details.pack_configure(pady=(S, 0) if lines else (0, 0))
         blocked = p.blockers() + ([f"Wait: {self.cbasic_busy}"] if self.cbasic_busy else [])
-        self.prep_find.configure(state="disabled" if busy else "normal")
+        if p.selected:
+            self.prep_button.pack(side="left")
+        else:
+            self.prep_button.pack_forget()
+        if accepted:
+            self.prep_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
+        else:
+            self.prep_combo.pack_forget()
+        self.prep_find.configure(state="disabled" if busy else "normal",
+                                 style="TButton" if p.selected else "Primary.TButton")
         for button in (self.prep_button, self.prep_undo, self.prep_restore):
             button.configure(state="disabled" if blocked else "normal")
         self.prep_busy.set(p.busy)
@@ -1581,12 +1835,17 @@ class App:
         s = self.state
         self._refresh_wizard()
         self.rom_var.set(str(s.rom_path or ""))
-        self.rom_status.show_check(s.rom_check())
+        check = s.rom_check()
+        self.rom_status.show_check(check)
+        self.rom_result_title.configure(text="Firmware copy verified" if check.status == OK else
+                                        "Choose another firmware copy" if check.status == FAILED else
+                                        "Checking your firmware copy…")
         self.profile_var.set(s.profile)
         for profile_id, box in self.profile_cards.items():
             box.configure(style="Selected.Card.TFrame" if profile_id == s.profile else "Card.TFrame")
         for view in s.option_views():
-            combo, var, reason = self.option_widgets[view.id]
+            combo, var, reason, slot, box = self.option_widgets[view.id]
+            (slot.show if view.enabled else slot.hide)(box)
             combo.configure(state="readonly" if view.enabled else "disabled")
             choice = next(c for c in view.choices if c.value == view.value)
             var.set(choice.label)
@@ -1596,15 +1855,23 @@ class App:
                 reason.configure(text=f"Status: {choice.status_label}. {choice.status_text}")
             else:
                 reason.configure(text="Off. With both record cues off, no indicator code, hook or memory is added.")
+        any_wav = False
         for view in s.input_views():
-            var, button, status = self.input_widgets[view.id]
+            var, button, status, slot, box = self.input_widgets[view.id]
+            (slot.show if view.enabled else slot.hide)(box)
+            any_wav = any_wav or view.enabled
             var.set(str(view.path or ""))
             button.configure(state="normal" if view.enabled else "disabled")
             if view.enabled:
                 status.show_check(view.check)
             else:
                 status.set(NEUTRAL, view.reason)
+        (self.wav_note_slot.show if any_wav else self.wav_note_slot.hide)(self.wav_note)
         self.tc_var.set(str(s.toolchain_path or ""))
+        if s.toolchain_check().status == OK or self._detecting:
+            self.tc_install.pack_forget()
+        else:
+            self.tc_install.pack(fill="x", before=self.tc_fields)
         if not self._detecting:
             self.tc_status.show_check(s.toolchain_check())
         self.out_var.set(str(s.output_dir or ""))
@@ -1618,8 +1885,15 @@ class App:
         ready_to_copy = self.summary is not None and self.card_info is not None and not self.card_info.errors \
             and (not self.card_info.warnings or self.card_confirm.get()) and not s.building and not self.copying \
             and not self.prep.blocks_copy and not self.cbasic_busy
+        if self.card_info:
+            self.copy_button.pack(side="left")
+        else:
+            self.copy_button.pack_forget()
         self.copy_button.configure(state="normal" if ready_to_copy else "disabled")
-        self.card_confirm_box.configure(state="normal" if self.card_info and self.card_info.warnings else "disabled")
+        warned = bool(self.card_info and self.card_info.warnings)
+        self.card_confirm_box.configure(state="normal" if warned else "disabled")
+        (self.card_confirm_slot.show if warned else self.card_confirm_slot.hide)(self.card_confirm_box)
+        self.root.after_idle(self._offer_prepared_card)
         self.copy_busy.set("Copying..." if self.copying else None)
         self._refresh_cbasic()
         self._refresh_prep()
@@ -1648,10 +1922,12 @@ class App:
     # -- actions --------------------------------------------------------------
 
     def _pick_rom(self):
-        path = self.filedialog.askopenfilename(title="Choose your R5 ROM dump")
+        if self._card_busy():
+            return
+        path = self.filedialog.askopenfilename(title="Choose your camera’s firmware copy (ROM dump)")
         if path:
             self.state.set_rom(Path(path))
-            self.refresh()
+            self._rom_page("file")
 
     def _profile_changed(self):
         self.state.set_profile(self.profile_var.get())
@@ -1660,7 +1936,7 @@ class App:
         self.refresh()
 
     def _option_changed(self, option_id):
-        combo, var, _ = self.option_widgets[option_id]
+        combo, var = self.option_widgets[option_id][:2]
         view = next(v for v in self.state.option_views() if v.id == option_id)
         value = next(c.value for c in view.choices if c.label == var.get())
         try:
@@ -1697,13 +1973,14 @@ class App:
 
         def done(result):
             self._detecting = False
+            self.refresh()
             if isinstance(result, Exception):
                 self.tc_status.set(DANGER, f"Detection failed: {result}")
                 return
             path, check, notes = result
             if path is None:
                 note = ("\n" + "\n".join(notes)) if notes else ""
-                self.tc_status.set(DANGER, "No GNU Arm 15.2.1 toolchain found. Install it as described above, "
+                self.tc_status.set(DANGER, "No GNU Arm 15.2.1 toolchain found. Download and unpack the compiler, "
                                            "then choose its bin folder." + note)
                 return
             self.state.offer_detected_toolchain(path, check.message, check.facts, explicit=explicit)
@@ -1743,8 +2020,10 @@ class App:
             s.building = False
             if isinstance(outcome, Exception):
                 self.result.set(DANGER, "Build could not run", str(outcome))
+                self._show_log(True)
             elif not outcome.ok:
                 self.result.set(DANGER, "Build refused or failed", outcome.error_text())
+                self._show_log(True)
             else:
                 self._built(out)
             self._new_output()
@@ -1773,10 +2052,20 @@ class App:
         self.open_contents.configure(state="normal")
         self._append_log(runner.contents_text(summary, self.state.manifest))
 
-    def _pick_card(self):
-        path = self.filedialog.askdirectory(title="Choose the card's top folder")
-        if not path:
+    def _offer_prepared_card(self):
+        """On the Copy step, choose the card from step 7 for the person if it is mounted and nothing is chosen."""
+        if self.utility is not None or self.wizard.current != COPY or self.card_var.get() or self._card_busy():
             return
+        mount = self.prep.selected.mount_point if self.prep.selected else None
+        if mount and Path(mount).is_dir():
+            self._inspect_card_folder(mount)
+
+    def _pick_card(self):
+        path = self.filedialog.askdirectory(title="Choose the card's top folder", initialdir=self._default_card_initialdir())
+        if path:
+            self._inspect_card_folder(path)
+
+    def _inspect_card_folder(self, path):
         self.card_var.set(path)
         self.card_confirm.set(False)
         self.card_info = None
@@ -1830,7 +2119,7 @@ class App:
             elif isinstance(result, Exception):
                 self.copy_result.set(DANGER, "Copy failed unexpectedly", str(result))
             else:
-                self.copy_result.set(SUCCESS, "Done", "\n".join(result.messages))
+                self.copy_result.set(SUCCESS, "Copy verified. Eject the card before removing it.", "\n".join(result.messages))
                 try:
                     self.wizard.set_copied(result.sha256)
                 except ValueError:
@@ -1847,11 +2136,11 @@ class App:
         Callout(self, tab, pady=(S, 0)).set(INFO, "Private lab feature", shots.LAB_NOTE)
         self.shots_src_var = self.tk.StringVar()
         self._field(tab, "Screenshots from (the card's top folder, DCIM, or an R5SHOTS folder)", self.shots_src_var,
-                    [("Choose card or folder...", self._pick_shots_source)], pady=(L, 0))
+                    [("Choose card or folder…", self._pick_shots_source)], pady=(L, 0))
         self.shots_src_status = StatusLine(self, tab)
         self.shots_out_var = self.tk.StringVar()
         self._field(tab, "Save the PNG files in (on this computer)", self.shots_out_var,
-                    [("Change...", self._pick_shots_output)])
+                    [("Change…", self._pick_shots_output)])
         self.shots_out_status = StatusLine(self, tab)
         row = self._buttons(tab, pady=(L, 0))
         self.shots_button = self._button(row, "Convert to PNG", self._convert_shots, primary=True)

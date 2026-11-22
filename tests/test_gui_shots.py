@@ -131,10 +131,10 @@ class WindowTests(Folders):
         self.assertNotIn(shots.SCREENSHOTS, app.panels)
         self.assertNotIn(shots.SCREENSHOTS, app.wizard.path())
         self.assertEqual(self.shown(), ([w.CAMERA], []))
-        app.shots_entry.invoke()  # the welcome step's button
+        app._open_utility(shots.SCREENSHOTS)  # the Tools sidebar action
         self.root.update_idletasks()
         self.assertEqual(self.shown(), ([], [shots.SCREENSHOTS]))
-        self.assertEqual(app.back_button.cget("text"), "←  Back to setup")
+        self.assertEqual(app.back_button.cget("text"), "Back to setup")
         self.assertTrue(app.next_button.instate(["disabled"]))
         self.assertTrue(app.shots_button.instate(["disabled"]))
         app._back()
