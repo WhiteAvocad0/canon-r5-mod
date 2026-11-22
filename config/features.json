@@ -118,7 +118,7 @@
       "id": "screenshot",
       "flag": "--screenshot",
       "label": "One-press screenshot (RATE)",
-      "description": "Press RATE while viewing a photo in playback to save a 2400x1600 JPEG of the whole screen, made by the camera's own encoder, next to your photos. RATE in live view saves the raw screen files only. A click confirms the capture; two low bips mean it was refused, three that the camera cancelled it. Each RATE also leaves working files (about 11 MB) in DCIM/R5SHOTS.",
+      "description": "Press RATE while viewing a photo in playback to save a 2400x1600 JPEG of the whole screen, made by the camera's own encoder, next to your photos. RATE in live view or a menu saves the screen, and its JPEG is made when you next press INFO in playback. An XPan photo is replaced by the last photo that gave a screenshot this session. A click confirms the capture; two low bips mean it was refused, three that the camera cancelled it. Each RATE also leaves working files (about 11 MB) in DCIM/R5SHOTS.",
       "profiles": ["xpan-crop"],
       "unavailable_reason": "The screenshot is part of the XPan profile only (it needs xpan-crop).",
       "default": "off",
@@ -133,7 +133,7 @@
           "value": "rate",
           "label": "RATE in playback: whole-screen JPEG",
           "status": "private-lab-verified",
-          "status_detail": "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera."
+          "status_detail": "Images with this version are hardware-untested. Its screenshot-anywhere change was owner-reported working on a private lab build on 22 November 2026 (RATE in live view and menus gave a JPEG at INFO in playback; XPan photos used the last good photo). The earlier public image 809d3767 (with the ding and dong, before this change) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. A screenshot-only image has not run on a camera."
         }
       ]
     }

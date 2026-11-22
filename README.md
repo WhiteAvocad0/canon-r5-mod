@@ -22,10 +22,10 @@ This repository provides two separate offline-buildable profiles for `BOOTDISK`-
 - [x] **XPan `2.71:1` crop mode** (`xpan-crop`): an XPan option replacing 16:9, with live LCD/EVF framing, immediate review bars, playback masking and saved XPan JPEG/RAW. See [docs/xpan.md](docs/xpan.md).
 - [x] **Startup and shutter sounds** (`shutter-feedback`): your own clips through the camera speaker.
 - [x] **Movie record indicator** ([#14](https://github.com/WhiteAvocad0/canon-r5-mod/issues/14)): start + stop cues, a short `ding` when you press Movie REC and a `dong` when the take ends (opt-in `--record-indicator ding`, `--record-stop-indicator dong`).
-- [x] **One-press screenshot** ([#15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)): RATE while a photo is shown in ▶ saves a 2400×1600 JPEG of the whole screen, made by Canon's own encoder (opt-in `--screenshot rate`). See [docs/screenshot.md](docs/screenshot.md).
+- [x] **One-press screenshot** ([#15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)): RATE while a photo is shown in ▶ saves a 2400×1600 JPEG of the whole screen, made by Canon's own encoder (opt-in `--screenshot rate`); RATE in live view or a menu makes its JPEG at the next INFO in ▶. See [docs/screenshot.md](docs/screenshot.md).
 - [x] **Cards**: `16 GB` SDHC and `128 GB` SDXC exFAT, with CFexpress in the other slot.
 
-Short owner checks have run on two public images (the `ding` image `0adff001` and the `ding` + `dong` image `01956513`); the public `--screenshot` image `809d3767` passed a short owner check on 22 November 2026. See the [Support & Proof Matrix](#support--proof-matrix) for evidence.
+Short owner checks have run on two public images (the `ding` image `0adff001` and the `ding` + `dong` image `01956513`); the public `--screenshot` image `809d3767` passed a short owner check on 22 November 2026; images with the later screenshot-anywhere change are hardware-untested (it was owner-reported working on a private lab build). See the [Support & Proof Matrix](#support--proof-matrix) for evidence.
 
 ### Planned / in progress
 
