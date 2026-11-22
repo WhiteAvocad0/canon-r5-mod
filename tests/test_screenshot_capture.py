@@ -270,6 +270,15 @@ class Refusals(CaptureBase):
         self.assertEqual(c.result(3)["outcome"], O["REFUSED_SHOT"])
         self.no_fio()
 
+    def test_a_shot_recorded_after_the_tick_was_read_still_refuses(self):
+        """The worker can record a shot (change tick T+1) after GuiMainTask sampled tick T;
+        the unsigned age would wrap to a huge quiet time and let the capture through."""
+        c = self.c
+        self.lib.host_counter(1, 301)
+        c.tap(300)
+        self.assertEqual(c.result(1)["outcome"], O["REFUSED_SHOT"])
+        self.no_fio()
+
     def test_boot_guard_refuses_for_five_seconds(self):
         c = self.c
         for raw in (0, 100, CAP["BOOT_GUARD_TICKS"] - 1):

@@ -310,8 +310,11 @@ CODE void combo_capture_gui(const uint32_t *slot)
         goto done;
     }
     r.pass |= COMBO_V_NOT_RECORDING;
+    /* Signed age: a shot the worker records after our tick was sampled (a newer
+     * change tick) reads as "just now", never as a huge unsigned quiet time. */
     if (!__atomic_load_n(&combo_observe_state.counter_known, __ATOMIC_ACQUIRE) ||
-        tick - combo_observe_state.counter_change_tick < CAPTURE_SHOT_QUIET_TICKS) {
+        (int32_t)(tick - __atomic_load_n(&combo_observe_state.counter_change_tick, __ATOMIC_ACQUIRE)) <
+            (int32_t)CAPTURE_SHOT_QUIET_TICKS) {
         r.outcome = CAPTURE_REFUSED_SHOT;
         goto done;
     }
