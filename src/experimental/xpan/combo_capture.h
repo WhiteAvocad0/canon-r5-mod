@@ -33,8 +33,9 @@
  * written, CAPTURE_JOB_STATE_* below) and for CAPTURE_MOVIE_QUIET_TICKS after
  * the recording state was last seen nonzero. Moving the writer off GuiMainTask
  * stays future work (a worker-task FIO context is unproven, see above).
- * Every other class-0 event keeps the observer-only path; only codes TRIGGER and
- * TRIGGER + 1 reach combo_capture_gui. */
+ * Every other class-0 event keeps the observer-only path; only codes TRIGGER,
+ * TRIGGER + 1 and the INFO release (COMBO_INFO_RELEASE, a deferred screenshot's
+ * start, one_press.h) reach combo_capture_gui. */
 
 #define CAPTURE_TRIGGER_CODE COMBO_TRIGGER_CODE
 #define CAPTURE_DEBOUNCE_TICKS 50u    /* about 1 s from the previous attempt */
@@ -182,7 +183,7 @@ struct capture_watch { uint32_t rec_seen, rec_last_tick; };
 extern struct capture_watch capture_watch;
 
 /* Called by combo_observe_hook.S on GuiMainTask for a plain class-0 event
- * whose code is CAPTURE_TRIGGER_CODE (press) or + 1 (release). */
+ * whose code is CAPTURE_TRIGGER_CODE (press), + 1 (release) or COMBO_INFO_RELEASE. */
 void combo_capture_gui(const uint32_t *slot);
 
 /* --- feedback cues (worker) ------------------------------------------------ */

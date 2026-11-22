@@ -39,6 +39,11 @@
 #ifndef COMBO_TRIGGER_CODE
 #define COMBO_TRIGGER_CODE 50
 #endif
+/* The INFO release (press + 1 of COMBO_BUTTONS INFO): besides the trigger press and
+ * release, the only code the hook passes to combo_capture_gui; a deferred screenshot may start there (one_press.h).
+ * Not the SET release (11): SET confirms playback dialogs. Plain integer: also used
+ * by combo_observe_hook.S. */
+#define COMBO_INFO_RELEASE 15
 
 /* Canon's log timestamp: the logger's record writer stores
  * ~*(volatile uint32_t *)0xC021000C as each record's timer word (ROM 2.2.1
@@ -303,6 +308,7 @@ void combo_sample_display(struct combo_display *d);
 #define CC_FMT_OP_FM "R5CA F=%08X %08X %08X %08X %08X"
 #define CC_FMT_OP_JOB "R5CA J=%u %u %u %08X %u %u %u %08X"
 #define CC_FMT_OP_VIEW "R5CA V=%u %08X %d %08X %08X"
+#define CC_FMT_OP_DEFER "R5CA D=%u %u %u %u %u %u %08X %d" /* one_press.h struct one_press_defer */
 #define CC_FMT_PL_HEAD "R5C9 N=%u"
 #define CC_FMT_PL_ENTRY "R5C9 E=%u %u %u %08X %08X %08X"
 #define CC_FMT_PL_OUT "R5C9 O=%u %u %u %u %u %u"
@@ -404,6 +410,7 @@ void combo_sample_display(struct combo_display *d);
     X(op_fm, CC_FMT_OP_FM, "i0 i1 i2 i3 i4") \
     X(op_job, CC_FMT_OP_JOB, "us_start us_done us_end done_result end_reason dry_seen dry_ok dry_wh") \
     X(op_view, CC_FMT_OP_VIEW, "source view_handle view_fm_rc view_i0 view_i2") \
+    X(op_defer, CC_FMT_OP_DEFER, "defer why xpan marked starts fallbacks last_good last_good_rc") \
     X(hist, CC_FMT_HIST, "h0 h1 h2 h3 h4") \
     X(hist_tail, CC_FMT_HIST_TAIL, "overflow max_held") \
     X(seq_head, CC_FMT_SEQ_HEAD, "first count") \

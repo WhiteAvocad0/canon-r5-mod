@@ -4,6 +4,10 @@
 #include "combo_observe.h"
 #include "hw_jpeg_inject.h"
 #include "observer.h"
+#ifndef COMBO_OBSERVE_HOST
+#include "playback_box.h"
+#include "playback_native.h"
+#endif
 #ifdef OBSERVER_FIRMWARE
 #define CODE __attribute__((section(".resident_text")))
 #define DATA __attribute__((section(".resident_rodata")))
@@ -16,6 +20,10 @@ struct one_press_state one_press_state;
 uint8_t one_press_block[OP_BLOCK_BYTES] __attribute__((aligned(32)));
 static uint32_t op_fm_buffer[8] __attribute__((aligned(32))); /* 32 B for PTP's 20-byte info */
 #define S one_press_state
+struct one_press_defer one_press_defer;
+#define D one_press_defer
+_Static_assert(OP_DEFER_MAX_AGE_TICKS + OP_TIMEOUT_TICKS == INJECT_PENDING_TICKS, "a deferred job's H3 never meets an expired screenshot");
+_Static_assert(OP_VIEW_XPAN != OP_NO_VIEW && OP_SOURCE_LAST_GOOD != OP_SOURCE_VIEW, "distinct codes");
 
 /* The block Canon's GUI passed to INDEV_DevelopStart for a stock S2 Resize of a
  * 3:2 JPEG (seen on camera: 20 nonzero words; every other word 0).
@@ -32,6 +40,7 @@ static const char op_check_fmt[] DATA = CC_FMT_OP_CHECK;
 static const char op_fm_fmt[] DATA = CC_FMT_OP_FM;
 static const char op_job_fmt[] DATA = CC_FMT_OP_JOB;
 static const char op_view_fmt[] DATA = CC_FMT_OP_VIEW;
+static const char op_defer_fmt[] DATA = CC_FMT_OP_DEFER;
 
 #ifndef COMBO_OBSERVE_HOST
 CODE static uint32_t op_read(uint32_t address)
@@ -42,12 +51,23 @@ CODE static uint32_t op_timer(void)
 {
     return ~*(volatile const uint32_t *)COMBO_LOG_TIMER_REGISTER;
 }
+/* The shown image's AspectInfo tuple, through playback_native.c's admitted cache
+ * snapshot (0x16E28, its fields re-checked against Canon's live words): only an exact
+ * XPan tuple (playback_box.c) is YES; no admitted tuple is UNKNOWN. Read only. */
+CODE static uint32_t op_view_xpan(void)
+{
+    struct playback_tag_snapshot s;
+    if (!playback_native_cache_snapshot(&s))
+        return OP_XPAN_UNKNOWN;
+    return playback_box_kind(&s.facts) == PB_BOX_UNKNOWN ? OP_XPAN_NO : OP_XPAN_YES;
+}
 const struct one_press_api one_press_api DATA = {
     op_read, op_timer, (int32_t (*)(uint32_t, uint32_t *))OP_FM_RESIZE_INFO,
     (void (*)(void))OP_GUI_RELEASE_FILE, (void (*)(uint32_t))OP_SET_GUI_BUSY, (void (*)(uint32_t))OP_SET_INDEV_BUSY,
     (uint32_t (*)(void))OP_GUI_BUSY, (uint32_t (*)(void))OP_INDEV_BUSY,
     (void (*)(uint32_t, void *, op_cb_fn, op_cb_fn, uint32_t))OP_INDEV_START,
     (void (*)(uint32_t, void *, op_cb_fn))OP_INDEV_END,
+    op_view_xpan,
 };
 #endif
 
@@ -91,8 +111,14 @@ CODE void one_press_arm(uint32_t gui_mode, uint32_t number, uint32_t tick, uint3
     S.pic_bytes = pic_bytes;
     S.pending_tick = tick;
     S.armed = 0u;
+    D.defer = OP_DEFER_NONE; /* latest only: this capture replaces a deferred one */
+    ++D.decisions;
     if (gui_mode != OP_GUI_PLAYBACK) {
         S.outcome = OP_NOT_PLAYBACK;
+        if (y22_ready && !S.latched) {
+            D.defer = OP_DEFER_WAIT;
+            ++D.marked;
+        }
         return;
     }
     ++S.attempts;
@@ -115,41 +141,52 @@ CODE void one_press_arm(uint32_t gui_mode, uint32_t number, uint32_t tick, uint3
     S.armed = 1u;
 }
 
-CODE void one_press_release(void)
+/* Playback's source (GuiMainTask): the shown photo, checked on its JPEG sub-handle,
+ * unless the playback cache says it is XPan; otherwise the last good source of this
+ * boot. Returns the group handle to start on (S.source says which), or 0 after a
+ * refusal (two bips; the screenshot stays pending). */
+CODE static uint32_t op_source(void)
 {
-    if (!S.armed)
-        return;
-    S.armed = 0u;
-    if (__atomic_load_n(&S.state, __ATOMIC_ACQUIRE) != OP_IDLE) {
-        refuse(OP_BUSY);
-        return;
-    }
-    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* ▶ left since the press */
-        refuse(OP_NOT_PLAYBACK);
-        return;
-    }
-    /* Canon's GUI source: the shown photo, checked on its JPEG sub-handle. */
+    uint32_t why = OP_NO_VIEW, ok = 0u;
+    S.source = OP_SOURCE_NONE;
+    S.view_fm_rc = 0;
+    S.view_info0 = S.view_info2 = 0u;
     S.view_handle = A.read(OP_GUI_VIEW_HANDLE);
-    if (!S.view_handle) {
-        refuse(OP_NO_VIEW);
-        return;
+    D.xpan = OP_XPAN_UNKNOWN; /* no view: not checked */
+    if (S.view_handle) {
+        D.xpan = A.view_xpan();
+        if (D.xpan == OP_XPAN_YES) {
+            why = OP_VIEW_XPAN;
+        } else {
+            ok = op_resizable(S.view_handle | OP_SUB_JPEG, &S.view_fm_rc);
+            S.view_info0 = op_fm_buffer[0];
+            S.view_info2 = op_fm_buffer[2];
+            why = OP_VIEW_INVALID;
+        }
     }
-    uint32_t view_ok = op_resizable(S.view_handle | OP_SUB_JPEG, &S.view_fm_rc);
-    S.view_info0 = op_fm_buffer[0];
-    S.view_info2 = op_fm_buffer[2];
-    if (!view_ok) {
-        refuse(OP_VIEW_INVALID);
-        return;
+    if (ok) {
+        S.source = OP_SOURCE_VIEW;
+        return S.view_handle;
     }
-    S.source = OP_SOURCE_VIEW;
-    /* Canon's own starter requires its develop state idle; neither busy flag may be set. */
+    if (D.last_good && op_resizable(D.last_good | OP_SUB_JPEG, &D.last_good_rc)) {
+        S.source = OP_SOURCE_LAST_GOOD;
+        return D.last_good;
+    }
+    refuse(why);
+    return 0u;
+}
+
+/* Canon's own starter requires its develop state idle; neither busy flag may be set. */
+CODE static uint32_t op_canon_busy(void)
+{
     S.develop_state = A.read(OP_GUI_DEVELOP_STATE);
     S.gui_busy = A.gui_busy();
     S.indev_busy = A.indev_busy();
-    if (S.develop_state || S.gui_busy || S.indev_busy) {
-        refuse(OP_BUSY);
-        return;
-    }
+    return S.develop_state || S.gui_busy || S.indev_busy;
+}
+
+CODE static void op_start(uint32_t handle)
+{
     for (uint32_t i = 0; i < OP_BLOCK_BYTES / 4u; ++i)
         ((uint32_t *)one_press_block)[i] = 0u;
     for (uint32_t i = 0; i < 20u; ++i)
@@ -160,13 +197,84 @@ CODE void one_press_release(void)
     S.start_tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_RELAXED);
     S.outcome = OP_START;
     ++S.jobs;
+    if (S.source == OP_SOURCE_LAST_GOOD)
+        ++D.fallbacks;
     /* Canon's order (E0719520..E0719574): release, busy flags, start. */
     A.release_file();
     A.set_gui_busy(1u);
     A.set_indev_busy(1u);
     S.us_start = A.timer_us();
     __atomic_store_n(&S.state, OP_STARTED, __ATOMIC_SEQ_CST); /* before INDEV can call back */
-    A.start(S.view_handle, one_press_block, op_start_stub, one_press_done, 0u);
+    A.start(handle, one_press_block, op_start_stub, one_press_done, 0u);
+}
+
+CODE void one_press_release(void)
+{
+    uint32_t armed = S.armed;
+    if (!armed)
+        return;
+    S.armed = 0u;
+    if (__atomic_load_n(&S.state, __ATOMIC_ACQUIRE) != OP_IDLE) {
+        refuse(OP_BUSY);
+        return;
+    }
+    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* ▶ left since the press */
+        refuse(OP_NOT_PLAYBACK);
+        return;
+    }
+    uint32_t handle = op_source();
+    if (!handle)
+        return;
+    if (op_canon_busy()) {
+        refuse(OP_BUSY);
+        return;
+    }
+    op_start(handle);
+}
+
+/* GuiMainTask, an INFO release (combo_capture_gui, from the H2 hook): the deferred
+ * screenshot's start (one_press.h). Busy, settling or outside playback only wait; a
+ * pending Y22 that is gone or too old drops the deferral. */
+CODE void one_press_key(uint32_t code)
+{
+    if (D.defer != OP_DEFER_WAIT || code != COMBO_INFO_RELEASE) /* INFO only: SET confirms ▶ dialogs */
+        return;
+    uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_RELAXED);
+    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_ACQUIRE), why;
+    ++D.decisions;
+    if (S.latched) {
+        D.defer = OP_DEFER_NONE;
+        why = OP_DW_LATCHED;
+    } else if (__atomic_load_n(&S.state, __ATOMIC_ACQUIRE) != OP_IDLE) {
+        why = OP_DW_BUSY;
+    } else if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK || !since) { /* re-read at this release */
+        why = OP_DW_NOT_PLAYBACK;
+    } else if (tick - since < OP_DEFER_SETTLE_TICKS) {
+        why = OP_DW_SETTLING;
+    } else if (since == D.held_since) {
+        why = OP_DW_HELD;
+    } else if (!__atomic_load_n(&inject_pending.pending, __ATOMIC_ACQUIRE) ||
+               __atomic_load_n(&inject_pending.set_tick, __ATOMIC_RELAXED) != S.pending_tick) {
+        D.defer = OP_DEFER_NONE;
+        why = OP_DW_LOST;
+    } else if (tick - S.pending_tick > OP_DEFER_MAX_AGE_TICKS) {
+        D.defer = OP_DEFER_NONE;
+        why = OP_DW_EXPIRED;
+    } else if (op_canon_busy()) {
+        why = OP_DW_BUSY;
+    } else {
+        uint32_t handle = op_source();
+        if (!handle) {
+            D.held_since = since; /* two bips once; the next playback visit retries */
+            why = OP_DW_NO_SOURCE;
+        } else {
+            D.defer = OP_DEFER_NONE;
+            ++D.starts;
+            why = OP_DW_STARTED;
+            op_start(handle);
+        }
+    }
+    D.why = why;
 }
 
 CODE uint32_t one_press_dry_wanted(void)
@@ -207,6 +315,8 @@ CODE void one_press_done(uint32_t result)
         ++S.saves;
     else
         ++S.cancels;
+    if (reason == OP_END_SAVE && S.source == OP_SOURCE_VIEW)
+        D.last_good = S.view_handle; /* a 3:2 view (its dry run was S2 2400x1600) */
     /* Canon's RequestPlayDevelopEnd (E0719D22) clears these two words before its End (seen in its H8 block on camera). */
     *(uint32_t *)(one_press_block + 0x70u) = 0u;
     *(uint32_t *)(one_press_block + 0xd4u) = 0u;
@@ -226,6 +336,11 @@ CODE void one_press_end(uint32_t arg)
 
 CODE void one_press_step(uint32_t tick)
 {
+    /* The playback visit (single writer): its first tick, 0 outside playback. */
+    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK)
+        __atomic_store_n(&D.play_since, 0u, __ATOMIC_RELEASE);
+    else if (!__atomic_load_n(&D.play_since, __ATOMIC_RELAXED))
+        __atomic_store_n(&D.play_since, tick ? tick : 1u, __ATOMIC_RELEASE);
     uint32_t st = __atomic_load_n(&S.state, __ATOMIC_ACQUIRE);
     if (st == OP_IDLE || tick - S.start_tick < OP_TIMEOUT_TICKS)
         return;
@@ -250,4 +365,5 @@ CODE void one_press_report(void)
     DEBUG(op_fm_fmt, S.fm_info[0], S.fm_info[1], S.fm_info[2], S.fm_info[3], S.fm_info[4]);
     DEBUG(op_view_fmt, S.source, S.view_handle, S.view_fm_rc, S.view_info0, S.view_info2);
     DEBUG(op_job_fmt, S.us_start, S.us_done, S.us_end, S.done_result, S.end_reason, S.dry_seen, S.dry_ok, S.dry_wh);
+    DEBUG(op_defer_fmt, D.defer, D.why, D.xpan, D.marked, D.starts, D.fallbacks, D.last_good, D.last_good_rc);
 }
