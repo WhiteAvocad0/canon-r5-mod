@@ -37,7 +37,7 @@ What you hear:
 | one low bip instead of the click | The screen could not be saved: `DCIM/R5SHOTS` is missing, the card is full or not ready, a photo was taken or saved less than about 2 s ago, the camera has only just started, or another screenshot is still being made. In ▶, two more bips may follow. |
 | nothing | A movie is recording (screenshots stay silent then), or RATE was pressed again within about a second. |
 
-RATE in **live view** saves the screen files only (see below). No JPEG is made.
+RATE in **live view** or in a **menu** saves the screen files only (see below). No JPEG is made by itself. A menu is drawn entirely in the on-screen display layer, so the [Screenshots tool](gui.md#screenshots) turns a menu capture (`SS_n.YCA`) into a complete PNG of the menu.
 
 **Card speed matters.** Each RATE writes about 11 MB (about 18 MB from the viewfinder). On a fast 128 GB SDXC card the lab build's screen-to-Y22 work took about 0.6 s and the owner found the freeze short. On a slow 16 GB SDHC card the same work took about 2.1 s and the freeze felt like 2–3 s.
 
@@ -85,7 +85,7 @@ flowchart LR
 
 ## Live view and manual Resize
 
-A RATE whose screenshot did not become a JPEG (in live view, or refused in ▶) leaves it pending for up to 10 minutes. The next in-camera **Resize to S2** saved in that time (▶ → Playback menu → Resize, any JPEG) produces the screenshot instead of the resized photo, and clears it. This is how a live-view screen becomes a JPEG. A Resize to another size, or after 10 minutes, is unaffected.
+A RATE whose screenshot did not become a JPEG (in live view, or refused in ▶) leaves it pending for up to 10 minutes. The next in-camera **Resize to S2** saved in that time (▶ → Playback menu → Resize, any JPEG) produces the screenshot instead of the resized photo, and clears it. This is how a live-view or menu screen becomes a JPEG. A Resize to another size, or after 10 minutes, is unaffected.
 
 ## Evidence boundary
 
