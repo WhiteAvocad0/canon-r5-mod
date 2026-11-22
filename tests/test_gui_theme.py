@@ -289,7 +289,9 @@ class WindowSmokeTests(unittest.TestCase):
         combo.event_generate("<<ComboboxSelected>>")
         self.assertEqual(app.state.options["record_indicator"], "ding")
         self.assertEqual(combo.get(), app.words.render("Ding: struck-bar chime, 250 ms"))
+        poll_timer = app._poll_timer
         self._destroy()
+        self.assertNotIn(poll_timer, self.root.tk.call("after", "info"))
         self.root = make_root()
         reopened = self.build("light")
         self.assertEqual(reopened.language_menu.get(), "Español")
@@ -319,27 +321,39 @@ class WindowSmokeTests(unittest.TestCase):
                                       app.words.render("Restore a card backup")))
                     toggle.invoke()
                 self.root.update_idletasks()
-                self.assertEqual(bool(app.step_menu_button.winfo_ismapped()), size != theme.DEFAULT_WINDOW)
-                for button in (app.prep_restore, app.prep_undo, app.language_menu):
-                    self.assertTrue(button.winfo_ismapped())
-                    self.assertGreaterEqual(button.winfo_width() + 1, button.winfo_reqwidth())
-                    self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
-                                         self.root.winfo_rootx() + self.root.winfo_width())
-                if size != theme.DEFAULT_WINDOW:
-                    app._populate_step_menu()
-                    app.step_menu.invoke("end")
-                    self.assertEqual(app.utility, "screenshots")
-                    self.assertTrue(app.language_menu.winfo_ismapped())
+                # The window manager may limit the requested size to its usable desktop.
+                shell = app.sidebar.master
+                viewport = shell.winfo_width(), shell.winfo_height()
+                min_width, min_height = theme.SIDEBAR_MIN_WINDOW
+                compact = viewport[0] < min_width or viewport[1] < min_height
+                with self.subTest(language=language, requested=size, viewport=viewport):
+                    self.assertEqual(bool(app.step_menu_button.winfo_ismapped()), compact)
+                    self.assertEqual(bool(app.sidebar.winfo_ismapped()), not compact)
+                    for button in (app.prep_restore, app.prep_undo, app.language_menu):
+                        self.assertTrue(button.winfo_ismapped())
+                        self.assertGreaterEqual(button.winfo_width() + 1, button.winfo_reqwidth())
+                        self.assertGreaterEqual(button.winfo_rootx(), shell.winfo_rootx())
+                        self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
+                                             shell.winfo_rootx() + viewport[0])
+                    if compact:
+                        app._populate_step_menu()
+                        app.step_menu.invoke("end")
+                        self.assertEqual(app.utility, "screenshots")
+                        self.assertTrue(app.language_menu.winfo_ismapped())
 
     def test_content_and_controls_reflow_in_both_directions(self):
         from tkinter import ttk
+        from gui import shots
         app = self.build("light")
         self.root.deiconify()
+        # Keep the long status in the model so a background refresh renders the same message.
+        source = shots.Source(Path(self.tmp.name).joinpath(*(["Folder with screenshots"] * 30)), None, (), False)
+        app.shots.set_source(source)
         app._open_utility("screenshots")
         frame = app.utilities["screenshots"][0]
         folder_field = next(w for w in self._descendants(frame) if isinstance(w, ttk.Entry))
         status = app.shots_src_status
-        status.set(theme.INFO, "A folder with screenshots. " * 30)
+        self.assertEqual(status.text.cget("text"), source.describe())
 
         def geometry(width, height):
             self.root.geometry(f"{width}x{height}")
@@ -351,16 +365,22 @@ class WindowSmokeTests(unittest.TestCase):
             self.assertTrue(all(a > b for b, a in zip(before[:3], after[:3])), (before, after))
             self.assertLessEqual(after[3], before[3])
 
+        # The window manager's usable width can be smaller than the physical display.
+        geometry(1440, 780)
+        wide_width = self.root.winfo_width()
         compact = geometry(640, 480)
-        larger_compact = geometry(800, 600)
-        assert_grew(compact, larger_compact)
-        desktop_width = min(1120, self.root.winfo_screenwidth() - 220)
-        wide_width = min(1440, self.root.winfo_screenwidth())
-        if desktop_width >= 940:
+        larger_compact = geometry(min(800, wide_width), 600)
+        if wide_width > 640:
+            assert_grew(compact, larger_compact)
+            if wide_width >= 800:
+                self.assertLess(larger_compact[3], compact[3])
+        desktop_width = max(theme.SIDEBAR_MIN_WINDOW[0], min(1120, wide_width - 220))
+        if wide_width > desktop_width:
             desktop = geometry(desktop_width, 780)
             wide = geometry(wide_width, 780)
             assert_grew(desktop, wide)
-            self.assertLess(wide[3], compact[3])
+            if wide_width >= theme.DEFAULT_WINDOW[0]:
+                self.assertLess(wide[3], compact[3])
             self.assertEqual(geometry(desktop_width, 780), desktop)
         self.assertEqual(geometry(640, 480), compact)
 

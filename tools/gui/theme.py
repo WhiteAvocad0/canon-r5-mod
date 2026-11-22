@@ -104,6 +104,7 @@ SPACE = {"xs": 4, "s": 8, "m": 16, "l": 24, "xl": 32, "xxl": 48}
 LINE_LENGTH = 72          # characters per line of body text
 SIDEBAR_WIDTH = 272
 MIN_WINDOW = (640, 480)
+SIDEBAR_MIN_WINDOW = (940, 740)
 DEFAULT_WINDOW = (1120, 780)
 BUTTON_PADDING = (16, 5)
 FIELD_PADDING = (8, 6)

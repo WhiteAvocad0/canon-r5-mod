@@ -304,7 +304,8 @@ class App:
         shell.bind("<Configure>", lambda event: self._size_navigation(main, event.width, event.height))
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.root.after(100, self._poll)
+        self._poll_timer = self.root.after(100, self._poll)
+        self.root.bind("<Destroy>", self._cancel_poll, add="+")
         self._detect_toolchain()
         self.refresh()
 
@@ -605,7 +606,8 @@ class App:
 
     def _size_navigation(self, main, width, height):
         # Keep the step column usable on small screens and the last sidebar tool within reach.
-        compact = width < 940 or height < 740
+        min_width, min_height = theme.SIDEBAR_MIN_WINDOW
+        compact = width < min_width or height < min_height
         if compact == self._compact:
             return
         self._compact = compact
@@ -1087,6 +1089,11 @@ class App:
             self.events.put((done, result))
         threading.Thread(target=target, daemon=True).start()
 
+    def _cancel_poll(self, event):
+        if event.widget is self.root and self._poll_timer is not None:
+            self.root.after_cancel(self._poll_timer)
+            self._poll_timer = None
+
     def _poll(self):
         """Deliver background results on the UI thread; a failing callback never stops the loop."""
         try:
@@ -1105,7 +1112,8 @@ class App:
                     except Exception:
                         pass
         finally:
-            self.root.after(100, self._poll)
+            if self._poll_timer is not None:
+                self._poll_timer = self.root.after(100, self._poll)
 
     # -- tabs ---------------------------------------------------------------
 
@@ -2040,13 +2048,13 @@ class App:
         warned = bool(self.card_info and self.card_info.warnings)
         self.card_confirm_box.configure(state="normal" if warned else "disabled")
         (self.card_confirm_slot.show if warned else self.card_confirm_slot.hide)(self.card_confirm_box)
-        self.root.after_idle(self._offer_prepared_card)
         self.copy_busy.set("Copying..." if self.copying else None)
         self._refresh_cbasic()
         self._refresh_prep()
         self._refresh_shots()
         for what, input_id in s.needs_check():
             self._start_check(what, input_id)
+        self._offer_prepared_card()
 
     def _start_check(self, what, input_id=None):
         s = self.state
