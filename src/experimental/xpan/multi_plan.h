@@ -3,6 +3,17 @@
 #include <stdint.h>
 #define MULTI_MAX_PAGES 21u
 #define MULTI_MAX_TABLES 10u
+/* --screenshot: + pages E04A8000 (GUI dispatch), E0CCB000 (JPEG encode),
+ * E0549000 (INDEV_DevelopEnd); the E0C section adds one table. Sized for the
+ * screenshot together with the record indicator (its page E07C6000). */
+#define MULTI_MAX_PAGES_SCREENSHOT 24u
+#define MULTI_MAX_TABLES_SCREENSHOT 11u
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+#undef MULTI_MAX_PAGES
+#undef MULTI_MAX_TABLES
+#define MULTI_MAX_PAGES MULTI_MAX_PAGES_SCREENSHOT
+#define MULTI_MAX_TABLES MULTI_MAX_TABLES_SCREENSHOT
+#endif
 struct multi_target { uint32_t va,pa; };
 struct multi_shape { uint32_t count,sections[MULTI_MAX_TABLES]; };
 enum multi_error { MULTI_OK,MULTI_ARGUMENT,MULTI_ORIGINAL,MULTI_TARGET,

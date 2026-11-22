@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "role": "one-press screenshot (opt-in --screenshot)",
+  "hooks": [
+    {
+      "role": "gui_dispatch",
+      "va": 3762978856,
+      "length": 8,
+      "original_bytes": "0146784808b58368",
+      "destination_symbol": "combo_gui_dispatch_entry",
+      "resume_thumb": 3762978865
+    },
+    {
+      "role": "jpeg_encode",
+      "va": 3771511428,
+      "length": 8,
+      "original_bytes": "2de9f0479a460c46",
+      "destination_symbol": "inject_encode_entry",
+      "resume_thumb": 3771511437
+    },
+    {
+      "role": "develop_end",
+      "va": 3763638872,
+      "length": 10,
+      "original_bytes": "2de9f84306464ff49278",
+      "destination_symbol": "inject_develop_end_entry",
+      "resume_thumb": 3763638883
+    }
+  ],
+  "source_guard_pages": [
+    "0xe0108000",
+    "0xe0109000",
+    "0xe016c000",
+    "0xe0236000",
+    "0xe0260000",
+    "0xe0263000",
+    "0xe04a7000",
+    "0xe0548000",
+    "0xe07e1000",
+    "0xe07e2000",
+    "0xe07e3000",
+    "0xe07e4000",
+    "0xe07ea000",
+    "0xe07f0000",
+    "0xe07f7000",
+    "0xe08ab000",
+    "0xe091b000",
+    "0xe099d000",
+    "0xe0a08000",
+    "0xe0d5b000"
+  ]
+}

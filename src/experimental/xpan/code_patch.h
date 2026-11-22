@@ -2,6 +2,12 @@
 #define R5_CODE_PATCH_H
 #include <stdint.h>
 #define CODE_PATCH_MAX 35u
+/* --screenshot: + three hooks (GUI dispatch, JPEG encode, INDEV_DevelopEnd). */
+#define CODE_PATCH_MAX_SCREENSHOT 38u
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+#undef CODE_PATCH_MAX
+#define CODE_PATCH_MAX CODE_PATCH_MAX_SCREENSHOT
+#endif
 struct code_patch {uint32_t va,destination,length;uint8_t before[16];};
 enum code_patch_error {CODE_PATCH_OK,CODE_PATCH_ARGUMENT,CODE_PATCH_LAYOUT,
  CODE_PATCH_SOURCE,CODE_PATCH_OVERLAP};

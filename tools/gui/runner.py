@@ -137,11 +137,13 @@ def summarize(output_dir: Path) -> BuildSummary:
     data = autoexec.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     profile = record.get("build_profile", record["profile"])
-    # Builds without either cue record no indicator; builds from before the stop cue record no stop_cue.
+    # Builds without either cue record no indicator; builds from before the stop cue record no stop_cue;
+    # builds without --screenshot (or from before it) record no screenshot.
     indicator = record.get("record_indicator") or {}
     options = {
         "record_indicator": indicator.get("cue", "off"),
         "record_stop_indicator": indicator.get("stop_cue", "off"),
+        "screenshot": (record.get("screenshot") or {}).get("trigger", "off"),
     } if profile == "xpan-crop" else {}
     wavs = {}
     for key in ("startup_wav", "shutter_wav"):

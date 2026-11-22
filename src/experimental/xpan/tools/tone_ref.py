@@ -250,6 +250,21 @@ STOP_VARIANTS = {
     "dong": tuple(_dong_note(h, ms, d) for h, ms, d in DONG_NOTES),
 }
 
+# Screenshot feedback (--screenshot; synthesized here, no recorded or sampled
+# sound). click: a short two-part tick, a fast-decaying 3.2 + 4.8 kHz burst
+# (8 ms, time constants about 2.0 and 1.4 ms), 15 ms of silence, then a 2.4 kHz
+# tail (10 ms, about 3.4 ms). bip_low: one plain 880 Hz tone of 40 ms, played
+# twice for a refusal and three times for a cancelled job. Kept apart from
+# VARIANTS / STOP_VARIANTS so neither can be chosen as a record cue.
+CLICK_A = ((3200, 18000, 683), (4800, 12000, 1000))
+CLICK_B = ((2400, 26000, 400),)
+SCREENSHOT_CUES = {
+    "click": (segment(samples_ms(8), tuple((phase_inc(h), a, d) for h, a, d in CLICK_A), 4, 5),
+              silence(15),
+              segment(samples_ms(10), tuple((phase_inc(h), a, d) for h, a, d in CLICK_B), 4, 6)),
+    "bip_low": (tone(880, 40, NOTE_FADE_SHIFT, 24000),),
+}
+
 
 def to_bytes(values):
     return struct.pack("<%dh" % len(values), *values)

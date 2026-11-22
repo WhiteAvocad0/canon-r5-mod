@@ -260,6 +260,20 @@ def bindings_source(t: dict, audio: dict) -> str:
         f"{t['observe_ticks']}u, \"tick bounds\");\n",
         f"_Static_assert(REC_PRESS_CALLER == {hex(t['rec_press_caller'])}u && REC_CONFIRMED_CALLER == "
         f"{hex(t['rec_confirmed_caller'])}u, \"trigger callers\");\n",
+        api_config_definitions(cfg, audio),
+        cue_definitions(t),
+    ])
+
+
+def api_config_definitions(cfg: tuple[int, ...], audio: dict) -> str:
+    """rec_tone_api (native read/clean plus the two Canon entries) and rec_tone_config.
+
+    Shared with --screenshot, whose click and bips use rec_tone_preflight and
+    SE_BeepStart through the same API without the record indicator engine."""
+    for key in ("state_query", "beep_start"):
+        if type(audio.get(key)) is not int or not audio[key] & 1:
+            raise ValueError("invalid Thumb address for audio." + key)
+    return "".join([
         '__attribute__((section(".resident_text")))\n',
         "static uint32_t rec_tone_native_read(uint32_t address)\n{\n"
         "    return *(const volatile uint32_t *)(uintptr_t)address;\n}\n",
@@ -277,7 +291,6 @@ def bindings_source(t: dict, audio: dict) -> str:
         "    rec_tone_native_clean,\n};\n",
         'const struct rec_tone_config rec_tone_config __attribute__((section(".resident_rodata"))) = {\n',
         "    " + ", ".join(hex(v) + "u" for v in cfg) + ",\n};\n",
-        cue_definitions(t),
     ])
 
 

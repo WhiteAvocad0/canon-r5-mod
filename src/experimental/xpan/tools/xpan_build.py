@@ -26,6 +26,7 @@ import playback_mask_profile
 import playback_native_profile
 import q_label_profile
 import record_indicator as ri
+import screenshot as sc
 
 from contracts import (
     MANIFEST as M,
@@ -215,6 +216,7 @@ def _tracked_input_paths() -> list[Path]:
     paths.extend(XPAN_SRC_DIR / n for n in XPAN_HEADER_NAMES)
     paths.extend(XPAN_SRC_DIR / s for s, _ in XPAN_ASM_MODULES)
     paths.extend(XPAN_SRC_DIR / n for n in ri.SOURCE_NAMES)
+    paths.extend(XPAN_SRC_DIR / n for n in sc.SOURCE_NAMES)
     paths.extend(
         CONFIG_DIR / n
         for n in (
@@ -245,10 +247,16 @@ def _tracked_input_paths() -> list[Path]:
             "xpan-review-hooks.json",
             "xpan_font.json",
             *ri.TOOL_NAMES,
+            *sc.TOOL_NAMES,
         )
     )
     paths.append(TOOLS_DIR / "audio_profile.py")
     return paths
+
+
+def _optional_extensions(indicator_on: bool, screenshot_on: bool) -> tuple[str, ...]:
+    """Opt-in hook extensions in their fixed order (record indicator, then screenshot)."""
+    return (*((ri.HOOK_EXTENSION,) if indicator_on else ()), *((sc.HOOK_EXTENSION,) if screenshot_on else ()))
 
 
 class XPanRomAdmission(NamedTuple):
@@ -268,12 +276,13 @@ def admit_xpan_rom(
     *,
     indicator: str | None,
     stop_indicator: str | None,
+    screenshot: str | None = None,
     manifest: dict = M,
     target_contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
     xpan_hooks: list[dict] | None = None,
 ) -> XPanRomAdmission:
-    """Strictly admit the selected ROM for an XPan build of this start/stop cue choice.
+    """Strictly admit the selected ROM for an XPan build of this start/stop cue and screenshot choice.
 
     Reads the ROM and the committed hook inventory only and derives the ROM-backed
     framing rows and menu vector in memory; writes nothing. build_xpan_image runs
@@ -281,7 +290,9 @@ def admit_xpan_rom(
     indicator = ri.admit_choice(indicator, "start")
     stop_indicator = ri.admit_choice(stop_indicator, "stop")
     indicator_on = ri.enabled(indicator, stop_indicator)
-    optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
+    screenshot = sc.admit_choice(screenshot)
+    screenshot_on = sc.enabled(screenshot)
+    optional_extensions = _optional_extensions(indicator_on, screenshot_on)
     rom_caller_path = str(rom_path)
     rom_resolved = Path(rom_path).resolve(strict=True)
     rom_bytes = read_regular_file(rom_resolved, exact_bytes=manifest["dump_bytes"])
@@ -293,6 +304,9 @@ def admit_xpan_rom(
             f"record indicator hook inventory disagrees with --record-indicator {indicator} "
             f"--record-stop-indicator {stop_indicator}"
         )
+    screenshot_destinations = {d for *_, d in sc.HOOKS}
+    if any(h["destination"] in screenshot_destinations for h in hooks_to_check) != screenshot_on:
+        raise ValueError(f"screenshot hook inventory disagrees with --screenshot {screenshot}")
 
     startup, rom_provenance = admit_xpan_rom_with_provenance(
         rom_bytes,
@@ -301,6 +315,7 @@ def admit_xpan_rom(
         xpan_contract=xpan_contract,
         hooks=hooks_to_check,
         record_indicator=indicator_on,
+        screenshot=screenshot_on,
         guard_pages=[int(v, 16) for v in loaded_contract["source_guard_pages"]],
     )
 
@@ -341,17 +356,22 @@ def build_xpan_image(
     policy_path: Path = POLICY_PATH,
     record_indicator: str | None = None,
     record_stop_indicator: str | None = None,
+    screenshot: str | None = None,
 ) -> dict:
     """Execute the offline experimental XPan crop-only build into a fresh directory.
 
     Silent by default. record_indicator selects the opt-in movie record start cue
     and record_stop_indicator the stop cue (issue #14); with both "off" (the
-    default) none of their code, hook or pages is linked."""
+    default) none of their code, hook or pages is linked. screenshot "rate" links the
+    one-press screenshot (tools/screenshot.py); "off" (the default) links none of it."""
     indicator = ri.admit_choice(record_indicator, "start")
     stop_indicator = ri.admit_choice(record_stop_indicator, "stop")
     indicator_on = ri.enabled(indicator, stop_indicator)
-    optional_extensions = (ri.HOOK_EXTENSION,) if indicator_on else ()
+    screenshot = sc.admit_choice(screenshot)
+    screenshot_on = sc.enabled(screenshot)
+    optional_extensions = _optional_extensions(indicator_on, screenshot_on)
     indicator_facts = ri.facts(indicator, stop_indicator) if indicator_on else None
+    screenshot_facts = sc.facts(screenshot) if screenshot_on else None
     env = controlled_environment()
     _check_profile_headers_sync()
     _, toolchain_admission = admit_toolchain(toolchain_dir, policy_path=policy_path)
@@ -363,6 +383,7 @@ def build_xpan_image(
         rom_path,
         indicator=indicator,
         stop_indicator=stop_indicator,
+        screenshot=screenshot,
         manifest=manifest,
         target_contract=target_contract,
         xpan_contract=xpan_contract,
@@ -409,6 +430,8 @@ def build_xpan_image(
         "menu_vector_proof": vector_proof,
         "record_indicator": indicator_facts,
     }
+    if screenshot_on:  # absent when off: the default configuration (and its source digest) is unchanged
+        configuration["screenshot"] = screenshot_facts
 
     tracked = _tracked_input_paths()
     fingerprint = lambda: {str(p): hash_regular_file(p) for p in tracked}
@@ -537,6 +560,10 @@ def build_xpan_image(
 
     if indicator_on:
         (out / "rec-tone-bindings.c").write_text(ri.bindings_source(indicator_facts, manifest["audio"]))
+    elif screenshot_on:
+        (out / "rec-tone-bindings.c").write_text(sc.tone_api_bindings(manifest["audio"]))
+    if screenshot_on:
+        (out / "capture-cue-bindings.c").write_text(sc.capture_cue_bindings(screenshot_facts))
 
     (out / "startup.bin").write_bytes(startup)
     linker = (XPAN_RESIDENT_DIR / "handoff.ld").read_text()
@@ -549,7 +576,7 @@ def build_xpan_image(
         linker = linker.replace("@" + key + "@", hex(value))
     (out / "handoff.ld").write_text(linker)
 
-    indicator_defines = [ri.DEFINE] if indicator_on else []
+    indicator_defines = [*([ri.DEFINE] if indicator_on else []), *([sc.DEFINE] if screenshot_on else [])]
     objects: list[Path] = []
     c_sources: list[tuple[Path, str]] = [
         (XPAN_RESIDENT_DIR / "observer.c", "observer.o"),
@@ -562,9 +589,12 @@ def build_xpan_image(
         *((XPAN_SRC_DIR / f"{name}.c", f"{name}.o") for name in XPAN_C_MODULES),
         (XPAN_ROW_DIR / "frame_row.c", "frame-row.o"),
     ]
-    if indicator_on:
-        c_sources += [(XPAN_SRC_DIR / f"{name}.c", f"{name}.o") for name in ri.C_MODULES]
+    option_modules = [*(ri.C_MODULES if indicator_on else ()), *(sc.C_MODULES if screenshot_on else ())]
+    c_sources += [(XPAN_SRC_DIR / f"{name}.c", f"{name}.o") for name in dict.fromkeys(option_modules)]
+    if indicator_on or screenshot_on:
         c_sources.append((out / "rec-tone-bindings.c", "rec-tone-bindings.o"))
+    if screenshot_on:
+        c_sources.append((out / "capture-cue-bindings.c", "capture-cue-bindings.o"))
     for source_file, object_name in c_sources:
         run(
             "gcc", "-c", "-std=c11", "-Os", "-DR5_CROP_ONLY=1", *indicator_defines, "-mgeneral-regs-only",
@@ -577,7 +607,9 @@ def build_xpan_image(
         )
         objects.append(out / object_name)
 
-    for source_name, object_name in (*XPAN_ASM_MODULES, *(ri.ASM_MODULES if indicator_on else ())):
+    for source_name, object_name in (
+        *XPAN_ASM_MODULES, *(ri.ASM_MODULES if indicator_on else ()), *(sc.ASM_MODULES if screenshot_on else ()),
+    ):
         run(
             "gcc", "-c", "-x", "assembler-with-cpp", "-DR5_CROP_ONLY=1", *indicator_defines, "-mcpu=cortex-a9",
             "-marm",
@@ -672,9 +704,31 @@ def build_xpan_image(
         )
     else:
         indicator_record = None
-        retained = [n for n in ri.ALL_SYMBOLS if n in symbols]
+        shared = set(sc.SHARED_SYMBOLS) if screenshot_on else set()
+        retained = [n for n in ri.ALL_SYMBOLS if n in symbols and n not in shared]
         if retained:
             raise ValueError("record indicator retained without opt-in: " + ", ".join(retained))
+    if screenshot_on:
+        sizes = {
+            row.split()[3]: int(row.split()[1], 16)
+            for row in run("nm", "-S", "--defined-only", out / "handoff.elf").splitlines()
+            if len(row.split()) == 4
+        }
+        screenshot_record = sc.verify_linked(
+            data,
+            symbols,
+            sizes,
+            screenshot_facts,
+            feature["hooks"],
+            indicator=indicator_on,
+            minimum_user_left=manifest["minimum_user_left"],
+            remaining_user_bytes=layout["remaining_user_bytes"],
+        )
+    else:
+        screenshot_record = None
+        retained = [n for n in sc.SYMBOLS if n in symbols]
+        if retained:
+            raise ValueError("screenshot retained without opt-in: " + ", ".join(retained))
 
     loc = lambda name: symbols["_resident_load_offset"] + symbols[name] - symbols["_resident_start"]
     props_expected = struct.pack(f"<{len(observer['properties'])}I", *observer["properties"])
@@ -786,6 +840,7 @@ def build_xpan_image(
         "audio": None,
         "shutter_audio": None,
         "record_indicator": indicator_record,
+        "screenshot": screenshot_record,
         "shutter_feedback": shutter_feedback_record,
         "configuration": configuration,
         "host_build_ok": True,

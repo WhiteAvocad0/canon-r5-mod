@@ -66,6 +66,15 @@ def legacy_parser():
             "(default off; independent of --record-indicator; 'dong' is the cue tested on a private lab build)"
         ),
     )
+    ap.add_argument(
+        "--screenshot",
+        choices=("off", "rate"),
+        default=None,
+        help=(
+            "xpan-crop only: opt-in one-press screenshot on the RATE button "
+            "(default off; 'rate' saves an in-camera JPEG of the playback screen)"
+        ),
+    )
     return ap
 
 
@@ -86,6 +95,8 @@ def legacy_cli(argv):
                     ap.error("--record-indicator requires --profile xpan-crop")
                 if args.record_stop_indicator is not None:
                     ap.error("--record-stop-indicator requires --profile xpan-crop")
+                if args.screenshot is not None:
+                    ap.error("--screenshot requires --profile xpan-crop")
                 missing = [
                     flag
                     for flag, val in (("--startup-wav", args.startup_wav), ("--shutter-wav", args.shutter_wav))
@@ -99,6 +110,7 @@ def legacy_cli(argv):
         rom_path=args.rom, startup_wav=args.startup_wav, shutter_wav=args.shutter_wav,
         toolchain_dir=args.toolchain, output_dir=args.output, profile=args.profile,
         record_indicator=args.record_indicator, record_stop_indicator=args.record_stop_indicator,
+        screenshot=args.screenshot,
     ))
 
 
@@ -313,18 +325,20 @@ class ValidationEquivalenceTests(unittest.TestCase):
         wavs = [None, "a.wav"]
         indicators = [None, "off", "ding", "chirp2", "2k150loud", "loud"]
         stops = [None, "off", "dong", "ding"]
+        shots = [None, "rate", "bogus"]
         extras = [[], ["--force"], ["--skip-target-check"]]
         drops = [None, "--rom", "--toolchain", "--output"]
         seen = {"exit": 0, "build": 0}
-        for profile, startup, shutter, indicator, stop, extra, drop in itertools.product(
-            profiles, wavs, wavs, indicators, stops, extras, drops
+        for profile, startup, shutter, indicator, stop, shot, extra, drop in itertools.product(
+            profiles, wavs, wavs, indicators, stops, shots, extras, drops
         ):
             argv = []
             for flag, value in (("--rom", "r.bin"), ("--toolchain", "tc"), ("--output", "out")):
                 if flag != drop:
                     argv += [flag, value]
             for flag, value in (("--profile", profile), ("--startup-wav", startup), ("--shutter-wav", shutter),
-                                ("--record-indicator", indicator), ("--record-stop-indicator", stop)):
+                                ("--record-indicator", indicator), ("--record-stop-indicator", stop),
+                                ("--screenshot", shot)):
                 if value is not None:
                     argv += [flag, value]
             argv += extra
@@ -332,10 +346,11 @@ class ValidationEquivalenceTests(unittest.TestCase):
                 expected = legacy_cli(argv)
                 self.assertEqual(manifest_cli(argv), expected)
                 seen[expected[0]] += 1
-        # Accepted: shutter-feedback with both WAVs (implicit or explicit profile), and
-        # xpan-crop without WAVs for each of the five start x three stop spellings; all else refused.
-        self.assertEqual(seen["build"], 2 + 5 * 3)
-        self.assertEqual(seen["exit"], 4 * 2 * 2 * 6 * 4 * 3 * 4 - (2 + 5 * 3))
+        # Accepted: shutter-feedback with both WAVs (implicit or explicit profile, no screenshot),
+        # and xpan-crop without WAVs for each of the five start x three stop x two screenshot
+        # spellings; all else refused.
+        self.assertEqual(seen["build"], 2 + 5 * 3 * 2)
+        self.assertEqual(seen["exit"], 4 * 2 * 2 * 6 * 4 * 3 * 3 * 4 - (2 + 5 * 3 * 2))
 
     def test_help_text_is_unchanged(self):
         self.assertEqual(build_mod.build_parser().format_help(), legacy_parser().format_help())

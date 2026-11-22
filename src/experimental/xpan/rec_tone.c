@@ -11,9 +11,12 @@
 #define DATA
 #endif
 
-struct rec_tone_state rec_tone_state;
+/* A screenshot-only build (R5_SCREENSHOT without R5_RECORD_INDICATOR) links only
+ * rd() and rec_tone_preflight(); the record indicator engine is compiled out. */
 #define RT rec_tone_state
 #define CFG rec_tone_config
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
+struct rec_tone_state rec_tone_state;
 
 CODE static uint32_t sat_add(uint32_t a, uint32_t b)
 {
@@ -28,11 +31,13 @@ CODE static void clear_attempt(struct rec_tone_attempt *a)
         w[i] = 0u;
 }
 
+#endif /* R5_RECORD_INDICATOR */
 CODE static uint32_t rd(uint32_t address)
 {
     return rec_tone_api.read(address);
 }
 
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 CODE static uint32_t linked(uint32_t cue)
 {
     return rec_tone_cues[cue].segment_count != 0u;
@@ -109,6 +114,7 @@ CODE static void publish(void)
     __atomic_store_n(&RT.ready, 1u, __ATOMIC_RELEASE);
 }
 
+#endif /* R5_RECORD_INDICATOR */
 /* Port of audio.S:50-86 (ABeep readiness) and :308-384
  * (audio_check_dependencies) with one change: the AudioCtrl state mask. */
 CODE uint32_t rec_tone_preflight(struct rec_tone_attempt *a, uint32_t actrl_mask)
@@ -167,6 +173,7 @@ CODE uint32_t rec_tone_preflight(struct rec_tone_attempt *a, uint32_t actrl_mask
     a->route[2] = rd(output + 12u);
     return REC_TONE_PF_OK;
 }
+#if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 
 /* Presses and ended takes that arrive while a cue is observed are counted and
  * dropped, never replayed late. */
@@ -405,3 +412,4 @@ CODE void rec_tone_report(unsigned reports)
           RT.stop_superseded, RT.stop_not_idle, atomic_load_explicit(&rec_stop_seq, memory_order_acquire));
     debug(OBSERVER_CLASS, OBSERVER_LEVEL, end_fmt, reports);
 }
+#endif /* R5_RECORD_INDICATOR */

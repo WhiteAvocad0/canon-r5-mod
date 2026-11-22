@@ -113,6 +113,29 @@
           "status_detail": "Owner-checked together with the ding on public image 01956513 and private lab build fbf31293 (18 November 2026). A dong-only image has not run on hardware."
         }
       ]
+    },
+    {
+      "id": "screenshot",
+      "flag": "--screenshot",
+      "label": "One-press screenshot (RATE)",
+      "description": "Press RATE while viewing a photo in playback to save a 2400x1600 JPEG of the whole screen, made by the camera's own encoder, next to your photos. RATE in live view saves the raw screen files only. A click confirms the capture; two low bips mean it was refused, three that the camera cancelled it. Each RATE also leaves working files (about 11 MB) in DCIM/R5SHOTS.",
+      "profiles": ["xpan-crop"],
+      "unavailable_reason": "The screenshot is part of the XPan profile only (it needs xpan-crop).",
+      "default": "off",
+      "cli_help": "xpan-crop only: opt-in one-press screenshot on the RATE button (default off; 'rate' saves an in-camera JPEG of the playback screen)",
+      "choices": [
+        {
+          "value": "off",
+          "label": "Off (no screenshot)",
+          "status": null
+        },
+        {
+          "value": "rate",
+          "label": "RATE in playback: whole-screen JPEG",
+          "status": "private-lab-verified",
+          "status_detail": "Worked on the maintainer's private lab build-22 on 128 GB SDXC (22 November 2026): RATE in playback saved an all-layers 2400x1600 JPEG in about 0.6 s. That build also wrote a diagnostic log (R5LOG.BIN) that this public build leaves out."
+        }
+      ]
     }
   ]
 }

@@ -49,6 +49,7 @@ import features
 from image_format import finalize_image, inspect_image
 from input_files import hash_regular_file, read_regular_file
 import record_indicator as ri
+import screenshot as sc
 from toolchain import POLICY_PATH, admit_toolchain, controlled_environment
 
 PROVENANCE_FILENAMES = ("conversion.json", "pcm-facts.json")
@@ -56,23 +57,28 @@ PROVENANCE_FILENAMES = ("conversion.json", "pcm-facts.json")
 FEATURES = features.load()
 RECORD_INDICATOR = FEATURES.options["record_indicator"]
 RECORD_STOP_INDICATOR = FEATURES.options["record_stop_indicator"]
-# Option id (also the build_image parameter it fills) -> its choice catalog in record_indicator.py.
-RECORD_CUE_CATALOGS = {"record_indicator": "CHOICES", "record_stop_indicator": "STOP_CHOICES"}
+SCREENSHOT = FEATURES.options["screenshot"]
+# Option id (also the build_image parameter it fills) -> its owner module and choice catalog.
+OPTION_CATALOGS = {
+    "record_indicator": (ri, "CHOICES"),
+    "record_stop_indicator": (ri, "STOP_CHOICES"),
+    "screenshot": (sc, "CHOICES"),
+}
 
 
 def check_feature_catalog(manifest: features.FeatureManifest = FEATURES) -> None:
     """Fail closed when the feature manifest drifts from the owners it describes."""
     if manifest.default_profile != "shutter-feedback" or set(manifest.profile_ids) != {"shutter-feedback", "xpan-crop"}:
         raise ValueError("feature manifest profiles disagree with the profiles build_image implements")
-    if set(manifest.inputs) != {"startup_wav", "shutter_wav"} or set(manifest.options) != set(RECORD_CUE_CATALOGS):
+    if set(manifest.inputs) != {"startup_wav", "shutter_wav"} or set(manifest.options) != set(OPTION_CATALOGS):
         raise ValueError("feature manifest inputs/options disagree with build_image parameters")
     for spec in (*manifest.inputs.values(), *manifest.options.values()):
         if spec.flag != "--" + spec.id.replace("_", "-"):
             raise ValueError(f"feature manifest flag {spec.flag} does not name parameter {spec.id}")
-    for oid, catalog in RECORD_CUE_CATALOGS.items():
+    for oid, (owner, catalog) in OPTION_CATALOGS.items():
         option = manifest.options[oid]
-        if option.values != getattr(ri, catalog) or option.default != ri.OFF:
-            raise ValueError(f"feature manifest {oid} choices disagree with record_indicator.{catalog}")
+        if option.values != getattr(owner, catalog) or option.default != owner.OFF:
+            raise ValueError(f"feature manifest {oid} choices disagree with {owner.__name__}.{catalog}")
 
 
 check_feature_catalog()
@@ -305,6 +311,7 @@ def check_rom(
     profile: str = FEATURES.default_profile,
     record_indicator: str | None = None,
     record_stop_indicator: str | None = None,
+    screenshot: str | None = None,
     manifest: dict = M,
     target_contract: dict = TARGET_CONTRACT,
     xpan_contract: dict = XPAN_TARGET_CONTRACT,
@@ -315,7 +322,9 @@ def check_rom(
     Reads the ROM only: no toolchain, no output directory, no writes. Raises the
     same errors the build would raise for the ROM. Returns a short summary."""
     # WAV inputs are not part of a ROM check; every other selection rule applies.
-    options = {"record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator}
+    options = {
+        "record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator, "screenshot": screenshot,
+    }
     violations = [
         v
         for v in _api_violations(profile, startup_wav=None, shutter_wav=None, options=options)
@@ -330,6 +339,7 @@ def check_rom(
             rom_path,
             indicator=record_indicator,
             stop_indicator=record_stop_indicator,
+            screenshot=screenshot,
             manifest=manifest,
             target_contract=target_contract,
             xpan_contract=xpan_contract,
@@ -343,6 +353,7 @@ def check_rom(
         "profile": profile,
         "record_indicator": ri.admit_choice(record_indicator, "start") if profile == "xpan-crop" else None,
         "record_stop_indicator": ri.admit_choice(record_stop_indicator, "stop") if profile == "xpan-crop" else None,
+        "screenshot": sc.admit_choice(screenshot) if profile == "xpan-crop" else None,
         "target": provenance["target"],
         "resolved_path": str(rom_resolved),
         "bytes": provenance["bytes"],
@@ -372,13 +383,17 @@ def build_image(
     schema: dict = AUDIO_LOG_SCHEMA,
     record_indicator: str | None = None,
     record_stop_indicator: str | None = None,
+    screenshot: str | None = None,
 ) -> dict:
     """Execute an offline build for either shutter-feedback (default) or xpan-crop."""
     error = api_selection_error(
         profile,
         startup_wav=startup_wav,
         shutter_wav=shutter_wav,
-        options={"record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator},
+        options={
+            "record_indicator": record_indicator, "record_stop_indicator": record_stop_indicator,
+            "screenshot": screenshot,
+        },
     )
     if error:
         raise ValueError(error)
@@ -400,6 +415,7 @@ def build_image(
             policy_path=policy_path,
             record_indicator=record_indicator,
             record_stop_indicator=record_stop_indicator,
+            screenshot=screenshot,
         )
     """Execute the full offline shutter-feedback build into a fresh output directory."""
     env = controlled_environment()
@@ -984,6 +1000,7 @@ def main(argv: list[str] | None = None) -> int:
         profile=args.profile,
         record_indicator=args.record_indicator,
         record_stop_indicator=args.record_stop_indicator,
+        screenshot=args.screenshot,
     )
     indicator = record.get("record_indicator") or {}
     print(
@@ -1002,6 +1019,8 @@ def main(argv: list[str] | None = None) -> int:
                 "record_stop_indicator": indicator.get("stop_cue", "off")
                 if args.profile in RECORD_STOP_INDICATOR.profiles
                 else None,
+                **({"screenshot": (record.get("screenshot") or {}).get("trigger", "off")}
+                   if args.profile in SCREENSHOT.profiles else {}),
             }
         )
     )

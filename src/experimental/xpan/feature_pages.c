@@ -16,6 +16,10 @@
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 #include "rec_state.h"
 #endif
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+#include "combo_observe.h"
+#include "hw_jpeg_inject.h"
+#endif
 #define CODE __attribute__((section(".resident_text")))
 #define DATA __attribute__((section(".resident_rodata")))
 extern uint32_t boot_shadow_page[];
