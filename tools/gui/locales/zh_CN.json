@@ -485,7 +485,6 @@
   "The screenshot is part of the XPan profile only (it needs xpan-crop).": "只有 XPan 方案（xpan-crop）提供截图功能。",
   "Off (no screenshot)": "关闭（不截图）",
   "RATE in playback: whole-screen JPEG": "回放时按 RATE：保存全屏 JPEG",
-  "Worked on the maintainer's private lab build-22 on 128 GB SDXC (22 November 2026): RATE in playback saved an all-layers 2400x1600 JPEG in about 0.6 s. That build also wrote a diagnostic log (R5LOG.BIN) that this public build leaves out.": "2026 年 11 月 22 日，维护者在 128 GB SDXC 卡上使用内部版本 build-22 验证成功：回放时按 RATE，约 0.6 秒即可保存包含所有显示图层的 2400x1600 JPEG。该版本还会写入诊断日志 R5LOG.BIN，公开版本不生成此日志。",
   "Language": "语言",
   "Checking...": "正在检查…",
   "{n} screenshot in {folder}{where}.": "在 {folder}{where} 中找到 {n} 张截图。",
@@ -667,5 +666,6 @@
   "{file} was refused by the ROM check: {error}": "{file} 未通过 ROM 检查：{error}",
   "{folder} is not a folder.": "{folder} 不是文件夹。",
   "{name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled camera boots normal Canon firmware during Canon Basic steps.": "卡上已有 {name}。请先备份并移走 AUTOEXEC.BIN，或将它移除。这样，已启用 BootDisk 的相机在执行 Canon Basic 步骤时才会正常启动佳能原厂固件。",
-  "{region} (got {actual}..., expected {expected}...)": "{region}（实际为 {actual}…，应为 {expected}…）"
+  "{region} (got {actual}..., expected {expected}...)": "{region}（实际为 {actual}…，应为 {expected}…）",
+  "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera.": "2026 年 11 月 22 日，机主在 128 GB SDXC 卡上对公开版本 809d3767（含录像起停提示音）进行了简短测试。回放以 3:2 拍摄的 JPEG 或 RAW+JPEG 照片时，按 RATE 键可将整个画面保存为 2400×1600 的 JPEG。截取 XPan 照片时会取消截屏，并响三声。仅启用截屏功能的版本尚未上机测试。"
 }

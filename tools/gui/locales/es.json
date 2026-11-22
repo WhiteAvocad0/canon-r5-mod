@@ -485,7 +485,6 @@
   "The screenshot is part of the XPan profile only (it needs xpan-crop).": "La captura de pantalla solo está disponible en el perfil XPan (requiere xpan-crop).",
   "Off (no screenshot)": "Desactivado (sin capturas de pantalla)",
   "RATE in playback: whole-screen JPEG": "RATE en reproducción: JPEG de toda la pantalla",
-  "Worked on the maintainer's private lab build-22 on 128 GB SDXC (22 November 2026): RATE in playback saved an all-layers 2400x1600 JPEG in about 0.6 s. That build also wrote a diagnostic log (R5LOG.BIN) that this public build leaves out.": "Funcionó en la compilación privada de laboratorio build-22 del responsable del proyecto con una tarjeta SDXC de 128 GB (22 de noviembre de 2026). Al pulsar RATE durante la reproducción, la cámara guardó en unos 0,6 s un JPEG de 2400 × 1600 con todas las capas de la pantalla. Esa compilación también guardaba un registro de diagnóstico (R5LOG.BIN) que se omite en esta compilación pública.",
   "Language": "Idioma",
   "Checking...": "Comprobando…",
   "{n} screenshot in {folder}{where}.": "{n} captura en {folder}{where}.",
@@ -667,5 +666,6 @@
   "{file} was refused by the ROM check: {error}": "La comprobación de la ROM rechazó {file}: {error}",
   "{folder} is not a folder.": "{folder} no es una carpeta.",
   "{name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled camera boots normal Canon firmware during Canon Basic steps.": "La tarjeta contiene {name}. Antes de continuar, retire AUTOEXEC.BIN de la tarjeta o guárdelo en otro lugar para que la cámara con BootDisk activado inicie el firmware normal de Canon durante los pasos de Canon Basic.",
-  "{region} (got {actual}..., expected {expected}...)": "{region} (se obtuvo {actual}… y se esperaba {expected}…)"
+  "{region} (got {actual}..., expected {expected}...)": "{region} (se obtuvo {actual}… y se esperaba {expected}…)",
+  "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera.": "El 22 de noviembre de 2026, el propietario probó brevemente la versión pública 809d3767, con los avisos de inicio y fin de grabación, en una tarjeta SDXC de 128 GB. Al reproducir fotos 3:2 tomadas en JPEG o RAW+JPEG, el botón RATE guardó la pantalla completa como JPEG de 2400 × 1600 píxeles. Al intentar capturar una foto XPan, la cámara cancela la captura y emite tres pitidos. La versión que solo incluye capturas de pantalla aún no se ha probado en una cámara."
 }
