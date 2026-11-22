@@ -53,7 +53,8 @@ TEST_CHECKLIST = (
     "Powered on normally; the camera started as usual.",
     "Took a full-frame photo as a control: it looks normal.",
     "Tried the features in this build (for XPan: chose XPan in the menu, took landscape and portrait shots, "
-    "checked the review and playback on the LCD and in the viewfinder).",
+    "checked the review and playback on the LCD and in the viewfinder; with the screenshot: pressed RATE on a "
+    "photo in playback, heard the click and found the new JPEG).",
     "Waited for the card light to go out before switching off.",
 )
 REPORT_URLS = {
@@ -537,8 +538,8 @@ GUIDE = {
         "The mod comes in two versions. XPan adds a 2.71:1 panoramic crop; Custom sounds plays your own startup "
         "and shutter sounds. They can't be combined.",
         ("Choose XPan or Custom sounds below.",
-         "For XPan, choose a movie record cue if you want one. For Custom sounds, choose your startup and "
-         "shutter WAV files.",
+         "For XPan, choose a movie record cue or the one-press screenshot if you want them. For Custom sounds, "
+         "choose your startup and shutter WAV files.",
          "Press Next to use these features."),
         "The choices come from config/features.json, the same manifest the command-line builder uses, so the "
         "window can't offer a combination the builder would refuse. Every public build is hardware-untested; "
