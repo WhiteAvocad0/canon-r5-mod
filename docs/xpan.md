@@ -115,7 +115,7 @@ Not ported from the private lab build: the 2-cue A/B start rotation, the `reques
 
 - Exact `64 MiB` dump size and `0xE0100000..0xE0140000` word-sum `0x22C94093`
 - All `25` base R5 `2.2.1` code fingerprints + `7` startup patch opcodes
-- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator` and/or `--record-stop-indicator`, and `22` pages and `3` hooks with `--screenshot rate`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
+- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator` and/or `--record-stop-indicator`, and `25` pages and `3` hooks with `--screenshot rate`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
 
 Only after those immutable checks pass does the builder derive into `--output`:
 - `target-page.bin` (`0xE0100000` virgin boot shadow page)

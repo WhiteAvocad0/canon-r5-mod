@@ -300,5 +300,9 @@ def ensure_screenshot_folder(root: Path) -> str:
             return f"The screenshot folder {dcim[0].name}/{found[0].name} is already on the card."
         return (f"{dcim[0].name}/{found[0].name} exists but is not a plain folder; screenshots will fail "
                 "until it is one. Nothing was changed.")
-    (dcim[0] / SCREENSHOT_FOLDER).mkdir()
+    try:
+        (dcim[0] / SCREENSHOT_FOLDER).mkdir()
+    except OSError as exc:  # the mod itself is already copied and verified
+        return (f"The screenshot folder {dcim[0].name}/{SCREENSHOT_FOLDER} could not be created ({exc}). "
+                "Create it yourself before taking screenshots.")
     return f"Created the empty screenshot folder {dcim[0].name}/{SCREENSHOT_FOLDER} on the card."

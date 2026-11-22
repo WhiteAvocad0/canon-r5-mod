@@ -19,13 +19,13 @@ python3 tools/build.py --profile xpan-crop \
 
 It combines with the record cues (`--record-indicator ding --record-stop-indicator dong`). In R5 Mod Assistant, choose **One-press screenshot (RATE)** in the feature step.
 
-**The SD card needs a folder `DCIM/R5SHOTS`**, next to `DCIM/100CANON`. The camera writes the screen files there and does not create the folder itself; without it every RATE gives one low bip and no screenshot. R5 Mod Assistant creates the empty folder when it copies a screenshot build to a camera-formatted card. With the command line, create it yourself.
+**The SD card needs a folder `DCIM/R5SHOTS`**, next to the camera's photo folders in `DCIM`. The camera writes the screen files there and does not create the folder itself; without it every RATE gives one low bip and no screenshot. R5 Mod Assistant creates the empty folder when it copies a screenshot build to a camera-formatted card. With the command line, create it yourself.
 
 ## Using it
 
 1. Press ▶ and show a JPEG photo **full screen**, not zoomed and not in the index grid.
 2. Press **RATE** once and wait. The screen freezes for a moment while the camera saves the screen, then you hear a **click**.
-3. About half a second later the new JPEG is on the card. It gets the next file number in the current folder, for example `JERM0026.JPG` after `JERM0025.JPG`.
+3. About half a second later the new JPEG is on the card. It gets the next file number in the current folder, for example `IMG_0026.JPG` after `IMG_0025.JPG`.
 
 What you hear:
 
@@ -39,7 +39,7 @@ What you hear:
 
 RATE in **live view** saves the screen files only (see below). No JPEG is made.
 
-**Card speed matters.** Each RATE writes about 11 MB. On a fast 128 GB SDXC card the lab build's screen-to-Y22 work took about 0.6 s and the owner found the freeze short. On a slow 16 GB SDHC card the same work took about 2.1 s and the freeze felt like 2–3 s.
+**Card speed matters.** Each RATE writes about 11 MB (about 18 MB from the viewfinder). On a fast 128 GB SDXC card the lab build's screen-to-Y22 work took about 0.6 s and the owner found the freeze short. On a slow 16 GB SDHC card the same work took about 2.1 s and the freeze felt like 2–3 s.
 
 Press nothing else during the freeze, and after the click wait until the new image exists or the card LED is off.
 
@@ -47,9 +47,9 @@ Press nothing else during the freeze, and after the click wait until the new ima
 
 | File | Size | What it is |
 | --- | --- | --- |
-| `DCIM/100CANON/<next number>.JPG` | about 0.5–1.5 MB | The screenshot: 2400×1600, made by Canon's encoder. |
-| `DCIM/R5SHOTS/SS_nnnnn.YCA` | 2,095,616 B | The on-screen display layer (UYVA, 1024×682; 1600×1200 on the EVF). The [Screenshots tool](gui.md#screenshots) converts it to PNG. |
-| `DCIM/R5SHOTS/SS_nnnnn.PIC` | 1,746,432 B | The picture layer under it (10-bit 4:2:2). |
+| `DCIM/<current folder>/<next number>.JPG` | about 0.5–1.5 MB | The screenshot: 2400×1600, made by Canon's encoder. |
+| `DCIM/R5SHOTS/SS_nnnnn.YCA` | 2,095,616 B (5,760,512 B on the EVF) | The on-screen display layer (UYVA, 1024×682; 1600×1200 on the EVF). The [Screenshots tool](gui.md#screenshots) converts it to PNG. |
+| `DCIM/R5SHOTS/SS_nnnnn.PIC` | 1,746,432 B (4,800,512 B on the EVF) | The picture layer under it (10-bit 4:2:2). |
 | `DCIM/R5SHOTS/HWJPG.Y22` | 7,680,000 B | The 2400×1600 composite that the JPEG encoder reads. Overwritten by every RATE. |
 
 The `SS_` files accumulate: delete them when you no longer need them.
@@ -71,7 +71,7 @@ flowchart LR
 - **The Y22 build.** The OSD row and the picture-layer row are composited and converted to the encoder's 2400×1600 Y/C layout. The work buffer is one 1,179,648-byte block borrowed from Canon's RscMgr pool (type 4, the pool Canon's GUI dialogs use) for the length of one build. If the pool cannot lend it within 200 ms, or lends an unusable block, the build falls back to 38,400-byte strips, which is slower but gives the same bytes. A block that arrives after the build stopped waiting is freed by its own callback.
 - **The one-press job.** At the RATE release, the feature re-checks that ▶ is still shown and asks Canon's own Resize check whether the current photo can be resized (`FM_GetFileObjectForResize` on its JPEG sub-handle). Only then does it start `INDEV_DevelopStart` on that photo. Canon builds and names the new file as for an in-camera resize.
 - **Feedback.** The click and the low bip are generated in the camera (`tone_ref.SCREENSHOT_CUES`, 33 ms and 40 ms) and played through Canon's speaker API (SE id 2) after the same readiness checks as the record cues. With the record indicator selected, a screenshot sound never interrupts a record cue.
-- **Capacity.** A screenshot build has `37` hooks, `23` pages and `11` L2 tables (`38/24/11` with the record indicator); the default build stays at `34/20/10`. The linked check refuses an image below Canon's heap floor. With the reference ROM a screenshot-only image leaves `834,968` bytes against the `524,304`-byte floor.
+- **Capacity.** A screenshot build has `37` hooks, `23` pages and `11` L2 tables, and admits `25` extra fingerprinted pages (`38/24/11` with the record indicator); the default build stays at `34/20/10`. The linked check refuses an image below Canon's heap floor. With the reference ROM a screenshot-only image leaves `834,968` bytes against the `524,304`-byte floor.
 
 ## Limits
 
@@ -82,6 +82,6 @@ flowchart LR
 
 ## Evidence boundary
 
-- **Private lab builds (camera results).** Build-17 first produced an all-layers 2400×1600 JPEG from one RATE in ▶ on 22 November 2026. Build-20 to build-22 added the borrowed block and its hardening. Build-22 ran on a 128 GB SDXC exFAT card: the Y22 build took 0.61 s, the screenshot had every layer, and the `HWJPG.Y22` left on the card was byte-identical to a host reconstruction from the same `SS_n` files. The owner reported "both are fast".
+- **Private lab builds (camera results).** On 22 November 2026 a private lab build first produced an all-layers 2400×1600 JPEG from one RATE in ▶; later lab builds added the borrowed block and its hardening. The last of them, build-22, ran on a 128 GB SDXC exFAT card: the Y22 build took 0.61 s, the screenshot had every layer, and the `HWJPG.Y22` left on the card was byte-identical to a host reconstruction from the same `SS_n` files. The owner reported "both are fast".
 - **This public port.** The C and assembly are the lab build-22 feature code with its diagnostics compiled out. Compiling the lab sources with build-22's flags, minus the log file, gives objects instruction-for-instruction equal to the public ones, except one function: the click/bip `sound()`, which now uses the public record-cue engine's readiness check. Default, `ding` and `ding` + `dong` builds keep identical code, and their images differ only in the source digest text. **No camera has run the public image yet.**
 - Do not upload ROM dumps, photos or card images with reports. Screenshots show whatever was on the screen, including the photo: share them only if you mean to.

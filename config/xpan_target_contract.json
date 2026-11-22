@@ -954,7 +954,7 @@
       "sha256": "be99677f2463d7164604eb574bc5636f45d31cee01b437502858e6a4052025aa"
     }
   ],
-  "screenshot_note": "Opt-in --screenshot only: the three hook pages (GUI dispatch E04A8000, JPEG encode E0CCB000, INDEV_DevelopEnd E0549000) and the pages of every Canon function the screenshot calls or derives a RAM address from (FIO, MapCpuBuffer and its VA-to-PA helper, RscMgr suite calls, FM resize check, INDEV start, the GUI dispatcher and display-driver literals). Admitted only when --screenshot is selected.",
+  "screenshot_note": "Opt-in --screenshot only: the three hook pages (GUI dispatch E04A8000, JPEG encode E0CCB000, INDEV_DevelopEnd E0549000), the pages of every Canon function the screenshot calls (FIO, MapCpuBuffer and its VA-to-PA helper, RscMgr suite calls, FM resize check, INDEV start), and the Canon code pages that define the RAM words it reads (GUI mode 0x8F40, playback view handle 0x13F1D0, develop state 0x17454, the GUI dispatcher and display-driver literals). Admitted only when --screenshot is selected.",
   "screenshot_code_fingerprints": [
     {
       "name": "screenshot_page_e0108000",
@@ -1015,6 +1015,24 @@
       "address": 3763638272,
       "bytes": 4096,
       "sha256": "d7d29a64a2eabccb97228f70b6bc9b44f07737da7ac77ff397200c61841d052b"
+    },
+    {
+      "name": "screenshot_page_e0719000",
+      "address": 3765538816,
+      "bytes": 4096,
+      "sha256": "3cb12e1b3a9b261d0bb856af9127fa3460217aaa94035fa0d58a0f15dfb67cfd"
+    },
+    {
+      "name": "screenshot_page_e0750000",
+      "address": 3765764096,
+      "bytes": 4096,
+      "sha256": "aa041d34da71e828e79f5fc80411b908be3a0e3c84bdb8aada1d89c08dbb7b63"
+    },
+    {
+      "name": "screenshot_page_e07c6000",
+      "address": 3766247424,
+      "bytes": 4096,
+      "sha256": "235d42b153ba7c1d96c311f922b0a058cf77e32641bdd28a6c43454d2a1304c4"
     },
     {
       "name": "screenshot_page_e07e1000",

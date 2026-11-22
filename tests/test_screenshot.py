@@ -43,7 +43,10 @@ BIP_LOW_PCM_SHA256 = "7b515cfefa8cbe8653315ac63ade05c9d7351e5cc19f65e9912550928e
 DESTINATIONS = {d for *_, d in sc.HOOKS}
 SCREENSHOT_PAGES = {0xE0108000, 0xE0109000, 0xE016C000, 0xE0236000, 0xE0260000, 0xE0263000, 0xE04A7000, 0xE04A8000,
                     0xE0548000, 0xE0549000, 0xE07E1000, 0xE07E2000, 0xE07E3000, 0xE07E4000, 0xE07EA000, 0xE07F0000,
-                    0xE08AB000, 0xE091B000, 0xE099D000, 0xE0A08000, 0xE0CCB000, 0xE0D5B000}
+                    0xE08AB000, 0xE091B000, 0xE099D000, 0xE0A08000, 0xE0CCB000, 0xE0D5B000,
+                    # code defining the RAM words the one-press reads: develop state 0x17454 (E0719000),
+                    # view handle 0x13F1D0 (E0750000), GUI mode 0x8F40 (E07C6000)
+                    0xE0719000, 0xE0750000, 0xE07C6000}
 
 
 def strip_sections(src: str) -> str:
@@ -275,7 +278,9 @@ class ContractsAndCatalog(unittest.TestCase):
         self.assertEqual(fps, SCREENSHOT_PAGES)
         self.assertTrue(all(e["bytes"] == 4096 for e in XPAN_TARGET_CONTRACT["screenshot_code_fingerprints"]))
         self.assertFalse(fps & {e["address"] for e in XPAN_TARGET_CONTRACT["extra_code_fingerprints"]})
-        self.assertFalse(fps & {e["address"] for e in XPAN_TARGET_CONTRACT["record_indicator_code_fingerprints"]})
+        # E07C6000 (GUI_SetRecordingState / the GUI mode word) is needed by both options; each admits it itself.
+        self.assertEqual(fps & {e["address"] for e in XPAN_TARGET_CONTRACT["record_indicator_code_fingerprints"]},
+                         {0xE07C6000})
         self.assertTrue({int(h["va"], 16) & ~4095 for h in hooks if h["destination"] in DESTINATIONS} <= fps)
 
     def test_capacity_and_hook_inventories(self):
