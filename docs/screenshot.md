@@ -5,7 +5,7 @@
 When you press **RATE** while a photo is shown in ▶ playback, the camera saves a **2400×1600 JPEG of the whole screen**: the photo, the shooting information and every overlay. Canon's own JPEG encoder makes the file and saves it next to your photos, so ▶ can show it like any other JPEG.
 
 > [!IMPORTANT]
-> **The public image is hardware-untested.** The same feature code worked on the maintainer's private lab build-22 on 22 November 2026, but that build also carried diagnostics (a log file, `R5LOG.BIN`) that this public build leaves out. See [Evidence boundary](#evidence-boundary).
+> **One public image has been owner-checked; yours is a new build.** The public image `809d3767` (`--record-indicator ding --record-stop-indicator dong --screenshot rate`) passed a short owner check on 22 November 2026. Other option combinations and other cameras are untested. See [Evidence boundary](#evidence-boundary).
 
 ## Build
 
@@ -37,7 +37,7 @@ What you hear:
 | one low bip instead of the click | The screen could not be saved: `DCIM/R5SHOTS` is missing, the card is full or not ready, a photo was taken or saved less than about 2 s ago, the camera has only just started, or another screenshot is still being made. In ▶, two more bips may follow. |
 | nothing | A movie is recording (screenshots stay silent then), or RATE was pressed again within about a second. |
 
-RATE in **live view** saves the screen files only (see below). No JPEG is made.
+RATE in **live view** or in a **menu** saves the screen files only (see below). No JPEG is made by itself. A menu is drawn entirely in the on-screen display layer, so the [Screenshots tool](gui.md#screenshots) turns a menu capture (`SS_n.YCA`) into a complete PNG of the menu.
 
 **Card speed matters.** Each RATE writes about 11 MB (about 18 MB from the viewfinder). On a fast 128 GB SDXC card the lab build's screen-to-Y22 work took about 0.6 s and the owner found the freeze short. On a slow 16 GB SDHC card the same work took about 2.1 s and the freeze felt like 2–3 s.
 
@@ -79,16 +79,21 @@ flowchart LR
 - **JPEG photos in ▶ only.** RAW-only and HEIF photos and earlier screenshots are refused (two bips). The index view, zoom and menus are not supported and make no JPEG.
 - **Live view** saves `SS_n.YCA`, `SS_n.PIC` and `HWJPG.Y22`, and freezes the screen for the Y22 build, but makes no JPEG by itself (see below).
 - **Overlays only, sometimes.** If the picture layer can't be read (a format other than the full-range one, or a `.PIC` that could not be written), the JPEG shows the on-screen display without the photo.
-- **XPan and RAW+JPEG photos.** On the first public-image check, RATE on an XPan RAW+JPEG photo gave three bips (Canon cancelled the job). Whether the XPan crop or the RAW pairing causes it is being tested.
+- **XPan photos are cancelled (three bips).** The screenshot replaces a Resize only when its output is exactly 3:2 (2400×1600, S2). An XPan photo (8192×3024) can't produce one, so Canon starts and cancels the job. Show a full-frame (3:2) photo before pressing RATE; RAW+JPEG works.
 - **A card read error** while the encoder reads `HWJPG.Y22` can leave a JPEG that mixes the screenshot and the resized photo.
-- **Not tested:** the EVF in ▶, the refusal and cancel bips on hardware (they never occurred), the late-block path (never seen; the block arrived in about 0.14 ms each time), and movie playback screens.
+- **Not tested:** screenshot-only images (without the record cues), the EVF in ▶, the refusal and cancel bips on hardware (they never occurred), the late-block path (never seen; the block arrived in about 0.14 ms each time), and movie playback screens.
 
 ## Live view and manual Resize
 
-A RATE whose screenshot did not become a JPEG (in live view, or refused in ▶) leaves it pending for up to 10 minutes. The next in-camera **Resize to S2** saved in that time (▶ → Playback menu → Resize, any JPEG) produces the screenshot instead of the resized photo, and clears it. This is how a live-view screen becomes a JPEG. A Resize to another size, or after 10 minutes, is unaffected.
+A RATE whose screenshot did not become a JPEG (in live view, or refused in ▶) leaves it pending for up to 10 minutes. The next in-camera **Resize to S2** saved in that time (▶ → Playback menu → Resize, any JPEG) produces the screenshot instead of the resized photo, and clears it. This is how a live-view or menu screen becomes a JPEG. A Resize to another size, or after 10 minutes, is unaffected.
 
 ## Evidence boundary
 
 - **Private lab builds (camera results).** On 22 November 2026 a private lab build first produced an all-layers 2400×1600 JPEG from one RATE in ▶; later lab builds added the borrowed block and its hardening. The last of them, build-22, ran on a 128 GB SDXC exFAT card: the Y22 build took 0.61 s, the screenshot had every layer, and the `HWJPG.Y22` left on the card was byte-identical to a host reconstruction from the same `SS_n` files. The owner reported "both are fast".
-- **This public port.** The C and assembly are the lab build-22 feature code with its diagnostics compiled out. Compiling the lab sources with build-22's flags, minus the log file, gives objects instruction-for-instruction equal to the public ones, except one function: the click/bip `sound()`, which now uses the public record-cue engine's readiness check. Default, `ding` and `ding` + `dong` builds keep identical code, and their images differ only in the source digest text. **No camera has run the public image yet.**
+- **Public image check.** The public image `809d3767` (built from this branch with `--record-indicator ding --record-stop-indicator dong --screenshot rate`) passed a short owner check on a 128 GB exFAT card on 22 November 2026:
+  - boot, XPan and both record cues;
+  - RATE in ▶ on a 3:2 JPEG and on a 3:2 RAW+JPEG photo: one click each and an all-layers 2400×1600 JPEG;
+  - RATE on an XPan JPEG: a click and three bips, see [Limits](#limits);
+  - RATE in live view: a click, with the leftover `HWJPG.Y22` byte-identical to a host reconstruction.
+- **This public port.** The C and assembly are the lab build-22 feature code with its diagnostics compiled out, plus two small fixes from review (a stale `.PIC` is removed before use; a shot recorded during RATE's own tick still counts as recent). Compiling the lab sources with build-22's flags, minus the log file, gives objects instruction-for-instruction equal to the public ones, except one function: the click/bip `sound()`, which now uses the public record-cue engine's readiness check. Default, `ding` and `ding` + `dong` builds keep identical code, and their images differ only in the source digest text.
 - Do not upload ROM dumps, photos or card images with reports. Screenshots show whatever was on the screen, including the photo: share them only if you mean to.

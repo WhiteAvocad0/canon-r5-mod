@@ -133,7 +133,7 @@
           "value": "rate",
           "label": "RATE in playback: whole-screen JPEG",
           "status": "private-lab-verified",
-          "status_detail": "Worked on the maintainer's private lab build-22 on 128 GB SDXC (22 November 2026): RATE in playback saved an all-layers 2400x1600 JPEG in about 0.6 s. That build also wrote a diagnostic log (R5LOG.BIN) that this public build leaves out."
+          "status_detail": "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera."
         }
       ]
     }
