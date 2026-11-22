@@ -23,6 +23,8 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import joined, message, phrase
+
 from image_format import FormatError, inspect_image
 
 TARGET_NAME = "AUTOEXEC.BIN"
@@ -64,13 +66,13 @@ def protected_location(path: str | PurePath, *, windows: bool, home: str | PureP
                     windows_dirs.append(flavour(value))
         system_drives.discard("")
         if path.drive.casefold() in system_drives and path == flavour(path.anchor):
-            return f"{path} is the Windows system drive, not a camera card."
+            return message('{path} is the Windows system drive, not a camera card.', path=path)
         if any(path == d or path.is_relative_to(d) for d in windows_dirs):
-            return f"{path} is inside the Windows folder, not a camera card."
+            return message('{path} is inside the Windows folder, not a camera card.', path=path)
     elif path in POSIX_REFUSED or any(path == t or path.is_relative_to(t) for t in POSIX_REFUSED_TREES):
-        return f"{path} is a system folder, not a camera card."
+        return message('{path} is a system folder, not a camera card.', path=path)
     if path == home or home.is_relative_to(path):
-        return f"{path} is your home folder or contains it, not a camera card."
+        return message('{path} is your home folder or contains it, not a camera card.', path=path)
     return None
 
 
@@ -113,7 +115,7 @@ def eject_hint(platform: str | None = None) -> str:
         how = "use 'Safely Remove Hardware' / 'Eject' in File Explorer"
     else:
         how = "use your file manager's Eject / Unmount"
-    return f"Before removing the card, {how} and wait until it is safe to remove."
+    return message('Before removing the card, {how} and wait until it is safe to remove.', how=phrase(how))
 
 
 def _sha256(data: bytes) -> str:
@@ -124,13 +126,13 @@ def _read_file(path: Path, limit: int = MAX_IMAGE_BYTES) -> bytes:
     """Read a regular file without following a symlink, refusing anything larger than limit."""
     st = os.lstat(path)
     if not stat.S_ISREG(st.st_mode):
-        raise CardError(f"{path} is not a regular file")
+        raise CardError(message('{path} is not a regular file', path=path))
     if st.st_size > limit:
-        raise CardError(f"{path} is larger than {limit:,} bytes")
+        raise CardError(message('{path} is larger than {limit:,} bytes', path=path, limit=limit))
     with open(path, "rb") as f:
         data = f.read(limit + 1)
     if len(data) > limit:
-        raise CardError(f"{path} grew past {limit:,} bytes while reading")
+        raise CardError(message('{path} grew past {limit:,} bytes while reading', path=path, limit=limit))
     return data
 
 
@@ -143,7 +145,7 @@ def inspect_card(root: Path) -> CardInspection:
     root = Path(root)
     info = CardInspection(root)
     if not root.is_dir():
-        info.errors.append(f"{root} is not a folder.")
+        info.errors.append(message('{root} is not a folder.', root=root))
         return info
     resolved = root.resolve()
     info.root = resolved
@@ -151,20 +153,20 @@ def inspect_card(root: Path) -> CardInspection:
     if protected:
         info.errors.append(protected)
     if not os.access(resolved, os.W_OK):
-        info.errors.append(f"{resolved} is not writable (is the card's lock switch on?).")
+        info.errors.append(message("{resolved} is not writable (is the card's lock switch on?).", resolved=resolved))
     try:
         entries = list(resolved.iterdir())
     except OSError as exc:
-        info.errors.append(f"Cannot list {resolved}: {exc}")
+        info.errors.append(message('Cannot list {resolved}: {exc}', resolved=resolved, exc=exc))
         return info
     matches = [p for p in entries if p.name.casefold() == TARGET_NAME.casefold()]
     if len(matches) > 1:
-        info.errors.append("More than one autoexec.bin spelling exists here: " + ", ".join(p.name for p in matches)
-                           + ". Resolve that yourself first.")
+        info.errors.append(message("More than one autoexec.bin spelling exists here: {names}. Resolve that yourself first.",
+                                   names=", ".join(p.name for p in matches)))
     elif matches:
         st = os.lstat(matches[0])
         if not stat.S_ISREG(st.st_mode):
-            info.errors.append(f"{matches[0].name} on the card is not a regular file.")
+            info.errors.append(message('{name} on the card is not a regular file.', name=matches[0].name))
         else:
             info.existing = matches[0]
     info.leftover_temps = sorted(p.name for p in entries if p.name.startswith(TEMP_PREFIX) and p.name.endswith(TEMP_SUFFIX))
@@ -181,10 +183,12 @@ def inspect_card(root: Path) -> CardInspection:
     if info.total_bytes is None:
         info.warnings.append("The drive size could not be read.")
     elif not MIN_CARD_BYTES <= info.total_bytes <= MAX_CARD_BYTES:
-        info.warnings.append(f"The drive size ({info.total_bytes / 1000**3:,.1f} GB) is unusual for an SD card.")
+        info.warnings.append(message(
+            "The drive size ({size:,.1f} GB) is unusual for an SD card.",
+            size=info.total_bytes / 1000 ** 3))
     if info.leftover_temps:
-        info.warnings.append("Leftover temporary files from an earlier copy were found and left in place: "
-                             + ", ".join(info.leftover_temps) + ". You can delete them yourself.")
+        info.warnings.append(message("Leftover temporary files from an earlier copy were found and left in place: {names}. You can delete them yourself.",
+                                     names=", ".join(info.leftover_temps)))
     return info
 
 
@@ -196,7 +200,7 @@ def verify_image(image: Path, expected_sha256: str) -> bytes:
     try:
         inspect_image(data)
     except FormatError as exc:
-        raise CardError(f"autoexec.bin failed the image format check: {exc}") from exc
+        raise CardError(message('autoexec.bin failed the image format check: {exc}', exc=exc)) from exc
     return data
 
 
@@ -218,10 +222,10 @@ def copy_to_card(
     data = verify_image(image, expected_sha256)
     info = inspect_card(card_root)
     if info.errors:
-        raise CardError(" ".join(info.errors))
+        raise CardError(joined(" ", info.errors))
     unconfirmed = [w for w in info.warnings if w not in confirmed_warnings]
     if unconfirmed:
-        raise NeedsConfirmation(" ".join(unconfirmed))
+        raise NeedsConfirmation(joined(" ", unconfirmed))
     root = info.root
     messages: list[str] = []
     backup: Path | None = None
@@ -244,8 +248,12 @@ def copy_to_card(
             f.flush()
             os.fsync(f.fileno())
         if _sha256(_read_file(backup)) != existing_sha:
-            raise CardError(f"The backup at {backup} does not read back correctly; the card was not changed.")
-        messages.append(f"Backed up the card's previous {info.existing.name} to {backup}.")
+            raise CardError(message(
+                "The backup at {backup} does not read back correctly; the card was not changed.",
+                backup=backup))
+        messages.append(message(
+            "Backed up the card's previous {name} to {backup}.",
+            name=info.existing.name, backup=backup))
 
     target = info.existing if info.existing is not None else root / TARGET_NAME
     temp = root / f"{TEMP_PREFIX}{secrets.token_hex(4).upper()}{TEMP_SUFFIX}"
@@ -276,9 +284,13 @@ def copy_to_card(
                 pass
     readback = _read_file(target)
     if _sha256(readback) != expected_sha256:
-        restore = f" Your previous file is backed up at {backup}." if backup else ""
-        raise CardError(f"{target} does not match the build after copying. Do not use this card yet.{restore}")
-    messages.append(f"Copied and verified {target.name} (SHA-256 {expected_sha256}).")
+        restore = message(' Your previous file is backed up at {backup}.', backup=backup) if backup else ""
+        raise CardError(message(
+            "{target} does not match the build after copying. Do not use this card yet.{restore}",
+            target=target, restore=phrase(restore)))
+    messages.append(message(
+        "Copied and verified {name} (SHA-256 {expected_sha256}).",
+        name=target.name, expected_sha256=expected_sha256))
     if screenshot_folder:
         messages.append(ensure_screenshot_folder(root))
     messages.append(eject_hint())
@@ -298,16 +310,26 @@ def ensure_screenshot_folder(root: Path) -> str:
                     "photo with the camera (it creates DCIM), then create the folder DCIM/R5SHOTS yourself.")
         found = [p for p in dcim[0].iterdir() if p.name.casefold() == SCREENSHOT_FOLDER.casefold()]
     except OSError as exc:  # the mod itself is already copied and verified
-        return (f"The card's DCIM folder could not be read ({exc}), so the screenshot folder was not checked. "
-                "Make sure DCIM/R5SHOTS exists before taking screenshots.")
+        return message(
+            "The card's DCIM folder could not be read ({exc}), so the screenshot folder was not checked. Make "
+            "sure DCIM/R5SHOTS exists before taking screenshots.",
+            exc=exc)
     if found:
         if len(found) == 1 and found[0].is_dir() and not found[0].is_symlink():
-            return f"The screenshot folder {dcim[0].name}/{found[0].name} is already on the card."
-        return (f"{dcim[0].name}/{found[0].name} exists but is not a plain folder; screenshots will fail "
-                "until it is one. Nothing was changed.")
+            return message(
+                "The screenshot folder {dcim}/{folder} is already on the card.",
+                dcim=dcim[0].name, folder=found[0].name)
+        return message(
+            "{dcim}/{folder} exists but is not a plain folder; screenshots will fail until it is one. Nothing "
+            "was changed.",
+            dcim=dcim[0].name, folder=found[0].name)
     try:
         (dcim[0] / SCREENSHOT_FOLDER).mkdir()
     except OSError as exc:  # the mod itself is already copied and verified
-        return (f"The screenshot folder {dcim[0].name}/{SCREENSHOT_FOLDER} could not be created ({exc}). "
-                "Create it yourself before taking screenshots.")
-    return f"Created the empty screenshot folder {dcim[0].name}/{SCREENSHOT_FOLDER} on the card."
+        return message(
+            "The screenshot folder {dcim}/{SCREENSHOT_FOLDER} could not be created ({exc}). Create it yourself "
+            "before taking screenshots.",
+            dcim=dcim[0].name, SCREENSHOT_FOLDER=SCREENSHOT_FOLDER, exc=exc)
+    return message(
+        "Created the empty screenshot folder {dcim}/{SCREENSHOT_FOLDER} on the card.",
+        dcim=dcim[0].name, SCREENSHOT_FOLDER=SCREENSHOT_FOLDER)

@@ -26,6 +26,8 @@ import subprocess
 import sys
 from typing import Callable
 
+from messages import message, phrase
+
 from . import rawio
 from .rawio import Cancelled, DeviceError  # noqa: F401  (shared with the raw-access layer)
 
@@ -83,22 +85,26 @@ class Candidate:
 
     def label(self) -> str:
         """For the confirmation dialog, e.g. 'EOS_DIGITAL (126.9 GB exFAT SD card)'."""
-        size = f"{self.disk_bytes / 1000**3:,.1f} GB" if self.disk_bytes else "unknown size"
-        kind = f"{self.filesystem} SD card" if self.filesystem else "SD card"
-        return f"{self.volume_name or 'Unnamed card'} ({size} {kind})"
+        size = f"{self.disk_bytes / 1000**3:,.1f} GB" if self.disk_bytes else phrase("unknown size")
+        kind = message("{filesystem} SD card", filesystem=self.filesystem) if self.filesystem else phrase("SD card")
+        return message("{name} ({size} {kind})", name=self.volume_name or phrase("Unnamed card"), size=size, kind=kind)
 
     def summary(self) -> str:
-        state = "" if self.mounted else ", not mounted"
-        return f"{self.label()} - {self.model or 'unknown model'}, {self.whole_id}{state}"
+        state = "" if self.mounted else phrase(", not mounted")
+        return message("{label} - {model}, {device}{state}", label=self.label(), model=self.model or phrase("unknown model"),
+                       device=self.whole_id, state=state)
 
     def details(self) -> list[str]:
+        size = message("{gb:,.2f} GB ({size:,} bytes)", gb=self.disk_bytes / 1000**3,
+                       size=self.disk_bytes) if self.disk_bytes else phrase("unknown")
         return [
-            f"Model: {self.model or 'unknown'} ({self.bus or 'unknown connection'})",
-            "Size: " + (f"{self.disk_bytes / 1000**3:,.2f} GB ({self.disk_bytes:,} bytes)" if self.disk_bytes else "unknown"),
-            f"Filesystem: {self.filesystem or 'unknown'}",
-            f"Volume name: {self.volume_name or '(none)'}",
-            f"Mounted at: {self.mount_point or '(not mounted)'}",
-            f"Device: {self.whole_id}, partition {self.partition_id}",
+            message("Model: {model} ({bus})", model=self.model or phrase("unknown"),
+                    bus=self.bus or phrase("unknown connection")),
+            message("Size: {size}", size=size),
+            message("Filesystem: {filesystem}", filesystem=self.filesystem or phrase("unknown")),
+            message("Volume name: {name}", name=self.volume_name or phrase("(none)")),
+            message("Mounted at: {mount}", mount=self.mount_point or phrase("(not mounted)")),
+            message("Device: {device}, partition {partition}", device=self.whole_id, partition=self.partition_id),
         ]
 
 
@@ -126,7 +132,7 @@ def _size_ok(size) -> bool:
 def _size_reason(size) -> str:
     if not isinstance(size, int):
         return "The size could not be read."
-    return f"The size ({size / 1000**3:,.1f} GB) is outside the SD card range (2 GB to 2 TiB)."
+    return message("The size ({size:,.1f} GB) is outside the SD card range (2 GB to 2 TiB).", size=size / 1000 ** 3)
 
 
 # -- macOS ----------------------------------------------------------------------
@@ -161,23 +167,25 @@ def classify_macos(whole: dict, parts: list[dict], boot_wholes: set[str]) -> Can
     elif whole.get("VirtualOrPhysical") != "Physical":
         r.append("macOS does not report this as a physical disk.")
     if bus != "Secure Digital":
-        r.append(f"Connected over {bus or 'an unknown bus'}, not an SD card slot. USB card readers are not "
-                 "offered because macOS cannot tell them from other USB drives.")
+        r.append(message("Connected over {bus}, not an SD card slot. USB card readers are not offered because macOS "
+            "cannot tell them from other USB drives.",
+            bus=bus or phrase("an unknown bus")))
     if not (whole.get("Removable") is True and whole.get("RemovableMedia") is True and whole.get("Ejectable") is True):
         r.append("Not removable, ejectable media.")
     if whole.get("SystemImage") is not False or whole.get("OSInternalMedia") is True:
         r.append("macOS marks this as system media.")
     if whole.get("DeviceBlockSize") != 512:
-        r.append(f"Sector size {whole.get('DeviceBlockSize')} is not 512 bytes.")
+        r.append(message("Sector size {sector_size} is not 512 bytes.", sector_size=whole.get('DeviceBlockSize')))
     if whole.get("Content") != "FDisk_partition_scheme":
-        r.append(f"Not an MBR partition table ({whole.get('Content') or 'none'}); format the card in the camera.")
+        r.append(message("Not an MBR partition table ({kind}); format the card in the camera.",
+            kind=whole.get('Content') or phrase("none")))
     if whole.get("WritableMedia") is not True:
         r.append("The card is write-protected (check its lock switch).")
     if not _size_ok(size):
         r.append(_size_reason(size))
     part: dict = parts[0] if len(parts) == 1 else {}
     if len(parts) != 1:
-        r.append(f"The card has {len(parts)} partitions; a card formatted in the camera has one.")
+        r.append(message("The card has {count} partitions; a card formatted in the camera has one.", count=len(parts)))
     pid = part.get("DeviceIdentifier") if isinstance(part.get("DeviceIdentifier"), str) else ""
     fs_type, content = part.get("FilesystemType"), part.get("Content")
     filesystem = "FAT32" if fs_type == "msdos" and content in MAC_FAT32_CONTENT else "exFAT" if fs_type == "exfat" else None
@@ -194,9 +202,10 @@ def classify_macos(whole: dict, parts: list[dict], boot_wholes: set[str]) -> Can
         # The mount state is an observation, not a requirement: an unmounted, half-written or
         # unmountable card must stay reachable for restore. Its boot sectors are checked later.
         if filesystem is None and (fs_type or mount):
-            r.append(f"The partition is not FAT32 or exFAT ({part.get('FilesystemName') or fs_type or content or 'unknown'}).")
+            r.append(message("The partition is not FAT32 or exFAT ({filesystem}).",
+                filesystem=part.get('FilesystemName') or fs_type or content or phrase("unknown")))
         if mount and mount != "/" and not mount.startswith("/Volumes/"):
-            r.append(f"The partition is mounted at {mount}, which is a system location.")
+            r.append(message("The partition is mounted at {mount}, which is a system location.", mount=mount))
         if part.get("DeviceBlockSize") != 512 or part.get("WritableMedia") is not True:
             r.append("The partition is not writable 512-byte-sector media.")
         if not (isinstance(offset, int) and isinstance(psize, int) and isinstance(size, int)
@@ -257,7 +266,7 @@ def classify_linux(dev: dict) -> Candidate:
     if dev.get("type") != "disk":
         r.append("Not a whole disk.")
     if not re.fullmatch(r"mmcblk[0-9]+", name):
-        r.append(f"Not an SD card slot (connected over {dev.get('tran') or 'an unknown bus'}).")
+        r.append(message("Not an SD card slot (connected over {bus}).", bus=dev.get('tran') or phrase("an unknown bus")))
     if not (dev.get("rm") in (True, "1", 1) or dev.get("hotplug") in (True, "1", 1)):
         r.append("Not removable media.")
     if dev.get("ro") in (True, "1", 1):
@@ -273,7 +282,7 @@ def classify_linux(dev: dict) -> Candidate:
         r.append("It holds a system mount.")
     part = children[0] if len(children) == 1 else {}
     if len(children) != 1:
-        r.append(f"The card has {len(children)} partitions; a card formatted in the camera has one.")
+        r.append(message("The card has {count} partitions; a card formatted in the camera has one.", count=len(children)))
     fs = {"vfat": "FAT32", "exfat": "exFAT"}.get(part.get("fstype"))
     if children and fs is None:
         r.append("The partition is not FAT32 or exFAT.")
@@ -305,7 +314,7 @@ def classify_windows(disk: dict, partitions: list[dict], volumes: list[dict], sy
     size = disk.get("Size")
     bus = str(disk.get("BusType") or "")
     if bus not in ("SD", "MMC"):
-        r.append(f"Connected over {bus or 'an unknown bus'}, not an SD card slot.")
+        r.append(message("Connected over {bus}, not an SD card slot.", bus=bus or phrase("an unknown bus")))
     if disk.get("IsSystem") or disk.get("IsBoot"):
         r.append("This is the disk Windows is running from.")
     if disk.get("IsReadOnly"):
@@ -318,7 +327,7 @@ def classify_windows(disk: dict, partitions: list[dict], volumes: list[dict], sy
         r.append(_size_reason(size))
     parts = [p for p in partitions if p.get("DiskNumber") == number]
     if len(parts) != 1:
-        r.append(f"The card has {len(parts)} partitions; a card formatted in the camera has one.")
+        r.append(message("The card has {count} partitions; a card formatted in the camera has one.", count=len(parts)))
     part = parts[0] if len(parts) == 1 else {}
     letter = str(part.get("DriveLetter") or "").strip("\x00 ")
     volume = next((v for v in volumes if letter and str(v.get("DriveLetter") or "") == letter), {})

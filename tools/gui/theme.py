@@ -102,9 +102,8 @@ def font_px(token: str, base_px: float) -> int:
 
 SPACE = {"xs": 4, "s": 8, "m": 16, "l": 24, "xl": 32, "xxl": 48}
 LINE_LENGTH = 72          # characters per line of body text
-CONTENT_MAX_WIDTH = 680   # the step column never grows wider than this (px)
 SIDEBAR_WIDTH = 272
-MIN_WINDOW = (900, 640)
+MIN_WINDOW = (640, 480)
 DEFAULT_WINDOW = (1120, 780)
 BUTTON_PADDING = (16, 5)
 FIELD_PADDING = (8, 6)

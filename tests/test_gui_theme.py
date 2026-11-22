@@ -86,11 +86,10 @@ class TokenTests(unittest.TestCase):
         self.assertEqual(theme.BUTTON_PADDING[0] % 8, 0)
 
     def test_layout_tokens(self):
-        self.assertEqual(theme.MIN_WINDOW, (900, 640))
+        self.assertEqual(theme.MIN_WINDOW, (640, 480))
         self.assertGreaterEqual(theme.DEFAULT_WINDOW[0], theme.MIN_WINDOW[0])
         self.assertGreaterEqual(theme.DEFAULT_WINDOW[1], theme.MIN_WINDOW[1])
         self.assertTrue(60 <= theme.LINE_LENGTH <= 75)
-        self.assertLess(theme.SIDEBAR_WIDTH + theme.CONTENT_MAX_WIDTH, theme.DEFAULT_WINDOW[0] + 1)
 
     def test_palettes_are_valid_and_readable(self):
         hex_colour = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -247,6 +246,123 @@ class WindowSmokeTests(unittest.TestCase):
                 self.root.update_idletasks()
                 self.assertEqual(self.visible_step(app), [])
                 self.assertTrue(app.utilities["screenshots"][0].winfo_manager())
+
+    def test_language_switch_preserves_the_current_session_and_reopens_in_the_saved_language(self):
+        from gui.i18n import LANGUAGES
+        from messages import message
+        app = self.build("light")
+        self.assertEqual(app.language_menu.get(), "English")
+        app.wizard.goto(self.wizard_mod.FEATURES)
+        app.profile_var.set("xpan-crop")
+        app._profile_changed()
+        app.bootdisk_ack.set(True)
+        app._append_log("raw build output {untouched}")
+        app.result.set(theme.SUCCESS, "Built and verified", message("Folder: {root}", root="/card/{Next}"))
+        app._open_utility("screenshots")
+        self.root.deiconify()
+        self.root.geometry("%dx%d" % theme.MIN_WINDOW)
+        with mock.patch.object(app, "_background", side_effect=AssertionError("unexpected new operation")):
+            for language, label, action in (("zh_CN", "语言", "转换为 PNG"), ("es", "Idioma", "Convertir a PNG")):
+                app.language_menu.current(list(LANGUAGES).index(language))
+                app.language_menu.event_generate("<<ComboboxSelected>>")
+                self.root.update_idletasks()
+                self.assertEqual(app.language_label.cget("text"), label)
+                self.assertEqual(app.shots_button.cget("text"), action)
+                self.assertTrue(app.language_menu.winfo_ismapped())
+                right = self.root.winfo_rootx() + self.root.winfo_width()
+                self.assertLess(right - app.language_menu.winfo_rootx() - app.language_menu.winfo_width(), 50)
+                self.assertLess(app.language_menu.winfo_rooty() - self.root.winfo_rooty(), 30)
+                self.assertEqual(app.utility, "screenshots")
+                self.assertEqual(app.wizard.current, self.wizard_mod.FEATURES)
+                self.assertTrue(app.bootdisk_ack.get())
+                self.assertIn("raw build output {untouched}", app.log.get("1.0", "end"))
+                self.assertIn("/card/{Next}", app.result.body.cget("text"))
+                self.assertEqual(app.result.headline.cget("text"), app.words.render("Built and verified"))
+                with mock.patch.object(app.messagebox, "showinfo") as dialog:
+                    app._finish()
+                    title, content = dialog.call_args.args
+                    self.assertEqual(title, app.words.render("All done"))
+                    self.assertNotIn("Setup is complete.", content)
+        app._back()
+        combo = app.option_widgets["record_indicator"][0]
+        combo.current(1)
+        combo.event_generate("<<ComboboxSelected>>")
+        self.assertEqual(app.state.options["record_indicator"], "ding")
+        self.assertEqual(combo.get(), app.words.render("Ding: struck-bar chime, 250 ms"))
+        self._destroy()
+        self.root = make_root()
+        reopened = self.build("light")
+        self.assertEqual(reopened.language_menu.get(), "Español")
+        self.assertEqual(reopened.wizard.current, self.wizard_mod.FEATURES)
+        self.assertEqual(reopened.state.options["record_indicator"], "ding")
+        self.assertEqual(reopened.next_button.cget("text"), "Siguiente")
+        reopened.language_menu.current(0)
+        reopened.language_menu.event_generate("<<ComboboxSelected>>")
+        self.assertEqual(reopened.next_button.cget("text"), "Next")
+
+    def test_compact_navigation_and_translated_controls_fit_after_resizing(self):
+        from tkinter import ttk
+        app = self.build("light")
+        self.root.deiconify()
+        for language in ("Español", "简体中文"):
+            app.language_menu.set(language)
+            app.language_menu.event_generate("<<ComboboxSelected>>")
+            for size in ((640, 480), (800, 600), theme.DEFAULT_WINDOW):
+                self.root.geometry("%dx%d" % size)
+                app.wizard.saved.current = self.wizard_mod.BOOTCARD
+                app.utility = None
+                app.refresh()
+                undo = app.prep_undo.master.master
+                if not undo.winfo_manager():
+                    toggle = next(w for w in undo.master.winfo_children()
+                                  if isinstance(w, ttk.Button) and w.cget("text").endswith(
+                                      app.words.render("Restore a card backup")))
+                    toggle.invoke()
+                self.root.update_idletasks()
+                self.assertEqual(bool(app.step_menu_button.winfo_ismapped()), size != theme.DEFAULT_WINDOW)
+                for button in (app.prep_restore, app.prep_undo, app.language_menu):
+                    self.assertTrue(button.winfo_ismapped())
+                    self.assertGreaterEqual(button.winfo_width() + 1, button.winfo_reqwidth())
+                    self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
+                                         self.root.winfo_rootx() + self.root.winfo_width())
+                if size != theme.DEFAULT_WINDOW:
+                    app._populate_step_menu()
+                    app.step_menu.invoke("end")
+                    self.assertEqual(app.utility, "screenshots")
+                    self.assertTrue(app.language_menu.winfo_ismapped())
+
+    def test_content_and_controls_reflow_in_both_directions(self):
+        from tkinter import ttk
+        app = self.build("light")
+        self.root.deiconify()
+        app._open_utility("screenshots")
+        frame = app.utilities["screenshots"][0]
+        folder_field = next(w for w in self._descendants(frame) if isinstance(w, ttk.Entry))
+        status = app.shots_src_status
+        status.set(theme.INFO, "A folder with screenshots. " * 30)
+
+        def geometry(width, height):
+            self.root.geometry(f"{width}x{height}")
+            self.root.update_idletasks()
+            return (app._inners["screenshots"].winfo_width(), folder_field.winfo_width(),
+                    int(str(status.text.cget("wraplength"))), status.text.winfo_reqheight())
+
+        def assert_grew(before, after):
+            self.assertTrue(all(a > b for b, a in zip(before[:3], after[:3])), (before, after))
+            self.assertLessEqual(after[3], before[3])
+
+        compact = geometry(640, 480)
+        larger_compact = geometry(800, 600)
+        assert_grew(compact, larger_compact)
+        desktop_width = min(1120, self.root.winfo_screenwidth() - 220)
+        wide_width = min(1440, self.root.winfo_screenwidth())
+        if desktop_width >= 940:
+            desktop = geometry(desktop_width, 780)
+            wide = geometry(wide_width, 780)
+            assert_grew(desktop, wide)
+            self.assertLess(wide[3], compact[3])
+            self.assertEqual(geometry(desktop_width, 780), desktop)
+        self.assertEqual(geometry(640, 480), compact)
 
     def test_gating_and_controls_are_unchanged(self):
         app = self.build("light")

@@ -29,6 +29,7 @@ if str(TOOLS_DIR) not in sys.path:
 
 import features
 from gui import bundle
+from messages import message
 
 
 @dataclass
@@ -43,7 +44,7 @@ class BuildOutcome:
 
     def error_text(self) -> str:
         lines = [l for l in self.stderr.strip().splitlines() if l.strip()]
-        return lines[-1] if lines else f"build.py exited with status {self.returncode}"
+        return lines[-1] if lines else message("build.py exited with status {status}", status=self.returncode)
 
 
 def condense_log_line(line: str) -> str | None:
@@ -169,8 +170,9 @@ def summarize(output_dir: Path) -> BuildSummary:
 
 
 def memory_line(s: BuildSummary) -> str:
-    return (f"Canon memory left after this build: {s.remaining_heap:,} bytes "
-            f"(safety floor {s.heap_floor:,}; margin {s.heap_margin:,} bytes).")
+    return message("Canon memory left after this build: {remaining:,} bytes "
+                   "(safety floor {floor:,}; margin {margin:,} bytes).",
+                   remaining=s.remaining_heap, floor=s.heap_floor, margin=s.heap_margin)
 
 
 def contents_text(s: BuildSummary, manifest: features.FeatureManifest, now: datetime | None = None) -> str:

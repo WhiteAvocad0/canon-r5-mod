@@ -5,6 +5,8 @@
 
 R5 Mod Assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
+Choose **English**, **简体中文** or **Español** from the language menu in the upper-right corner. The assistant switches immediately, keeps your place, and remembers the language the next time you open it.
+
 ## Download the app
 
 There is a ready-made, **unsigned** app for macOS and Windows on the repository's [Releases](https://github.com/WhiteAvocad0/canon-r5-mod/releases) page (prereleases tagged `app-v<version>`). It is an untested prototype like the rest of the assistant. On Linux, [launch it from source](#launch).

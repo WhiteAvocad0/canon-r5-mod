@@ -17,6 +17,8 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import joined, message, phrase
+
 import features
 from gui import bundle
 
@@ -228,7 +230,9 @@ class AssistantState:
         for p in self.manifest.profiles.values():
             level = self.manifest.status_levels[p.status]
             views.append(ProfileView(p.id, p.label, p.description, p.id == self.profile, level.label,
-                                     f"{level.text} {p.status_detail}"))
+                                     message(
+                                         "{text} {status_detail}",
+                                         text=phrase(level.text), status_detail=phrase(p.status_detail))))
         return views
 
     def option_views(self) -> list[OptionView]:
@@ -238,7 +242,7 @@ class AssistantState:
             choices = []
             for c in option.choices:
                 level = self.manifest.status_levels.get(c.status) if c.status else None
-                text = None if level is None else " ".join(t for t in (level.text, c.status_detail) if t)
+                text = None if level is None else joined(" ", (t for t in (level.text, c.status_detail) if t))
                 choices.append(ChoiceView(c.value, c.label, None if level is None else level.label, text))
             views.append(OptionView(oid, option.label, option.description, enabled, reason,
                                     self.options[oid], tuple(choices)))
@@ -249,7 +253,7 @@ class AssistantState:
         for input_id, spec in self.manifest.inputs.items():
             policy = self.input_policy(input_id)
             reason = None if policy == "required" else (
-                f"Not used by {self.profile}: this profile adds no custom sounds."
+                message('Not used by {profile}: this profile adds no custom sounds.', profile=self.profile)
             )
             views.append(InputView(input_id, spec.label, policy, policy == "required", reason,
                                    self.input_paths[input_id], self.input_check(input_id)))
@@ -274,22 +278,28 @@ class AssistantState:
         if self.rom_path is None:
             reasons.append("Pick your ROM dump.")
         elif rom.status != OK:
-            reasons.append({CHECKING: "The ROM is being checked.", FAILED: "The ROM was refused: " + rom.message}
+            reasons.append({CHECKING: "The ROM is being checked.", FAILED: message(
+                "The ROM was refused: {reason}",
+                reason=phrase(rom.message))}
                            .get(rom.status, "The ROM has not been checked for this selection."))
         for view in self.input_views():
             if view.policy != "required":
                 continue
             if view.path is None:
-                reasons.append(f"Pick the {view.label}.")
+                reasons.append(message('Pick the {label}.', label=phrase(view.label)))
             elif view.check.status != OK:
-                reasons.append(f"The {view.label} is not accepted yet." if view.check.status != FAILED
-                               else f"The {view.label} was refused: {view.check.message}")
+                reasons.append(message(
+                    "The {label} is not accepted yet.",
+                    label=phrase(view.label)) if view.check.status != FAILED
+                               else message(
+                                   "The {label} was refused: {message}",
+                                   label=phrase(view.label), message=phrase(view.check.message)))
         tc = self.toolchain_check()
         if self.toolchain_path is None:
             reasons.append("Choose the GNU Arm 15.2.1 toolchain's bin folder.")
         elif tc.status != OK:
             reasons.append("The toolchain is not accepted yet." if tc.status != FAILED
-                           else "The toolchain was refused: " + tc.message)
+                           else message("The toolchain was refused: {reason}", reason=phrase(tc.message)))
         if self.output_dir is None:
             reasons.append("Choose an output folder.")
         else:
@@ -323,7 +333,7 @@ def output_dir_problem(path: Path) -> str | None:
     try:
         build.check_output_dir(Path(path))
     except ValueError as exc:
-        return f"Output folder refused: {exc}"
+        return message('Output folder refused: {exc}', exc=exc)
     if Path(path).exists():
         return "The output folder already exists; the builder needs a new folder."
     return None

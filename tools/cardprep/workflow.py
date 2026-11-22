@@ -29,6 +29,8 @@ import os
 from pathlib import Path
 import stat
 
+from messages import message, phrase
+
 from . import layout
 from .devices import Cancelled, Candidate
 from .layout import AREA_BYTES, MBR_BYTES, CardPrepError, Plan, sha256
@@ -107,7 +109,8 @@ def _mount(ops, cand: Candidate) -> tuple[bool, str]:
 
 def _mount_line(mounted: bool, out: str) -> str:
     return "The card is mounted again." if mounted else \
-        f"The card could not be mounted again ({out or 'no details'}). Remove and reinsert it."
+        message("The card could not be mounted again ({detail}). Remove and reinsert it.",
+            detail=out or phrase("no details"))
 
 
 # -- backups ------------------------------------------------------------------------
@@ -320,8 +323,8 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
     if not plan.writes_needed:
         mounted, out = _mount(ops, cand)
         title = "Already prepared: nothing to write." if plan.kind in ("mark", "script") else "Nothing to restore."
-        report = Report(True, title, layout.describe_plan(plan) + [_mount_line(mounted, out),
-                                                                  f"Backup: {backup.folder}"], nothing_written=True)
+        lines = layout.describe_plan(plan) + [_mount_line(mounted, out), message("Backup: {backup}", backup=backup.folder)]
+        report = Report(True, title, lines, nothing_written=True)
         report.record = _record(backup, report, {"plan": plan.to_dict()})
         session.report = report
     return session
@@ -331,7 +334,7 @@ def cancel(session: Session, ops) -> Report:
     """The person declined the write: mount the card again; nothing was written."""
     mounted, out = _mount(ops, session.snapshot.candidate)
     report = Report(False, "Cancelled. Nothing was written.",
-                    [_mount_line(mounted, out), f"Backup: {session.backup.folder}"], nothing_written=True)
+                    [_mount_line(mounted, out), message("Backup: {backup}", backup=session.backup.folder)], nothing_written=True)
     report.record = _record(session.backup, report, {"plan": session.plan.to_dict()})
     return report
 
@@ -339,13 +342,14 @@ def cancel(session: Session, ops) -> Report:
 def write(session: Session, ops) -> Report:
     """Write exactly the planned sectors, read everything back, check the volume, mount again."""
     snapshot, plan, backup = session.snapshot, session.plan, session.backup
-    what = "Boot markers" if plan.kind == "mark" else ("Canon Basic SCRIPT marker" if plan.kind == "script" else "Restore")
-    report = Report(False, f"{what}: FAILED.")
+    what = phrase("Boot markers" if plan.kind == "mark" else
+                  "Canon Basic SCRIPT marker" if plan.kind == "script" else "Restore")
+    report = Report(False, message("{action}: FAILED.", action=what))
     result: dict = {}
     cand = snapshot.candidate
     if not session.needs_write or backup.mbr != snapshot.mbr or backup.area != snapshot.area \
             or plan.before_area != snapshot.area:
-        report.title, report.nothing_written = f"{what}: refused. Nothing was written.", True
+        report.title, report.nothing_written = message("{action}: refused. Nothing was written.", action=what), True
         report.lines.append("The backup and plan are not from this read of the card.")
         return report
     try:
@@ -354,39 +358,39 @@ def write(session: Session, ops) -> Report:
             if cand.mounted:  # mounted again by someone since the read
                 ops.unmount(cand)
         except Exception as exc:
-            report.title, report.nothing_written = f"{what}: not written.", True
-            report.lines.append(f"The card could not be re-checked before writing: {exc} Nothing was written.")
+            report.title, report.nothing_written = message("{action}: not written.", action=what), True
+            report.lines.append(message("The card could not be re-checked before writing: {error} Nothing was written.", error=exc))
             return report
         try:
             result = ops.raw_write(cand, [(w.offset, len(w.after)) for w in plan.writes],
                                    sha256(plan.expected_before), plan.after_bytes,
                                    expect_mbr_sha256=sha256(snapshot.mbr), expect_area_sha256=sha256(snapshot.area))
         except Cancelled:
-            report.title, report.nothing_written = f"{what}: cancelled. Nothing was written.", True
+            report.title, report.nothing_written = message("{action}: cancelled. Nothing was written.", action=what), True
             report.lines.append("The password prompt was cancelled.")
             return report
         except Exception as exc:
-            report.title = f"{what}: card state unknown."
-            report.lines += [f"The write did not report a result: {exc}",
+            report.title = message("{action}: card state unknown.", action=what)
+            report.lines += [message("The write did not report a result: {error}", error=exc),
                              "Read the card again before using it (Prepare or Undo do that first)."]
             return report
         written = [o // layout.SECTOR for o in result.get("written") or []]
         possibly = [o // layout.SECTOR for o in result.get("possibly_written") or result.get("written") or []]
         report.written_sectors = possibly
         if result.get("code") == "before_mismatch":
-            report.title, report.nothing_written = f"{what}: refused. Nothing was written.", True
-            report.lines.append(f"The card's {result.get('mismatch') or 'boot sectors'} changed since it was read, "
-                                "or it is another card. Try again.")
+            report.title, report.nothing_written = message("{action}: refused. Nothing was written.", action=what), True
+            report.lines.append(message("The card's {region} changed since it was read, or it is another card. Try again.",
+                region=result.get("mismatch") or phrase("boot sectors")))
             return report
         if not result.get("ok") and "area_hex" not in result and result.get("possibly_written") == []:
-            report.title, report.nothing_written = f"{what}: not written.", True
-            report.lines.append(f"It stopped before writing anything: {result.get('error')} "
-                                "Nothing was written.")
+            report.title, report.nothing_written = message("{action}: not written.", action=what), True
+            report.lines.append(message("It stopped before writing anything: {error} Nothing was written.",
+                error=result.get('error')))
             return report
         if not result.get("ok") and "area_hex" not in result:
-            report.lines += [f"The write stopped: {result.get('error')}",
-                             f"Sectors written: {written or 'none'}; possibly written (started but not confirmed): "
-                             f"{[s for s in possibly if s not in written] or 'none'}.",
+            report.lines += [message("The write stopped: {error}", error=result.get('error')),
+                             message("Sectors written: {written}; possibly written (started but not confirmed): {uncertain}.",
+                                 written=written or phrase("none"), uncertain=[s for s in possibly if s not in written] or phrase("none")),
                              "Do not use the card yet. Undo restores it from the backup below."]
             return report
         try:
@@ -394,38 +398,41 @@ def write(session: Session, ops) -> Report:
                                              bytes.fromhex(result.get("area_hex", "")),
                                              disk_bytes=cand.disk_bytes)
         except (TypeError, ValueError) as exc:
-            problems = [f"The read-back could not be decoded ({exc})."]
+            problems = [message("The read-back could not be decoded ({error}).", error=exc)]
         if not result.get("ok"):
-            problems.insert(0, f"The write reported {result.get('code') or 'a failure'}.")
+            problems.insert(0, message("The write reported {code}.", code=result.get("code") or phrase("a failure")))
         try:
             verified, output = ops.verify(cand)
         except Exception as exc:  # a timeout or crash here must not hide what was written
-            verified, output = False, f"diskutil verifyVolume did not complete: {exc}"
-        last = output.strip().splitlines()[-1] if output.strip() else "(no output)"
-        report.lines.append(f"Sectors written: {', '.join(map(str, possibly)) or 'none'} "
-                            f"({len(possibly) * layout.SECTOR:,} bytes).")
+            verified = False
+            last = message("diskutil verifyVolume did not complete: {error}", error=exc)
+        else:
+            last = output.strip().splitlines()[-1] if output.strip() else phrase("(no output)")
+        report.lines.append(message("Sectors written: {sectors} ({size:,} bytes).",
+            sectors=", ".join(map(str, possibly)) or phrase("none"), size=len(possibly) * layout.SECTOR))
         if problems:
-            report.lines += ["Read-back check FAILED:"] + [f"- {p}" for p in problems]
+            report.lines += ["Read-back check FAILED:"] + [message("- {detail}", detail=phrase(p)) for p in problems]
             report.lines.append("Do not use the card yet. Undo restores it from the backup below.")
         else:
             report.lines.append("Read-back check passed: every written byte matches the plan, the MBR is unchanged "
                                 "and the boot area validates.")
-        report.lines.append(("Volume check passed: " if verified else "Volume check FAILED: ") + last)
+        volume_result = "Volume check passed: {output}" if verified else "Volume check FAILED: {output}"
+        report.lines.append(message(volume_result, output=last))
         report.ok = not problems and verified
         if report.ok:
-            report.title = f"{what}: done and verified."
+            report.title = message("{action}: done and verified.", action=what)
         elif not problems:
             report.lines.append("The written bytes are correct but the volume check did not pass. On FAT32 this can "
                                 "be the backup boot sector, which is left unmarked by design. Check the card with "
                                 "Disk Utility First Aid, or use Undo.")
         return report
     except Exception as exc:  # never lose the report
-        report.title = f"{what}: card state unknown."
-        report.lines.append(f"Unexpected error: {exc}")
+        report.title = message("{action}: card state unknown.", action=what)
+        report.lines.append(message("Unexpected error: {error}", error=exc))
         return report
     finally:
         mounted, out = _mount(ops, cand)
         report.lines.append(_mount_line(mounted, out))
-        report.lines.append(f"Backup: {backup.folder}")
+        report.lines.append(message("Backup: {backup}", backup=backup.folder))
         report.record = _record(backup, report, {"plan": plan.to_dict(), "raw_write": {
             k: v for k, v in result.items() if k not in ("area_hex", "mbr_hex")}})

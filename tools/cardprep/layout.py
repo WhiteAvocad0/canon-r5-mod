@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 import hashlib
 import struct
 
+from messages import message, phrase
+
 SECTOR = 512
 AREA_SECTORS = 24
 AREA_BYTES = AREA_SECTORS * SECTOR
@@ -627,12 +629,13 @@ def verify_written(plan: Plan, expected_mbr: bytes, mbr: bytes, area: bytes, *, 
         return problems + ["The boot area read back has the wrong size."]
     for w in plan.writes:
         if area[w.offset:w.offset + SECTOR] != w.after:
-            problems.append(f"Sector {w.sector} does not read back as written.")
+            problems.append(message("Sector {sector} does not read back as written.", sector=w.sector))
     owned = {i for start, end in _owned(plan.filesystem) for i in range(start, end)}
     watched = sorted(set(_protected(plan.filesystem)) | owned)
     differing = [i for i in watched if area[i] != plan.after_area[i]]
     if differing:
-        problems.append(f"{len(differing)} boot-area byte(s) differ from the plan (first at byte {differing[0]}).")
+        problems.append(message("{count} boot-area byte(s) differ from the plan (first at byte {first}).",
+            count=len(differing), first=differing[0]))
     try:
         facts = inspect(mbr, area, disk_bytes=disk_bytes)
         expected = inspect(expected_mbr, plan.after_area, disk_bytes=disk_bytes)
@@ -643,15 +646,15 @@ def verify_written(plan: Plan, expected_mbr: bytes, mbr: bytes, area: bytes, *, 
         if facts.script_present != expected.script_present:
             problems.append("The Canon Basic SCRIPT marker read back is not in the planned state.")
     except CardPrepError as exc:
-        problems.append(f"The boot area no longer validates: {exc}")
+        problems.append(message("The boot area no longer validates: {error}", error=exc))
     return problems
 
 
 def describe_plan(plan: Plan) -> list[str]:
     """Plain lines for the window: what will be written where, before and after."""
     v = plan.volume
-    lines = [f"{v.filesystem} volume, serial {v.serial_hex}, partition at sector {v.mbr.start_lba:,} "
-             f"({v.mbr.size_bytes / 1000**3:,.1f} GB)."]
+    lines = [message("{filesystem} volume, serial {serial}, partition at sector {start:,} ({gb:,.1f} GB).",
+        filesystem=v.filesystem, serial=v.serial_hex, start=v.mbr.start_lba, gb=v.mbr.size_bytes / 1000 ** 3)]
     if not plan.writes_needed:
         if plan.kind == "mark":
             lines.append("Nothing to write: the boot markers are already present and valid.")
@@ -660,8 +663,8 @@ def describe_plan(plan: Plan) -> list[str]:
         else:
             lines.append("Nothing to write: the card already matches the backup.")
         return lines + list(plan.notes)
-    lines.append(f"Sectors to write, in this order: {', '.join(str(w.sector) for w in plan.writes)} "
-                 f"({len(plan.writes) * SECTOR:,} bytes; nothing else is written).")
+    lines.append(message("Sectors to write, in this order: {sectors} ({size:,} bytes; nothing else is written).",
+        sectors=", ".join(str(w.sector) for w in plan.writes), size=len(plan.writes) * SECTOR))
     for c in plan.changes:
         def show(b: bytes) -> str:
             if len(b) > 1 and len(set(b)) == 1:
@@ -669,5 +672,6 @@ def describe_plan(plan: Plan) -> list[str]:
             if len(b) > 24:
                 return f"{b[:4].hex()} x{len(b) // 4}" if b == b[:4] * (len(b) // 4) else b[:12].hex() + "..."
             return repr(b.decode("ascii")) if b.isascii() and b.decode("ascii").isprintable() else b.hex()
-        lines.append(f"- {c.label}: bytes {c.offset}..{c.end - 1}: {show(c.before)} -> {show(c.after)}")
+        lines.append(message("- {label}: bytes {start}..{end}: {before} -> {after}",
+            label=phrase(c.label), start=c.offset, end=c.end - 1, before=show(c.before), after=show(c.after)))
     return lines + list(plan.notes)

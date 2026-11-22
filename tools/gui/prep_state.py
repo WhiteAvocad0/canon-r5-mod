@@ -26,6 +26,8 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import joined, message, phrase
+
 from cardprep import devices, workflow
 
 FORMAT_WARNING = ("Format this card IN THE CAMERA first. Formatting erases everything on the card — "
@@ -94,7 +96,7 @@ class PrepState:
         else:
             matches = [c for c in self.accepted if c.whole_id == whole_id]
             if not matches:
-                raise ValueError(f"{whole_id} is not a detected, accepted SD card")
+                raise ValueError(message('{whole_id} is not a detected, accepted SD card', whole_id=whole_id))
             chosen = matches[0]
         if chosen != self.selected:
             self.selected = chosen
@@ -120,7 +122,7 @@ class PrepState:
     def blockers(self) -> list[str]:
         reasons = []
         if self.busy:
-            reasons.append(f"Wait: {self.busy}")
+            reasons.append(message('Wait: {busy}', busy=phrase(self.busy)))
         if self.copying:
             reasons.append("Wait: autoexec.bin is being copied to a card (step 8).")
         if self.session is not None:
@@ -165,15 +167,19 @@ class PrepState:
         cand, plan = s.snapshot.candidate, s.plan
         sectors = ", ".join(str(w.sector) for w in plan.writes)
         if plan.kind == "mark":
-            title, question = "Prepare card", f"Prepare {cand.label()}?"
-            what = f"This writes the boot markers: sector(s) {sectors}, {len(plan.writes) * 512:,} bytes."
+            title, question = "Prepare card", message('Prepare {card}?', card=cand.label())
+            what = message(
+                "This writes the boot markers: sector(s) {sectors}, {size:,} bytes.",
+                sectors=sectors, size=len(plan.writes) * 512)
         else:
-            title, question = "Undo card preparation", f"Restore the boot sectors of {cand.label()}?"
-            what = f"This puts back sector(s) {sectors} from the backup in {s.source.folder}."
-        return title, "\n\n".join([
-            question, f"{cand.model}, {cand.whole_id}.", what,
+            title, question = "Undo card preparation", message('Restore the boot sectors of {card}?', card=cand.label())
+            what = message(
+                "This puts back sector(s) {sectors} from the backup in {folder}.",
+                sectors=sectors, folder=s.source.folder)
+        return title, joined("\n\n", [
+            question, message('{model}, {whole_id}.', model=cand.model, whole_id=cand.whole_id), what,
             "Nothing else on the card is changed. macOS will ask for your administrator password.",
-            f"Backup of the card as it is now: {s.backup.folder}"])
+            message('Backup of the card as it is now: {backup}', backup=s.backup.folder)])
 
     def may_write(self, token: int, session: workflow.Session) -> bool:
         """After OK: only the exact session that was confirmed, if nothing changed meanwhile."""
