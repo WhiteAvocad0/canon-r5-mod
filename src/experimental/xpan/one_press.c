@@ -103,6 +103,14 @@ CODE static void refuse(uint32_t outcome)
     __atomic_store_n(&S.refusals, S.refusals + 1u, __ATOMIC_RELEASE);
 }
 
+/* Mark this capture's pending HWJPG.Y22 as a deferred screenshot (INFO in playback starts it). */
+CODE static void op_keep(void)
+{
+    D.defer = OP_DEFER_WAIT;
+    D.held_since = 0u; /* the first INFO of any settled playback visit may try */
+    ++D.marked;
+}
+
 CODE void one_press_arm(uint32_t gui_mode, uint32_t number, uint32_t tick, uint32_t y22_ready, uint32_t pic_outcome, uint32_t pic_bytes)
 {
     S.number = number;
@@ -115,10 +123,12 @@ CODE void one_press_arm(uint32_t gui_mode, uint32_t number, uint32_t tick, uint3
     ++D.decisions;
     if (gui_mode != OP_GUI_PLAYBACK) {
         S.outcome = OP_NOT_PLAYBACK;
-        if (y22_ready && !S.latched) {
-            D.defer = OP_DEFER_WAIT;
-            ++D.marked;
-        }
+        if (!y22_ready)
+            refuse(OP_NO_Y22); /* the screen files are saved, but no JPEG can follow */
+        else if (S.latched)
+            refuse(OP_LATCHED);
+        else
+            op_keep();
         return;
     }
     ++S.attempts;
@@ -168,7 +178,8 @@ CODE static uint32_t op_source(void)
         S.source = OP_SOURCE_VIEW;
         return S.view_handle;
     }
-    if (D.last_good && op_resizable(D.last_good | OP_SUB_JPEG, &D.last_good_rc)) {
+    if (D.last_good && !(D.xpan == OP_XPAN_YES && D.last_good == S.view_handle) && /* a reused file number */
+        op_resizable(D.last_good | OP_SUB_JPEG, &D.last_good_rc)) {
         S.source = OP_SOURCE_LAST_GOOD;
         return D.last_good;
     }
@@ -214,22 +225,21 @@ CODE void one_press_release(void)
     if (!armed)
         return;
     S.armed = 0u;
+    /* Every refusal below keeps this capture's HWJPG.Y22 as a deferred screenshot. */
     if (__atomic_load_n(&S.state, __ATOMIC_ACQUIRE) != OP_IDLE) {
         refuse(OP_BUSY);
-        return;
-    }
-    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* ▶ left since the press */
+    } else if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* ▶ left since the press */
         refuse(OP_NOT_PLAYBACK);
-        return;
+    } else {
+        uint32_t handle = op_source(); /* refuses itself when 0 */
+        if (handle && op_canon_busy())
+            refuse(OP_BUSY);
+        else if (handle) {
+            op_start(handle);
+            return;
+        }
     }
-    uint32_t handle = op_source();
-    if (!handle)
-        return;
-    if (op_canon_busy()) {
-        refuse(OP_BUSY);
-        return;
-    }
-    op_start(handle);
+    op_keep();
 }
 
 /* GuiMainTask, an INFO release (combo_capture_gui, from the H2 hook): the deferred
@@ -239,8 +249,10 @@ CODE void one_press_key(uint32_t code)
 {
     if (D.defer != OP_DEFER_WAIT || code != COMBO_INFO_RELEASE) /* INFO only: SET confirms ▶ dialogs */
         return;
-    uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_RELAXED);
-    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_ACQUIRE), why;
+    /* The visit stamp first, then the tick: a stamp the worker publishes in between is
+     * ahead of the tick and counts as unsettled (signed difference), never as old. */
+    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_ACQUIRE);
+    uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_ACQUIRE), why;
     ++D.decisions;
     if (S.latched) {
         D.defer = OP_DEFER_NONE;
@@ -249,7 +261,7 @@ CODE void one_press_key(uint32_t code)
         why = OP_DW_BUSY;
     } else if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK || !since) { /* re-read at this release */
         why = OP_DW_NOT_PLAYBACK;
-    } else if (tick - since < OP_DEFER_SETTLE_TICKS) {
+    } else if ((int32_t)(tick - since) < (int32_t)OP_DEFER_SETTLE_TICKS) {
         why = OP_DW_SETTLING;
     } else if (since == D.held_since) {
         why = OP_DW_HELD;
@@ -267,6 +279,8 @@ CODE void one_press_key(uint32_t code)
         if (!handle) {
             D.held_since = since; /* two bips once; the next playback visit retries */
             why = OP_DW_NO_SOURCE;
+        } else if (op_canon_busy()) { /* again after the FM calls: only wait */
+            why = OP_DW_BUSY;
         } else {
             D.defer = OP_DEFER_NONE;
             ++D.starts;

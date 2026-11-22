@@ -308,6 +308,13 @@ class Anywhere(unittest.TestCase):
                          (OP["VIEW_XPAN"], 0, 0, 1))
         self.worker(15)
         self.assertEqual((c.feedback()["clicks"], c.feedback()["bips"]), (1, 2))
+        self.assertEqual(c.defer()["defer"], OP["DEFER_WAIT"], "the refused playback RATE waits for INFO")
+        # the same playback visit: show a 3:2 photo and press INFO; the earlier screen is delivered
+        c.view(VIEW)
+        c.xpan(OP["XPAN_NO"])
+        self.worker(SETTLE + 1)
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.g("op_start_handle"), c.op()["source"]), (OP["DW_STARTED"], VIEW, OP["SOURCE_VIEW"]))
 
     def test_a_cancelled_or_last_good_job_is_never_a_last_good_source(self):
         c = self.c
@@ -340,6 +347,10 @@ class Anywhere(unittest.TestCase):
         c.tap(200)
         self.assertEqual((c.pending()["pending"], c.defer()["defer"], c.defer()["marked"]), (0, OP["DEFER_NONE"], 0))
         U.in_dll(self.lib, "host_conv_fail").value = 0
+        self.assertEqual(c.op()["outcome"], OP["NO_Y22"])
+        self.worker(15)
+        self.assertEqual((c.feedback()["clicks"], c.feedback()["bips"]), (1, 2),
+                         "the screen files' click, then two bips: no JPEG can follow")
 
     def test_no_view_resets_the_xpan_precheck(self):
         c = self.c
@@ -352,6 +363,59 @@ class Anywhere(unittest.TestCase):
         self.enter_playback(view=0, xpan=OP["XPAN_YES"])
         c.key_up()
         self.assertEqual((c.defer()["why"], c.defer()["xpan"]), (OP["DW_NO_SOURCE"], OP["XPAN_UNKNOWN"]), "no view: not checked")
+
+    # ---- review fixes ----------------------------------------------------------------
+    def test_a_visit_stamp_ahead_of_the_sampled_tick_is_not_settled(self):
+        """The worker may publish the visit's first tick between the INFO path's two loads."""
+        c = self.c
+        c.good(VIEW)
+        self.capture_outside(200)
+        self.enter_playback(settle=False)
+        d = H.OnePressDefer.in_dll(self.lib, "one_press_defer")
+        tick = U.in_dll(self.lib, "combo_worker_tick").value
+        d.play_since = tick + 1  # newer than the tick the INFO path reads
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.g("op_start_calls")), (OP["DW_SETTLING"], 0), "never treated as 4294967295 ticks old")
+
+    def test_canon_busy_after_the_source_lookup_only_waits(self):
+        c = self.c
+        c.good(VIEW)
+        self.capture_outside(200)
+        self.enter_playback()
+        U.in_dll(self.lib, "op_fm_sets_busy").value = 1
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.defer()["defer"], c.g("op_start_calls"), c.op_log(), c.op()["refusals"]),
+                         (OP["DW_BUSY"], OP["DEFER_WAIT"], 0, "F", 0), "no release, no busy flags, no start, no bips")
+        U.in_dll(self.lib, "op_fm_sets_busy").value = 0
+        U.in_dll(self.lib, "op_indev_busy").value = 0
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.g("op_start_calls")), (OP["DW_STARTED"], 1))
+
+    def test_a_last_good_handle_reused_by_an_xpan_view_is_not_a_source(self):
+        c = self.c
+        self.last_good_job(200)  # VIEW (100/0013) saved
+        c.mem[GUI] = 0
+        self.worker(1)
+        self.capture_outside(600)
+        c.good(VIEW)  # FM would accept it
+        n = c.g("op_fm_calls")
+        self.enter_playback(view=VIEW, xpan=OP["XPAN_YES"])  # 0013 deleted, the number reused by an XPan JPEG
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.op()["outcome"], c.g("op_start_calls"), c.g("op_fm_calls") - n),
+                         (OP["DW_NO_SOURCE"], OP["VIEW_XPAN"], 1, 0), "two bips and pending, not a job that cancels")
+
+    def test_a_playback_rate_refused_at_its_release_waits_for_info(self):
+        c = self.c
+        c.good(VIEW)
+        c.playback(handle=VIEW)
+        self.worker(1)
+        U.in_dll(self.lib, "op_indev_busy").value = 1
+        c.tap(200)
+        self.assertEqual((c.op()["outcome"], c.defer()["defer"], c.g("op_start_calls")), (OP["BUSY"], OP["DEFER_WAIT"], 0))
+        U.in_dll(self.lib, "op_indev_busy").value = 0
+        self.worker(SETTLE + 1)
+        c.key_up()
+        self.assertEqual((c.defer()["why"], c.g("op_start_handle")), (OP["DW_STARTED"], VIEW))
 
 
 if __name__ == "__main__":

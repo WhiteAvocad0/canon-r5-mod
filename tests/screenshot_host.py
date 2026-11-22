@@ -606,7 +606,8 @@ static uint32_t rd(uint32_t a) { return combo_observe_api.read(a); }
 static uint32_t tm(void) { return host_us; }
 char op_log[512]; uint32_t op_log_n;
 static void lg(char c) { if (op_log_n < sizeof op_log - 1) { op_log[op_log_n++] = c; op_log[op_log_n] = 0; } }
-uint32_t op_fm_words[8], op_fm_handle, op_fm_calls, op_fm_subs, op_fm_good[4], op_fm_seen[8], op_xpan; int32_t op_fm_rc;
+uint32_t op_fm_words[8], op_fm_handle, op_fm_calls, op_fm_subs, op_fm_good[4], op_fm_seen[8], op_xpan, op_fm_sets_busy; int32_t op_fm_rc;
+extern uint32_t op_indev_busy;
 static uint32_t found(uint32_t h)
 {
     uint32_t any = 0u;
@@ -617,6 +618,7 @@ static int32_t o_fm(uint32_t h, uint32_t *info)
 {
     lg('F'); if (op_fm_calls < 8) op_fm_seen[op_fm_calls] = h;
     op_fm_calls++; op_fm_subs = op_fm_subs << 4 | (h & 15u); op_fm_handle = h;
+    if (op_fm_sets_busy) op_indev_busy = 1u; /* Canon became busy during the FM call */
     if ((h & 15u) != 2u || !found(h)) { for (int i = 0; i < 5; i++) info[i] = 0; return (int32_t)0x82100019u; }
     for (int i = 0; i < 5; i++) info[i] = op_fm_words[i];
     return op_fm_rc;
@@ -647,7 +649,7 @@ void host_op_reset(void)
 {
     memset(&one_press_state, 0, sizeof one_press_state); memset(one_press_block, 0, sizeof one_press_block);
     memset(&one_press_defer, 0, sizeof one_press_defer); memset(op_fm_good, 0, sizeof op_fm_good);
-    memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u;
+    memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u; op_fm_sets_busy = 0u;
     op_log_n = 0; op_log[0] = 0; op_end_calls = op_start_calls = op_fm_calls = op_fm_subs = op_fm_handle = op_start_handle = 0;
     op_gui_busy = op_indev_busy = 0; op_fm_rc = 0;
     memset(op_fm_words, 0, sizeof op_fm_words); memset(&inject_ring, 0, sizeof inject_ring);

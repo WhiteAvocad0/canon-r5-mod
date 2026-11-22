@@ -100,17 +100,23 @@
 
 /* Screenshot anywhere (stage 1):
  *  - Deferred delivery. A RATE outside playback (GUI mode != OP_GUI_PLAYBACK) whose
- *    HWJPG.Y22 is pending is marked deferred (OP_DEFER_WAIT). Every admitted OK RATE
- *    replaces it (latest only); a RATE in playback runs the playback path. The deferred
+ *    HWJPG.Y22 is pending is marked deferred (OP_DEFER_WAIT); one whose Y22 failed, or
+ *    while latched, is refused instead (two bips after the click). A RATE in playback
+ *    runs the playback path; a refusal at its release (busy, playback left, no source)
+ *    marks it deferred too. Every admitted OK RATE replaces a deferred one (latest
+ *    only). The deferred
  *    job starts on GuiMainTask at the release of INFO (COMBO_INFO_RELEASE, the only
  *    extra code the H2 hook passes on), in the same context and order as the RATE
  *    release: never from the worker. At that release: one-press idle and not latched;
  *    GUI mode re-read = playback; playback stable for OP_DEFER_SETTLE_TICKS
- *    (worker-sampled); the pending Y22 still this capture's; its age within
+ *    (worker-sampled; the visit stamp is loaded before the tick and compared signed,
+ *    so a stamp published between the two loads is unsettled); the pending Y22 still this capture's; its age within
  *    INJECT_PENDING_TICKS - OP_TIMEOUT_TICKS (H3 keeps its 10-min expiry, so the job's
- *    H3 can never meet an expired screenshot and fall through to a stock Resize);
- *    Canon's develop state and both busy flags clear. Busy or settling only waits for
- *    the next release (no bips).
+ *    H3 never meets an expired screenshot unless the job itself runs to the edge of
+ *    OP_TIMEOUT_TICKS, about 30 s against a stock 1 s; not handled);
+ *    Canon's develop state and both busy flags clear, before the source lookup and
+ *    again after its FM calls. Busy or settling only waits for the next release (no
+ *    bips).
  *    Why only INFO: it stays in playback and confirms nothing. SET is the confirm key
  *    of every playback dialog (Erase, Protect, Q, Resize), and our hook runs before
  *    Canon handles the release. A key that leaves playback (the playback button, MENU)
@@ -120,9 +126,10 @@
  *    cache's AspectInfo tuple (playback_native.c, the XPan RAW/JPEG tuples of
  *    playback_box.c) is not XPan. Otherwise the last good source: the group handle of
  *    the latest view that passed the FM check and saved (DevelopEnd(1)) this boot,
- *    re-checked with FM. Otherwise the press is refused (two bips) and the screenshot
- *    stays pending; a deferred one then waits until playback is left and re-entered
- *    (two bips once per playback visit). The dry run remains the fail-closed check.
+ *    re-checked with FM, and never the very handle the cache just identified as XPan (a
+ *    reused file number). Otherwise the press is refused (two bips) and the screenshot
+ *    stays pending; after a refused INFO, the next INFO in that playback visit is
+ *    ignored (two bips once per visit). The dry run remains the fail-closed check.
  *  - Row R5CA D= (combo_observe.h CC_FMT_OP_DEFER). */
 #define OP_DEFER_SETTLE_TICKS 25u /* 0.5 s of stable playback before a deferred start */
 #define OP_DEFER_MAX_AGE_TICKS (INJECT_PENDING_TICKS - OP_TIMEOUT_TICKS) /* hw_jpeg_inject.h: 9.5 min */
