@@ -2,7 +2,8 @@
 
 Ordinary file operations only. This module never formats, never opens a raw
 device, never writes boot sectors and never deletes anything except the one
-temporary file it created itself in the current copy. Making a card bootable
+temporary file it created itself in the current copy. For a --screenshot build
+it may also create the empty DCIM/R5SHOTS folder the camera writes into. Making a card bootable
 (boot markers) is the separate "Prepare card" step (tools/cardprep, prep_state.py).
 """
 from __future__ import annotations
@@ -25,6 +26,7 @@ if str(TOOLS_DIR) not in sys.path:
 from image_format import FormatError, inspect_image
 
 TARGET_NAME = "AUTOEXEC.BIN"
+SCREENSHOT_FOLDER = "R5SHOTS"  # under DCIM: where a --screenshot build writes (it never creates it)
 TEMP_PREFIX = "R5GUI-"
 TEMP_SUFFIX = ".TMP"
 MAX_IMAGE_BYTES = 16 * 1024 * 1024  # far above any build (~80 KiB); bounds reads of card files
@@ -206,11 +208,13 @@ def copy_to_card(
     *,
     confirmed_warnings: Collection[str] = (),
     now: datetime | None = None,
+    screenshot_folder: bool = False,
 ) -> CopyResult:
     """Back up any existing autoexec.bin to the computer, then copy atomically and verify.
 
     confirmed_warnings are the warnings the person saw and accepted; any other warning
-    found now (for example one that appeared since) stops the copy for confirmation."""
+    found now (for example one that appeared since) stops the copy for confirmation.
+    screenshot_folder (a --screenshot build) then makes sure DCIM/R5SHOTS exists."""
     data = verify_image(image, expected_sha256)
     info = inspect_card(card_root)
     if info.errors:
@@ -227,8 +231,10 @@ def copy_to_card(
         old = _read_file(info.existing)
         existing_sha = _sha256(old)
         if existing_sha == expected_sha256:
-            return CopyResult(info.existing, expected_sha256, len(data), None, False, True,
-                              ["The card already has this exact autoexec.bin; nothing was written.", eject_hint()])
+            done = ["The card already has this exact autoexec.bin; nothing was written."]
+            if screenshot_folder:
+                done.append(ensure_screenshot_folder(root))
+            return CopyResult(info.existing, expected_sha256, len(data), None, False, True, [*done, eject_hint()])
         backup_dir = Path(backup_dir)
         backup_dir.mkdir(parents=True, exist_ok=True)
         stamp = (datetime.now() if now is None else now).strftime("%Y%m%d-%H%M%S")
@@ -273,5 +279,26 @@ def copy_to_card(
         restore = f" Your previous file is backed up at {backup}." if backup else ""
         raise CardError(f"{target} does not match the build after copying. Do not use this card yet.{restore}")
     messages.append(f"Copied and verified {target.name} (SHA-256 {expected_sha256}).")
+    if screenshot_folder:
+        messages.append(ensure_screenshot_folder(root))
     messages.append(eject_hint())
     return CopyResult(target, expected_sha256, len(data), backup, info.existing is not None, False, messages)
+
+
+def ensure_screenshot_folder(root: Path) -> str:
+    """Create the empty DCIM/R5SHOTS folder a --screenshot build needs, inside an existing DCIM.
+
+    Creates nothing else and changes nothing that exists; returns a message for the person."""
+    root = Path(root)
+    dcim = [p for p in root.iterdir() if p.name.casefold() == "dcim" and p.is_dir() and not p.is_symlink()]
+    if len(dcim) != 1:
+        return ("There is no DCIM folder on the card yet, so the screenshot folder was not created. "
+                "Format the card in the camera, then create DCIM/R5SHOTS before taking screenshots.")
+    found = [p for p in dcim[0].iterdir() if p.name.casefold() == SCREENSHOT_FOLDER.casefold()]
+    if found:
+        if len(found) == 1 and found[0].is_dir() and not found[0].is_symlink():
+            return f"The screenshot folder {dcim[0].name}/{found[0].name} is already on the card."
+        return (f"{dcim[0].name}/{found[0].name} exists but is not a plain folder; screenshots will fail "
+                "until it is one. Nothing was changed.")
+    (dcim[0] / SCREENSHOT_FOLDER).mkdir()
+    return f"Created the empty screenshot folder {dcim[0].name}/{SCREENSHOT_FOLDER} on the card."

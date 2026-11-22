@@ -1,7 +1,7 @@
 """Convert on-camera screenshots (DCIM/R5SHOTS/SS_nnnnn.YCA) to PNG files.
 
-The on-camera screenshot build is a private lab feature; it is not in the public firmware
-build yet. Each file it saves is an ``R5SS`` header followed by the camera's display layer
+A build with the one-press screenshot option (``--screenshot rate``, docs/screenshot.md)
+saves these files next to its in-camera JPEG screenshot. Each file it saves is an ``R5SS`` header followed by the camera's display layer
 exactly as the camera holds it: 4:2:2 YCbCr with alpha, 6 bytes per pair of pixels in the
 order U, Y0, V, Y1, A0, A1, at 1024x682 (rear LCD) or 1600x1200 (viewfinder). The layer is
 the on-screen display only; the live image underneath is not part of it.

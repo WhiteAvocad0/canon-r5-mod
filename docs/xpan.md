@@ -105,13 +105,17 @@ flowchart LR
 
 Not ported from the private lab build: the 2-cue A/B start rotation, the `request`/`confirmed` start triggers, per-attempt before/after report rows and the movie-limit diagnostic. Changed from it: the stop cue may be selected without a start cue, and it always waits out AudioCtrl state 5 (the lab build did so only with the `press` and `request` triggers).
 
+## 4b. Opt-In One-Press Screenshot (`--screenshot`)
+
+`--screenshot {off,rate}` (default `off`) adds issue [#15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)'s one-press screenshot: RATE in ▶ saves a 2400×1600 JPEG of the whole screen through Canon's own Resize job and JPEG encoder. It adds three hooks (GUI dispatch `0xE04A8028`, ShtVfxEncJpg_Encode `0xE0CCB284`, INDEV_DevelopEnd `0xE0549258`), whose pages and the pages of every Canon function the feature calls are admitted through `screenshot_code_fingerprints` only when it is selected. A screenshot build has `37` hooks, `23` pages and `11` L2 tables (`38/24/11` with the record indicator); with `off`, none of it is linked. Use, sounds, files and the evidence boundary are in [docs/screenshot.md](screenshot.md).
+
 ## 5. Build-Time ROM Derivation & Diagnostic Verification
 
 `python3 tools/build.py --profile xpan-crop` embeds **no Canon ROM pages or binaries** in the repository. Instead, `tools/contracts.py` (`admit_xpan_rom_with_provenance`) first verifies:
 
 - Exact `64 MiB` dump size and `0xE0100000..0xE0140000` word-sum `0x22C94093`
 - All `25` base R5 `2.2.1` code fingerprints + `7` startup patch opcodes
-- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator` and/or `--record-stop-indicator`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
+- All `148` XPan 4 KiB code/table pages, `3` boot MMU table slices (`0xE0000080`, `0xE0003800`, `0xE0004840`), `34` hook windows (plus `3` pages and `1` hook with `--record-indicator` and/or `--record-stop-indicator`, and `22` pages and `3` hooks with `--screenshot rate`), the `3,360`-byte framing table (`0xE20CFC64`), and the `968`-byte stock menu vector resource (`0xE38F614C`)
 
 Only after those immutable checks pass does the builder derive into `--output`:
 - `target-page.bin` (`0xE0100000` virgin boot shadow page)

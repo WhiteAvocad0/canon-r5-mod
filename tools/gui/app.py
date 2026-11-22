@@ -2126,14 +2126,15 @@ class App:
                     pass  # a newer build replaced the one that was copied
                 self.messagebox.showinfo("Done", "\n\n".join(result.messages))
             self.refresh()
+        screenshot = summary.options.get("screenshot", "off") != "off"
         self._background(lambda: card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
-                                                   confirmed_warnings=confirmed), done)
+                                                   confirmed_warnings=confirmed, screenshot_folder=screenshot), done)
 
     # -- screenshots (a utility, not a setup step) ---------------------------------------
 
     def _screenshots_panel(self):
         tab = self._panel(shots.SCREENSHOTS, utility=True)
-        Callout(self, tab, pady=(S, 0)).set(INFO, "Private lab feature", shots.LAB_NOTE)
+        Callout(self, tab, pady=(S, 0)).set(INFO, "Where these files come from", shots.LAB_NOTE)
         self.shots_src_var = self.tk.StringVar()
         self._field(tab, "Screenshots from (the card's top folder, DCIM, or an R5SHOTS folder)", self.shots_src_var,
                     [("Choose card or folder…", self._pick_shots_source)], pady=(L, 0))

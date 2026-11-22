@@ -223,6 +223,20 @@ python3 src/experimental/xpan/tools/record_indicator_log.py path/to/DbgRA001.bin
 
 They count presses, submissions of both cues, settled/stopped/rejected/timeout outcomes and drops. The stop row counts ended takes (`W=`), dong submissions (`B=`), and dongs dropped because another cue was in flight (`K=`), a new press arrived while the dong was pending (`H=`), or RecState was not idle at its tick (`I=`; in a build without a start cue a new take lands here). The hook counts the end before Canon stores it, so a rare worker tick in that window drops the dong; `I=` counts this. The counters record what the worker saw, not what was audible. Exports from builds before the stop cue (four rows, such as `0adff001`) decode only with the decoder of their own source version.
 
+### One-press screenshot (`--screenshot`)
+
+`--screenshot rate` (an `xpan-crop` option, off by default) makes RATE in ▶ save a 2400×1600 JPEG of the whole screen next to your photos. Create the folder `DCIM/R5SHOTS` on the SD card before the first use. Add it to any `xpan-crop` command, alone or with the record cues:
+
+```sh
+python3 tools/build.py --profile xpan-crop \
+  --rom /path/to/eos-r5-221-rom.bin \
+  --toolchain /path/to/arm-none-eabi-15.2.1/bin \
+  --screenshot rate \
+  --output build/r5-xpan-screenshot
+```
+
+Test it like this: show a JPEG photo full screen in ▶, press RATE once, wait for the click, and check that a new 2400×1600 JPEG appears after it. Then press RATE once in live view: you should hear a click and get no JPEG. The sounds, the files it writes and the evidence boundary (the public image is hardware-untested) are in [docs/screenshot.md](screenshot.md).
+
 ---
 
 ## 7. Disclaimer, Known Limits, and Recovery

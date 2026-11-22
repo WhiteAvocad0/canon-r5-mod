@@ -25,8 +25,9 @@ from gui.wizard import Guide
 SCREENSHOTS = "screenshots"  # the utility's id (not a setup step)
 TITLE = "Screenshots"
 
-LAB_NOTE = ("The on-camera screenshot build is a private lab feature. It isn't in the public firmware build yet, "
-            "so a public build doesn't save screenshots.")
+LAB_NOTE = ("A build with the One-press screenshot option (--screenshot rate) saves these screen files. Its "
+            "JPEG screenshots are ordinary photos and need no conversion; this tool turns the SS_*.YCA "
+            "on-screen display files into PNG.")
 
 
 GUIDE = Guide(
