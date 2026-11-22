@@ -66,9 +66,9 @@ class TokenTests(unittest.TestCase):
             self.assertTrue(all(v >= theme.MIN_FONT_PX for v in px.values()))
         self.assertEqual(theme.font_px("body", 13.3), 13)   # macOS
         self.assertEqual(theme.font_px("body", 12.0), 13)   # Windows 9 pt and Linux Tk: never smaller than 13 px
-        self.assertEqual(theme.font_px("heading", 13.0), 22)
+        self.assertEqual(theme.font_px("heading", 13.0), 24)
         self.assertEqual(theme.font_px("body", 16.0), 16)   # a larger desktop font scales the whole scale
-        for name in ("heading", "title", "subheading", "eyebrow"):
+        for name in ("heading", "title", "subheading"):
             self.assertTrue(theme.TYPE_SCALE[name].bold, name)
         self.assertTrue(theme.TYPE_SCALE["mono"].mono)
 
@@ -110,7 +110,7 @@ class TokenTests(unittest.TestCase):
                     fg, bg, _ = theme.kind_colours(p, kind)
                     self.assertGreaterEqual(c(fg, bg), 4.5, kind)
                     self.assertGreaterEqual(c(p.text, bg), 7, kind)
-                for status in (p.success, p.danger):
+                for status in (p.warning, p.danger):
                     self.assertGreaterEqual(c(status, p.bg), 4.5)
                 # Disabled text must look disabled, yet stay visible.
                 self.assertLess(c(p.text_disabled, p.bg), 4.5)
@@ -118,11 +118,13 @@ class TokenTests(unittest.TestCase):
                 self.assertLess(c(p.text_disabled, p.bg), c(p.text_muted, p.bg))
         self.assertLess(theme._luminance(theme.DARK.bg), theme._luminance(theme.LIGHT.bg))
 
-    def test_one_accent_and_status_colours_stay_distinct(self):
+    def test_status_panels_share_a_surface_and_focus_is_visible(self):
         for p in theme.PALETTES.values():
-            statuses = {p.success, p.warning, p.danger}
-            self.assertEqual(len(statuses), 3)
-            self.assertNotIn(p.accent, statuses)
+            for kind in theme.KINDS:
+                self.assertEqual(theme.kind_colours(p, kind)[1:], (p.surface, p.border))
+            for surface in (p.bg, p.surface, p.accent_subtle):
+                self.assertGreaterEqual(theme.contrast(p.focus, surface), 3)
+            self.assertNotEqual(p.warning, p.danger)
 
     def test_theme_module_does_not_import_tk(self):
         tree = ast.parse((ROOT / "tools" / "gui" / "theme.py").read_text())
@@ -322,6 +324,41 @@ class WindowSmokeTests(unittest.TestCase):
         # The copy step's warning checkbox appears only with warnings.
         self.assertFalse(app.card_confirm_box.winfo_manager())
 
+    def test_bootdisk_camera_handoff_survives_reopening(self):
+        app = self.build("light")
+        w = self.wizard_mod
+        app.wizard.goto(w.BOOTDISK)
+        app._bootdisk_page("camera_disable")
+        self._destroy()
+        self.root = make_root()
+        reopened = self.build("dark")
+        self.assertTrue(reopened.bd_pages["camera"].winfo_manager())
+        self.assertIn("disable", reopened.bd_camera_title.cget("text"))
+        self.assertFalse(reopened.bd_pages["verify"].winfo_manager())
+        self.assertTrue(reopened.next_button.instate(["disabled"]))
+        reopened._bootdisk_page("verify")
+        self.assertTrue(reopened.bd_pages["verify"].winfo_manager())
+        self.assertFalse(reopened.bd_pages["setup"].winfo_manager())
+
+    def test_returned_card_shortcut_and_resume(self):
+        app = self.build("light")
+        app.wizard.goto(self.wizard_mod.ROM)
+        app.refresh()
+        start = app.rom_pages["prepare"]
+        self.assertTrue(start.winfo_manager())
+        self.assertFalse(app.rom_pages["return"].winfo_manager())
+        shortcut = next(button for button in self._descendants(start)
+                        if button.winfo_class() == "TButton" and "returning" in button.cget("text"))
+        shortcut.invoke()
+        self.assertFalse(start.winfo_manager())
+        self.assertTrue(app.rom_pages["return"].winfo_manager())
+        self.assertTrue(app.next_button.instate(["disabled"]))
+        self._destroy()
+        self.root = make_root()
+        reopened = self.build("light")
+        self.assertTrue(reopened.rom_pages["return"].winfo_manager())
+        self.assertTrue(reopened.next_button.instate(["disabled"]))
+
     def test_card_size_is_highlighted(self):
         app = self.build("light")
         w = self.wizard_mod
@@ -331,7 +368,7 @@ class WindowSmokeTests(unittest.TestCase):
         self.assertEqual(caption(w.FEATURES), "To do")
         badges = {str(widget.cget("text")) for widget in self._descendants(app.panels[w.ROM][0])
                   if widget.winfo_class() == "TLabel" and "CardBadge" in str(widget.cget("style"))}
-        self.assertEqual(badges, {"SD CARD ≤ 32 GB"})
+        self.assertEqual(badges, {"SD card ≤ 32 GB"})
 
     def test_finish_on_the_last_step(self):
         app = self.build("light")

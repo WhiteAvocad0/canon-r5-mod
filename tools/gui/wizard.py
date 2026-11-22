@@ -39,6 +39,15 @@ CAMERA, ROM, BOOTDISK, FEATURES, TOOLCHAIN, BUILD, BOOTCARD, COPY, TEST = (
     "camera", "rom", "bootdisk", "features", "toolchain", "build", "bootcard", "copy", "test")
 ONE_TIME = (CAMERA, ROM, BOOTDISK)
 
+TEST_RECOVERY = ("If the camera freezes or shows an error, remove the battery, then the card, "
+                 "and power on without the card.")
+CAMERA_CARD_CHECKLIST = ("Eject the prepared SD card from the computer. With the camera off, insert only this SD card. "
+         "Use a full battery, remove any CFexpress card and disconnect USB and HDMI.",
+         "Power on, press Playback, then press SET once.",
+         "Wait for the card light to go out, then wait another 60 seconds. Keep the camera on and "
+         "the card and battery doors closed during this time.",
+         "Switch the camera off and return the SD card to your computer.")
+
 TEST_CHECKLIST = (
     "Camera off, USB and HDMI unplugged; only the prepared SD card inserted (no CFexpress for the first test).",
     "Powered on normally; the camera started as usual.",
@@ -64,16 +73,16 @@ class StepInfo:
 
 
 STEPS = (
-    StepInfo(CAMERA, 1, "Welcome and camera check", "Make sure you have an original EOS R5 on firmware 2.2.1.", True),
-    StepInfo(ROM, 2, "ROM dump", "Your own copy of the camera's firmware, needed to build (one time, read-only).", True),
-    StepInfo(BOOTDISK, 3, "Enable BootDisk", "A one-time, permanent camera setting that lets it start a program "
+    StepInfo(CAMERA, 1, "Check your camera", "Make sure you have an original EOS R5 on firmware 2.2.1.", True),
+    StepInfo(ROM, 2, "Copy camera firmware", "Your own copy of the camera's firmware, needed to build (one time, read-only).", True),
+    StepInfo(BOOTDISK, 3, "Enable card startup", "A one-time, permanent camera setting that lets it start a program "
              "from the card.", True),
     StepInfo(FEATURES, 4, "Choose features", "Pick what the mod does."),
     StepInfo(TOOLCHAIN, 5, "Build tools", "The free GNU Arm compiler that turns the source into autoexec.bin."),
-    StepInfo(BUILD, 6, "Build and verify", "Build autoexec.bin on this computer and check it."),
-    StepInfo(BOOTCARD, 7, "Prepare the boot card", "Write the two boot markers onto a camera-formatted SD card."),
-    StepInfo(COPY, 8, "Copy autoexec.bin", "Put the build on the prepared card."),
-    StepInfo(TEST, 9, "First camera test", "A short checklist for the first power-on, and where to report."),
+    StepInfo(BUILD, 6, "Build your mod", "Build autoexec.bin on this computer and check it."),
+    StepInfo(BOOTCARD, 7, "Prepare the mod card", "Write the two boot markers onto a camera-formatted SD card."),
+    StepInfo(COPY, 8, "Copy the mod to the card", "Put the build on the prepared card."),
+    StepInfo(TEST, 9, "Test your camera", "A short checklist for the first power-on, and where to report."),
 )
 STEP_BY_ID = {s.id: s for s in STEPS}
 
@@ -94,6 +103,8 @@ class Saved:
     profile: str | None = None
     options: dict = field(default_factory=dict)
     rom_path: str | None = None
+    rom_page: str = "prepare"
+    bootdisk_page: str = "auto"
     inputs: dict = field(default_factory=dict)
     toolchain_path: str | None = None
     features_confirmed: bool = False
@@ -114,6 +125,12 @@ class Saved:
             return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         saved = cls(**known)
+        if saved.bootdisk_page not in ("auto", "setup", "camera_enable", "camera_disable", "verify"):
+            saved.bootdisk_page = "auto"
+        if "rom_page" not in data and saved.rom_path:
+            saved.rom_page = "file"
+        if saved.rom_page not in ("prepare", "camera", "return", "file"):
+            saved.rom_page = "prepare"
         if saved.current not in STEP_BY_ID:
             saved.current = CAMERA
         if saved.bootdisk not in ("unknown", "confirmed", "verified", "disabled"):
@@ -268,7 +285,7 @@ class Wizard:
         if step_id == ROM:
             check = a.rom_check()
             if a.rom_path is None:
-                return StepStatus(NEEDS_ACTION, "Choose your 64 MiB ROM dump, or use the guided ROM-dump card below.")
+                return StepStatus(NEEDS_ACTION, "A verified firmware copy is needed to continue.")
             if check.status == OK:
                 return StepStatus(DONE, check.message)
             if check.status == FAILED:
@@ -281,7 +298,7 @@ class Wizard:
                 return StepStatus(DONE, "BootDisk is enabled, confirmed by you (not verified by the app).")
             if s.bootdisk == "disabled":
                 return StepStatus(NEEDS_ACTION, "BootDisk is disabled (verified by ROM readback: BootInfo +0x04 = 0x00000000). Enable it to run autoexec.bin.")
-            return StepStatus(NEEDS_ACTION, "Enable and verify BootDisk with a Canon Basic card, verify from a post-enable ROM dump, or confirm it is already enabled.")
+            return StepStatus(NEEDS_ACTION, "Continue once card startup is verified or you confirm a previous check.")
         if step_id == FEATURES:
             missing = self._feature_problems()
             if missing:
@@ -492,13 +509,9 @@ GUIDE = {
          Need("Camera visits", "Up to three: the ROM dump (step 2), BootDisk (step 3) and the first test "
               "(step 9)."))),
     ROM: Guide(
-        "The build uses small parts of Canon's firmware, read from your own camera's ROM. They can't be shared, "
-        "so everyone makes their own copy once. Dumping the ROM only reads; it changes nothing in the camera.",
-        "If you already have your 64 MiB ROM dump (often gang100.bin), choose it below. Otherwise, use a "
-        "camera-formatted FAT32 SDHC card (up to 32 GB) with the guided ROM-dump controls below: prepare the "
-        "card with the Canon Basic SCRIPT marker and script files, run it once in the camera (no CFexpress, USB "
-        "or HDMI; power on, press Playback, press SET once, wait until the card light stops plus 60 s, then "
-        "power off), and import the returned dump.",
+        "Make a private copy of your camera’s firmware for the build. This step reads the camera’s "
+        "firmware and saves a copy on your computer.",
+        CAMERA_CARD_CHECKLIST,
         "The dump must be exactly 67,108,864 bytes and pass the builder's strict admission (check_rom: checksum, "
         "startup bytes and, for XPan, fingerprinted pages), plus the four BootInfo/IsScriptMode fingerprints "
         "(0xE0B38CD4, 0xE00068C0, 0xE0006FC4, 0xE06F73DC). Canon Basic on R5 2.2.1 uses SCRIPT (6 B) at FAT32 "
@@ -508,15 +521,10 @@ GUIDE = {
         "Basic refuses them. Keep your ROM dump private; gang2NN.bin is not needed.",
         (_SMALL_CARD, _MAC, _CAMERA_READY)),
     BOOTDISK: Guide(
-        "A stock R5 ignores programs on the card. The BootDisk setting tells it to look for one at power-on. "
-        "It is stored inside the camera, it is PERMANENT across card formats and card removal, and there is no "
+        "The BootDisk setting lets your R5 run the mod from an SD card when you turn it on. "
+        "It stays enabled even after you remove or format the card. There is no "
         "official Canon uninstaller.",
-        "Tick the risk acknowledgement below. Then either: (1) prepare a Canon Basic Enable-BootDisk card (FAT32 "
-        "SDHC up to 32 GB, no native boot markers, no AUTOEXEC.BIN), run it once in the camera (full battery, no "
-        "CFexpress/USB/HDMI, press Playback then SET once, wait for the card light to stop plus 60 s without "
-        "powering off or opening doors), and verify the returned card so the app checks BootInfo +0x04 = "
-        "0xFFFFFFFF and removes extend.m; (2) verify from an existing post-enable ROM dump; or (3) confirm below "
-        "if BootDisk was already enabled earlier.",
+        CAMERA_CARD_CHECKLIST,
         "EnableBootDisk() (0xE0B38D62) writes 0xFFFFFFFF to BootInfo +0x04 (file offset 0x3FF8004). The guided "
         "script calls EnableBootDisk() followed by SaveAllRomImageToFile() so the returned gang1NN.bin lets the "
         "app verify BootInfo +0x04, check loader invariants (+0x00 == 0, +0x0C/+0x10..+0x1F/+0x24 == 0xFFFFFFFF), "
@@ -549,7 +557,7 @@ GUIDE = {
         (Need("Internet", "Once, to download the compiler yourself. The app never downloads anything."),)),
     BUILD: Guide(
         "Now the app builds the mod from your ROM and the features you chose, all on this computer.",
-        ("Press 'Build autoexec.bin'.",
+        ("Press 'Build my mod'.",
          "Wait until the result appears, usually in under a minute. It shows the file and its checksum.",
          "Press Next."),
         "The build runs python3 tools/build.py with the exact arguments shown in the log, in a separate process. "
@@ -561,18 +569,18 @@ GUIDE = {
          "Format the card IN THE CAMERA. This erases it.",
          "Put the card in this Mac's SD card slot and press 'Find SD cards'.",
          "Choose the card in the list and press 'Prepare card'. Check the card's name in the dialog and press OK.",
-         "If your card is already prepared, press 'My card is already prepared' at the bottom instead."),
+         "If your card is already prepared, choose 'My card is already prepared'."),
         "Only the boot-marker sectors are written (FAT32: 1 sector; exFAT: 4), after an automatic, verified "
         "backup and one confirmation; Undo restores the backup. Raw access goes through macOS authopen; nothing "
         "runs as root. Verified on the owner's Mac with a 128 GB exFAT card; FAT32 is untested.",
         (Need("SD card", "Any size, formatted in the camera. Verified with a 128 GB exFAT card; FAT32 cards are "
               "untested.", ANY_CARD), _MAC)),
     COPY: Guide(
-        "The camera loads the mod from a file called AUTOEXEC.BIN at the top of the card.",
+        "Copy the verified build to the card you prepared in step 7. The camera loads AUTOEXEC.BIN from this card.",
         ("Keep the card from step 7 in the computer. If it is mounted, it is chosen for you.",
          "Otherwise press 'Choose card folder...' and choose the card's top folder (for example "
          "/Volumes/EOS_DIGITAL on a Mac or E:\\ on Windows).",
-         "Press 'Copy autoexec.bin to card'.",
+         "Press 'Copy mod to this card'.",
          "Eject the card in Finder (on Windows: Safely Remove Hardware)."),
         "Any existing autoexec.bin is backed up to the build folder first. The copy goes to a temporary file, is "
         "read back, renamed, and read back again against build.json.",
@@ -580,8 +588,7 @@ GUIDE = {
     TEST: Guide(
         "A short, careful first test tells you whether everything works, and helps others if you report it.",
         ("Work through the checklist below with the camera, ticking each item as you go.",
-         "If the camera freezes or shows an error, remove the battery, then the card, and power on without the "
-         "card.",
+         TEST_RECOVERY,
          "Press 'Open the test report form' and report what you saw, including what didn't work."),
         "Never upload your ROM, photos or card images in a report. Quote the source_manifest_sha256 from "
         "build.json so others can tell which build you tested.",

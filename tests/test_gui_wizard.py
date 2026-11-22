@@ -131,7 +131,7 @@ class Gating(Base):
         self.assertFalse(self.w.can_goto(wz.BUILD))
         self.assertFalse(self.w.goto(wz.COPY))
         self.rom_ok(False, "Input size must be exactly 67108864 bytes")
-        self.assertIn("ROM dump", self.w.status(wz.BUILD).message)
+        self.assertIn(wz.STEP_BY_ID[wz.ROM].title, self.w.status(wz.BUILD).message)
         self.toolchain_ok()
         self.rom_ok()
         self.assertTrue(self.w.goto(wz.BUILD))
