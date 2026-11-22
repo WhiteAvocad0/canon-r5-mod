@@ -5,6 +5,8 @@
 
 R5 Mod Assistant is a desktop window that guides an owner of an original Canon EOS R5 on firmware `2.2.1` through everything, one step at a time, without a terminal. In steps 2 and 3 it can prepare a `<= 32 GB` FAT32 SDHC Canon Basic card for you to run in the camera to make a read-only ROM dump or enable/disable BootDisk, and verify the returned files by readback (macOS gets one-click raw `SCRIPT` boot-sector marking through `authopen`; other systems can stage `extend.m` and `script.req` onto a card that already carries `SCRIPT` at `0x1F0`). On a Mac the assistant can also make a camera-formatted SD card bootable for `autoexec.bin` ([step 7](#step-7-prepare-the-boot-card)); elsewhere you need an already bootable card.
 
+Choose **English**, **简体中文** or **Español** from the language menu in the upper-right corner. The assistant switches immediately, keeps your place, and remembers the language the next time you open it.
+
 ## Download the app
 
 There is a ready-made, **unsigned** app for macOS and Windows on the repository's [Releases](https://github.com/WhiteAvocad0/canon-r5-mod/releases) page (prereleases tagged `app-v<version>`). It is an untested prototype like the rest of the assistant. On Linux, [launch it from source](#launch).
@@ -196,7 +198,8 @@ This is only for a card that is **already bootable**. Choose the card's top fold
 3. An existing `autoexec.bin`, found in any upper/lower-case spelling, is copied first to `card-backup/` inside the build folder **on your computer** and read back. If it's already identical to the new build, nothing is written.
 4. The new file is written to a temporary `R5GUI-XXXXXXXX.TMP` on the card, read back and compared. It is then renamed to `AUTOEXEC.BIN`, or to the existing file's spelling.
 5. The final file is read back and its SHA-256 compared with `build.json`. If they differ, you're told where the backup is and not to use the card.
-6. You're told to eject the card using your operating system (Finder eject, "Safely Remove Hardware", or your file manager).
+6. For a build with the **One-press screenshot**, the empty folder `DCIM/R5SHOTS` that the camera writes screenshots into is created inside the card's existing `DCIM` folder. A folder that is already there, and everything in it, is left alone; with no `DCIM` folder nothing is created and you're told to take one photo first (the camera then makes `DCIM`) and create the folder yourself.
+7. You're told to eject the card using your operating system (Finder eject, "Safely Remove Hardware", or your file manager).
 
 The copy step **never** formats or partitions a card, never opens a raw disk, never writes boot sectors, and never deletes anything except its own temporary file from the current copy. Temporary files left by an interrupted earlier copy are reported and left alone.
 
@@ -218,11 +221,11 @@ Step 1's **Details** lists what is out of scope. The assistant never changes the
 ## Screenshots
 
 > [!NOTE]
-> **The on-camera screenshot build is a private lab feature.** It isn't in the public firmware build yet, so a public build doesn't save screenshots. This tool only converts files that the private lab build saved ([issue #15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)).
+> **The camera saves these files with the One-press screenshot option** (`--screenshot rate`, [docs/screenshot.md](screenshot.md), [issue #15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)). Its JPEG screenshots are ordinary photos and need no conversion; this tool turns the on-screen display files (`SS_nnnnn.YCA`) into PNG.
 
-The lab build saves what the camera's screen shows as `DCIM/R5SHOTS/SS_nnnnn.YCA` on the SD card. The camera's own ▶ playback can't show these files, so this tool turns them into ordinary PNG pictures on your computer. It isn't one of the setup steps: open it from **Screenshots** in the sidebar's *Tools* section or from the button on step 1. **← Back to setup** returns to the step you were on.
+A screenshot build also saves what the camera's screen shows as `DCIM/R5SHOTS/SS_nnnnn.YCA` on the SD card. The camera's own ▶ playback can't show these files, so this tool turns them into ordinary PNG pictures on your computer. It isn't one of the setup steps: open it from **Screenshots** in the sidebar's *Tools* section or from the button on step 1. **← Back to setup** returns to the step you were on.
 
-*Screenshot, described:* the eyebrow says *Tool · Not part of setup* above the heading *Screenshots*. A note says the screenshot build is a private lab feature. Below are two path boxes: **Choose card or folder...** for where the screenshots are, and **Change...** for where the PNG files go, each with a status line. Then come the **Convert to PNG** button and **Open output folder**, a progress bar while it runs, and a result box with one line per file.
+*Screenshot, described:* the eyebrow says *Tool · Not part of setup* above the heading *Screenshots*. A note says which build saves these files. Below are two path boxes: **Choose card or folder...** for where the screenshots are, and **Change...** for where the PNG files go, each with a status line. Then come the **Convert to PNG** button and **Open output folder**, a progress bar while it runs, and a result box with one line per file.
 
 1. Put the card in your computer, or copy its `R5SHOTS` folder to it. Choose the card's top folder (for example `/Volumes/EOS_DIGITAL`), its `DCIM` folder, the `R5SHOTS` folder itself, or a folder that holds a copied `R5SHOTS`. The status line says how many `SS_*.YCA` files it found and whether they're on a camera card.
 2. The PNG files go to `~/Pictures/R5 screenshots/<today's date>` unless you choose another folder. The folder must be on your computer: a folder on the card, inside the folder you chose, or the home folder or a system folder is refused.

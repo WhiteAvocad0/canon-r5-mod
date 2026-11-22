@@ -10,8 +10,10 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from gui import theme  # noqa: E402
+from gui_window_scenarios import WindowFixture, make_root
 
 
 class FontResolutionTests(unittest.TestCase):
@@ -86,11 +88,10 @@ class TokenTests(unittest.TestCase):
         self.assertEqual(theme.BUTTON_PADDING[0] % 8, 0)
 
     def test_layout_tokens(self):
-        self.assertEqual(theme.MIN_WINDOW, (900, 640))
+        self.assertEqual(theme.MIN_WINDOW, (640, 480))
         self.assertGreaterEqual(theme.DEFAULT_WINDOW[0], theme.MIN_WINDOW[0])
         self.assertGreaterEqual(theme.DEFAULT_WINDOW[1], theme.MIN_WINDOW[1])
         self.assertTrue(60 <= theme.LINE_LENGTH <= 75)
-        self.assertLess(theme.SIDEBAR_WIDTH + theme.CONTENT_MAX_WIDTH, theme.DEFAULT_WINDOW[0] + 1)
 
     def test_palettes_are_valid_and_readable(self):
         hex_colour = re.compile(r"#[0-9A-Fa-f]{6}")
@@ -174,52 +175,31 @@ class AppearanceTests(unittest.TestCase):
         self.assertEqual(theme.detect_appearance("win32", environ={}), "light")
 
 
-def make_root():
-    """A hidden Tk root, or None when this Python has no Tk or there is no display."""
-    try:
-        import tkinter as tk
-    except ImportError:
-        return None
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        return None
-    root.withdraw()
-    return root
+class VisibleWindowTests(unittest.TestCase):
+    """Each native window gets a fresh process and a single Tk interpreter, like the desktop app."""
+
+    def run_scenarios(self, *names):
+        script = Path(__file__).with_name("gui_window_scenarios.py")
+        with tempfile.TemporaryDirectory() as directory:
+            for name in names:
+                # Inherit stdout/stderr so native faults, subtest tracebacks and partial timeout output reach CI.
+                result = subprocess.run([sys.executable, "-u", "-X", "faulthandler", str(script), name, directory],
+                                        timeout=60)
+                if result.returncode == 77:
+                    self.skipTest("Tk is not available here (no tkinter or no display)")
+                self.assertEqual(result.returncode, 0, f"GUI scenario {name} exited with {result.returncode}")
+
+    def test_language_switch_preserves_the_current_session_and_reopens_in_the_saved_language(self):
+        self.run_scenarios("switch_language", "reopen_session")
+
+    def test_compact_navigation_and_translated_controls_fit_after_resizing(self):
+        self.run_scenarios("compact_navigation")
+
+    def test_content_and_controls_reflow_in_both_directions(self):
+        self.run_scenarios("resize_content")
 
 
-class WindowSmokeTests(unittest.TestCase):
-    """Builds the real window hidden, with saved progress in a temporary folder and no toolchain search."""
-
-    def setUp(self):
-        self.root = make_root()
-        if self.root is None:
-            self.skipTest("Tk is not available here (no tkinter or no display)")
-        import tkinter as tk
-        from tkinter import filedialog, font as tkfont, messagebox, ttk
-        from gui import app as app_mod, checks, wizard
-        self.tk, self.app_mod, self.wizard_mod = tk, app_mod, wizard
-        self.tmp = tempfile.TemporaryDirectory()
-        patches = [mock.patch.object(wizard, "DEFAULT_STATE_FILE", Path(self.tmp.name) / "wizard.json"),
-                   mock.patch.object(checks, "detect_toolchain", lambda: (None, None, []))]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-        self.modules = (tk, ttk, filedialog, messagebox, tkfont)
-        self.addCleanup(self.tmp.cleanup)
-        self.addCleanup(self._destroy)
-
-    def _destroy(self):
-        try:
-            self.root.destroy()
-        except Exception:
-            pass
-
-    def build(self, appearance):
-        app = self.app_mod.App(*self.modules, root=self.root, appearance=appearance)
-        self.root.update_idletasks()
-        return app
-
+class WindowSmokeTests(WindowFixture):
     def visible_step(self, app):
         return [step for step, (frame, _check, _canvas) in app.panels.items() if frame.winfo_manager()]
 
@@ -291,7 +271,7 @@ class WindowSmokeTests(unittest.TestCase):
         # The short path is offered from the sidebar once steps 1 to 3 are done, and can be left again.
         self.assertFalse(app.mode_link.winfo_manager())
         app.wizard.set_bootdisk("confirmed")
-        app.state.set_rom(Path(self.tmp.name) / "gang100.bin")
+        app.state.set_rom(self.work_dir / "gang100.bin")
         app.state.finish("rom", app.state.rom_key(), True, "ROM accepted")
         app.refresh()
         self.assertTrue(app.mode_link.winfo_manager())
@@ -428,10 +408,6 @@ class WindowSmokeTests(unittest.TestCase):
         app._set_column(500)  # a narrow window re-wraps the text
         self.assertTrue(all(int(str(label.cget("wraplength"))) <= 500 for label, _i, _f in app._wrapped))
 
-    def _descendants(self, widget):
-        for child in widget.winfo_children():
-            yield child
-            yield from self._descendants(child)
 
 
 class SelfTestModeTests(unittest.TestCase):

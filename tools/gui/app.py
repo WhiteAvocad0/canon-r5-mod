@@ -32,6 +32,9 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from gui.i18n import LANGUAGES, Translator, lines_of
+from messages import error_text, joined, message, phrase
+
 from cardprep import cbasic, devices as card_devices, layout, workflow as card_flow
 from gui import bundle, card, checks, runner, shots, theme
 import screenshots as screenshots_mod
@@ -47,9 +50,9 @@ def verify_build(out: Path):
     try:
         summary = runner.summarize(out)
     except (OSError, ValueError, KeyError):
-        return None, f"The previous build in {out} can't be read any more; build again."
+        return None, message("The previous build in {out} can't be read any more; build again.", out=out)
     if not summary.sha256_matches_build_json:
-        return None, f"The previous build in {out} no longer matches its build.json; build again."
+        return None, message('The previous build in {out} no longer matches its build.json; build again.', out=out)
     return summary, None
 
 
@@ -125,7 +128,7 @@ def open_document(path: Path, *, platform: str | None = None, startfile=None, po
 
 
 def bullets(lines) -> str:
-    return "\n".join(f"•  {line}" for line in lines)
+    return joined("\n", (message('•  {line}', line=phrase(line)) for line in lines))
 
 
 class Slot:
@@ -160,15 +163,14 @@ class Callout:
         self.headline.grid(row=0, column=1, sticky="w")
         self.body = ttk.Label(self.frame, justify="left")
         self.frame.columnconfigure(1, weight=1)
-        inset = CARD_INSET + 32
-        app.wrap(self.headline, inset, full=True)
-        app.wrap(self.body, inset, full=True)
+        app.wrap(self.headline, CARD_INSET + 32, full=True)
+        app.wrap(self.body, CARD_INSET + 32, full=True)
 
     def set(self, kind, headline, body="", mono=False):
         self.kind = kind
         self.frame.configure(style=f"Callout.{kind}.TFrame")
-        self.headline.configure(text=headline, style=f"Callout.{kind}.Headline.TLabel")
-        self.body.configure(text=body, style=f"Callout.{kind}.Mono.TLabel" if mono else f"Callout.{kind}.TLabel")
+        self.app.words.configure(self.headline, text=headline, style=f"Callout.{kind}.Headline.TLabel")
+        self.app.words.configure(self.body, text=body, style=f"Callout.{kind}.Mono.TLabel" if mono else f"Callout.{kind}.TLabel")
         if body:
             self.body.grid(row=1, column=1, sticky="w", pady=(XS, 0))
         else:
@@ -190,6 +192,7 @@ class StatusLine:
 
     def __init__(self, app, parent, pady=(S, 0)):
         ttk = app.ttk
+        self.app = app
         self.frame = ttk.Frame(parent)
         self.frame.pack(fill="x", pady=pady)
         self.icon = ttk.Label(self.frame, width=2, style=f"Status.{NEUTRAL}.Icon.TLabel")
@@ -199,8 +202,8 @@ class StatusLine:
         app.wrap(self.text, 24, full=True)
 
     def set(self, kind, text):
-        self.icon.configure(text=theme.GLYPHS[kind], style=f"Status.{kind}.Icon.TLabel")
-        self.text.configure(text=text, style=f"Status.{kind}.TLabel")
+        self.app.words.configure(self.icon, text=theme.GLYPHS[kind], style=f"Status.{kind}.Icon.TLabel")
+        self.app.words.configure(self.text, text=text, style=f"Status.{kind}.TLabel")
 
     def show_check(self, check):
         self.set(CHECK_KINDS.get(check.status, NEUTRAL), check.message or "Not checked yet.")
@@ -211,6 +214,7 @@ class Busy:
 
     def __init__(self, app, parent, pady=(12, 0)):
         ttk = app.ttk
+        self.app = app
         self.slot = Slot(ttk, parent, pady=pady)
         self.frame = ttk.Frame(self.slot.frame)
         self.bar = ttk.Progressbar(self.frame, mode="indeterminate", length=160,
@@ -223,7 +227,7 @@ class Busy:
 
     def set(self, text):
         if text:
-            self.label.configure(text=text)
+            self.app.words.configure(self.label, text=text)
             self.slot.show(self.frame)
             if not self.running:
                 self.bar.start(12)
@@ -250,14 +254,19 @@ class App:
         self.utility: str | None = None  # a utility shown instead of the current setup step
         self._hint: str | None = None  # why the step clicked in the sidebar is locked; cleared on the next move
         self.wizard = Wizard(self.state, prep_supported=card_devices.prepare_supported())
+        self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
+        self.wizard.load(verify_build=verify_build, verify_bootdisk=verify_bootdisk)
+        self.summary = self.wizard.build_summary
+        self.words = Translator(self.wizard.saved.language)
         self._wrapped: list = []
+        self._need_rows = []
         self._inners = {}  # step -> the scrolled frame holding its content
         self._detecting = False  # the toolchain search is running
-        self._column = theme.CONTENT_MAX_WIDTH
+        self._column = theme.DEFAULT_WINDOW[0] - theme.SIDEBAR_WIDTH - 2 * XL
 
         self.root = tk.Tk() if root is None else root
         self.theme = theme.apply(self.root, ttk, tkfont, appearance=appearance)
-        self.root.title("R5 Mod Assistant (prototype)")
+        self.root.title(self.words.render("R5 Mod Assistant (prototype)"))
         self.root.minsize(*theme.MIN_WINDOW)
         width = max(theme.MIN_WINDOW[0], min(theme.DEFAULT_WINDOW[0], self.root.winfo_screenwidth() - 80))
         height = max(theme.MIN_WINDOW[1], min(theme.DEFAULT_WINDOW[1], self.root.winfo_screenheight() - 120))
@@ -265,11 +274,13 @@ class App:
 
         shell = ttk.Frame(self.root)
         shell.pack(fill="both", expand=True)
-        self._sidebar(shell)
-        ttk.Separator(shell, orient="vertical").pack(side="left", fill="y")
+        self.sidebar = self._sidebar(shell)
+        self.sidebar_rule = ttk.Separator(shell, orient="vertical")
+        self.sidebar_rule.pack(side="left", fill="y")
         main = ttk.Frame(shell)
         main.pack(side="left", fill="both", expand=True)
         self._help_menu()
+        self._language_header(main)
         footer = self._footer(main)
         self.content = ttk.Frame(main)
         self.content.pack(fill="both", expand=True)
@@ -288,12 +299,13 @@ class App:
         self._test_panel()
         self._screenshots_panel()
         self._bind_scrolling()
+        self.content.bind("<Configure>", lambda event: self._set_column(event.width - self.scrollbar_width))
+        self._compact = None
+        shell.bind("<Configure>", lambda event: self._size_navigation(main, event.width, event.height))
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        self.state.set_output_dir(default_output_dir(self.state.profile, self.state.options, self.state.manifest))
-        self.wizard.load(verify_build=verify_build, verify_bootdisk=verify_bootdisk)
-        self.summary = self.wizard.build_summary
-        self.root.after(100, self._poll)
+        self._poll_timer = self.root.after(100, self._poll)
+        self.root.bind("<Destroy>", self._cancel_poll, add="+")
         self._detect_toolchain()
         self.refresh()
 
@@ -311,18 +323,19 @@ class App:
         return max(160, width if full else min(self.theme.text_wrap, width))
 
     def _set_column(self, width):
-        column = max(320, min(width, theme.CONTENT_MAX_WIDTH + 2 * XL) - 2 * XL)
+        column = max(160, width - 2 * XL)
         if column == self._column:
             return
         self._column = column
         for label, inset, full in self._wrapped:
             label.configure(wraplength=self._wrap_width(inset, full))
+        self._wrap_needs()
         choice_wrap = self._wrap_width(28, False)
         for name in ("TCheckbutton", "TRadiobutton"):
             self.ttk.Style(self.root).configure(name, wraplength=choice_wrap)
 
     def _text(self, parent, text="", style="Body.TLabel", pady=(S, 0), inset=0, full=False):
-        label = self.ttk.Label(parent, text=text, style=style, justify="left")
+        label = self.words.widget(self.ttk.Label, parent, text=text, style=style, justify="left")
         label.pack(anchor="w", fill="x", pady=pady)
         return self.wrap(label, inset, full)
 
@@ -332,37 +345,50 @@ class App:
         grid.pack(fill="x", anchor="w")
         grid.columnconfigure(1, weight=1)
         for row, line in enumerate(lines):
-            self.ttk.Label(grid, text=f"{row + 1}." if numbered else "•",
+            self.words.widget(self.ttk.Label, grid, text=f"{row + 1}." if numbered else "•",
                            style="Strong.TLabel" if numbered else "Body.TLabel").grid(
                 row=row, column=0, sticky="nw", padx=(0, S), pady=(XS, 0))
-            label = self.ttk.Label(grid, text=line, style="Body.TLabel", justify="left")
+            label = self.words.widget(self.ttk.Label, grid, text=line, style="Body.TLabel", justify="left")
             label.grid(row=row, column=1, sticky="w", pady=(XS, 0))
             self.wrap(label, inset + 3 * S)
         return grid
 
     def _badge(self, parent, card):
         """The card size a step needs, as a small highlighted label."""
-        return self.ttk.Label(parent, text=CARD_BADGES[card], style=f"CardBadge.{card}.TLabel")
+        return self.words.widget(self.ttk.Label, parent, text=CARD_BADGES[card], style=f"CardBadge.{card}.TLabel")
 
     def _needs_box(self, parent, needs, title):
         """What a step needs (SD card, computer, camera...), with the card size highlighted."""
         box = self.ttk.Frame(parent, style="Needs.TFrame", padding=M)
         box.pack(fill="x", pady=(L, 0))
-        self.wrap(self.ttk.Label(box, text=title, style="Needs.Title.TLabel", justify="left"),
+        self.wrap(self.words.widget(self.ttk.Label, box, text=title, style="Needs.Title.TLabel", justify="left"),
                   CARD_INSET, full=True).pack(anchor="w", fill="x")
         grid = self.ttk.Frame(box, style="Needs.Inner.TFrame")
         grid.pack(fill="x")
         grid.columnconfigure(1, weight=1)
+        details = []
+        titles = []
         for row, need in enumerate(needs):
-            self.ttk.Label(grid, text=need.what, style="Needs.Strong.TLabel").grid(
-                row=row, column=0, sticky="nw", padx=(0, M), pady=(S, 0))
+            title_label = self.words.widget(self.ttk.Label, grid, text=need.what, style="Needs.Strong.TLabel")
+            title_label.grid(row=row, column=0, sticky="nw", padx=(0, M), pady=(S, 0))
+            titles.append(title_label)
             cell = self.ttk.Frame(grid, style="Needs.Inner.TFrame")
             cell.grid(row=row, column=1, sticky="we", pady=(S, 0))
             if need.card:
                 self._badge(cell, need.card).pack(anchor="w", pady=(0, XS))
-            self.wrap(self.ttk.Label(cell, text=need.detail, style="Needs.TLabel", justify="left"),
-                      CARD_INSET + 140).pack(anchor="w", fill="x")
+            detail = self.words.widget(self.ttk.Label, cell, text=need.detail, style="Needs.TLabel",
+                                       justify="left", wraplength=self.theme.text_wrap)
+            detail.pack(anchor="w", fill="x")
+            details.append(detail)
+
+        self._need_rows.append((titles, details))
         return box
+
+    def _wrap_needs(self):
+        for titles, details in self._need_rows:
+            inset = CARD_INSET + M + max(title.winfo_reqwidth() for title in titles)
+            for detail in details:
+                detail.configure(wraplength=self._wrap_width(inset, False))
 
     def _card(self, parent, title=None, pady=(M, 0), style="Card.TFrame"):
         box = self.ttk.Frame(parent, style=style, padding=M)
@@ -382,7 +408,7 @@ class App:
                        font=self.theme.fonts["mono"]).pack(side="left", fill="x", expand=True)
         made = []
         for text, command in buttons:
-            button = self.ttk.Button(row, text=text, command=command)
+            button = self.words.widget(self.ttk.Button, row, text=text, command=command)
             button.pack(side="left", padx=(S, 0))
             made.append(button)
         return made
@@ -392,12 +418,30 @@ class App:
         row.pack(fill="x", pady=pady)
         return row
 
+    @staticmethod
+    def _fit_button_row(row):
+        buttons = row.pack_slaves()
+        if len(buttons) < 2 or not row.winfo_ismapped():
+            return
+        stacked = sum(b.winfo_reqwidth() for b in buttons) + S * (len(buttons) - 1) > row.winfo_width()
+        side = "top" if stacked else "left"
+        for index, button in enumerate(buttons):
+            if str(button.pack_info()["side"]) != side:
+                gap = S if index else 0
+                button.pack_configure(side=side, anchor="w", padx=(0 if stacked else gap, 0),
+                                      pady=(gap if stacked else 0, 0))
+
     def _button(self, row, text, command=None, primary=False, **kw):
         """A button at the end of a row; primary for the step's main action."""
         first = not row.winfo_children()
-        button = self.ttk.Button(row, text=text, command=command, style="Primary.TButton" if primary else "TButton",
+        button = self.words.widget(self.ttk.Button, row, text=text, command=command, style="Primary.TButton" if primary else "TButton",
                                  **kw)
         button.pack(side="left", padx=(0 if first else S, 0))
+        if not first:
+            row.bind("<Configure>", lambda _e: self._fit_button_row(row))
+            row.bind("<Map>", lambda _e: self._fit_button_row(row))
+            for child in row.pack_slaves():
+                child.bind("<Configure>", lambda _e, frame=row: self._fit_button_row(frame))
         return button
 
     def _textbox(self, parent, height, pady=(S, 0)):
@@ -415,11 +459,10 @@ class App:
         text.pack(side="left", fill="both", expand=True)
         return text, box
 
-    @staticmethod
-    def _set_text(widget, text):
+    def _set_text(self, widget, text):
         widget.configure(state="normal")
         widget.delete("1.0", "end")
-        widget.insert("end", text)
+        widget.insert("end", self.words.render(text))
         widget.configure(state="disabled")
 
     def draw_mark(self, canvas, kind, background, text=None, ring=False, colour=None):
@@ -447,10 +490,10 @@ class App:
         side.pack_propagate(False)
         brand = ttk.Frame(side, style="Sidebar.TFrame")
         brand.pack(fill="x", padx=S)
-        ttk.Label(brand, text="Canon R5 mod", style="Sidebar.Title.TLabel").pack(side="left")
-        ttk.Label(brand, text="Prototype", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
-        ttk.Label(side, text="R5 Mod Assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
-        ttk.Label(side, text="Steps", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
+        self.words.widget(ttk.Label, brand, text="Canon R5 mod", style="Sidebar.Title.TLabel").pack(side="left")
+        self.words.widget(ttk.Label, brand, text="Prototype", style="SidebarBadge.TLabel").pack(side="left", padx=(S, 0))
+        self.words.widget(ttk.Label, side, text="R5 Mod Assistant", style="Sidebar.Caption.TLabel").pack(anchor="w", padx=S, pady=(2, 0))
+        self.words.widget(ttk.Label, side, text="Steps", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M + S, S))
         rows = ttk.Frame(side, style="Sidebar.TFrame")
         rows.pack(fill="x")
         self.side_rows = {}
@@ -460,22 +503,23 @@ class App:
             parts[0].bind("<Down>", lambda _e, s=info.id: self._side_focus(s, 1))
             self.side_rows[info.id] = {"parts": parts, "hover": False}
         self._side_path = None
-        self.mode_label = ttk.Label(side, text="", style="Sidebar.Caption.TLabel", justify="left",
+        self.mode_label = self.words.widget(ttk.Label, side, text="", style="Sidebar.Caption.TLabel", justify="left",
                                     wraplength=theme.SIDEBAR_WIDTH - 3 * M - 2 * S)
         self.mode_label.pack(anchor="w", padx=S, pady=(M, 0))
         # Switches between the full setup and the short "Update my card" path, from any step.
-        self.mode_link = ttk.Button(side, text="", style="Sidebar.Link.TButton", cursor="hand2",
+        self.mode_link = self.words.widget(ttk.Button, side, text="", style="Sidebar.Link.TButton", cursor="hand2",
                                     command=self._switch_mode)
         self.mode_link.pack(anchor="w", padx=S, pady=(XS, 0))
-        # Below the steps: at the smallest window height this can be cut off; step 1 links to it too.
-        ttk.Label(side, text="Tools", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M, XS))
+        # Compact windows expose this utility in the Steps menu.
+        self.words.widget(ttk.Label, side, text="Tools", style="Sidebar.Eyebrow.TLabel").pack(anchor="w", padx=S, pady=(M, XS))
         tools = ttk.Frame(side, style="Sidebar.TFrame")
         tools.pack(fill="x")
         self.tool_rows = {}
         parts = self._side_row(tools, shots.SCREENSHOTS, shots.TITLE, lambda: self._open_utility(shots.SCREENSHOTS))
         parts[0].pack(fill="x")
-        parts[4].configure(text="Convert card screenshots")
+        self.words.configure(parts[4], text="Convert card screenshots")
         self.tool_rows[shots.SCREENSHOTS] = {"parts": parts, "hover": False}
+        return side
 
     def _side_row(self, parent, key, text, on_click):
         """A sidebar row: a focus bar, a round mark, a title and a status caption."""
@@ -486,10 +530,11 @@ class App:
         bar.grid(row=0, column=0, rowspan=2, sticky="ns")
         mark = tk.Canvas(row, width=22, height=22, highlightthickness=0, borderwidth=0, background=p.surface)
         mark.grid(row=0, column=1, rowspan=2, padx=(S, 10), pady=S)
-        title = tk.Label(row, text=text, anchor="w", justify="left", background=p.surface,
+        title = self.words.widget(tk.Label, row, text=text, anchor="w", justify="left", background=p.surface,
                          foreground=p.text, font=f["body"], borderwidth=0, padx=0, pady=0)
         title.grid(row=0, column=2, sticky="sw", pady=(S, 0))
-        status = tk.Label(row, text="", anchor="w", background=p.surface, foreground=p.text_muted,
+        status = self.words.widget(tk.Label, row, text="", anchor="w", justify="left", wraplength=theme.SIDEBAR_WIDTH - 5 * M,
+                          background=p.surface, foreground=p.text_muted,
                           font=f["caption"], borderwidth=0, padx=0, pady=0)
         status.grid(row=1, column=2, sticky="nw", pady=(0, S))
         row.columnconfigure(2, weight=1)
@@ -508,24 +553,98 @@ class App:
         for label, path in DOCS.items():
             help_menu.add_command(label=label, command=lambda p=path: open_document(p))
         bar.add_cascade(label="Help", menu=help_menu)
+        self.menu_bar, self.help_menu = bar, help_menu
+        self._translate_menu()
         self.root.configure(menu=bar)
+
+    def _translate_menu(self):
+        for index, label in enumerate(DOCS):
+            self.help_menu.entryconfigure(index, label=self.words.render(label))
+        self.menu_bar.entryconfigure("end", label=self.words.render("Help"))
+
+    def _change_language(self, _event=None):
+        language = tuple(LANGUAGES)[self.language_menu.current()]
+        if language == self.words.language:
+            return
+        self.words.select(language)
+        self._wrap_needs()
+        self.wizard.saved.language = language
+        self.wizard.save()
+        self.root.title(self.words.render("R5 Mod Assistant (prototype)"))
+        self._translate_menu()
+        for view in self.state.option_views():
+            self._show_option(view)
+        self._refresh_cbasic()
+        self._refresh_prep()
+        self._refresh_shots()
+
+    def _show_option(self, view):
+        combo = self.option_widgets[view.id][0]
+        combo.configure(values=[self.words.render(c.label) for c in view.choices])
+        index = next(i for i, c in enumerate(view.choices) if c.value == view.value)
+        combo.current(index)
+        return view.choices[index]
 
     def _disclosure(self, parent, title):
         """Return a content frame opened by the labelled disclosure above it."""
-        button = self.ttk.Button(parent, text=f"▸  {title}", style="Toggle.TButton")
+        button = self.words.widget(self.ttk.Button, parent, text=message(
+            "▸  {title}",
+            title=phrase(title)), style="Toggle.TButton")
         button.pack(anchor="w", pady=(M, 0))
         body = self.ttk.Frame(parent)
 
         def toggle():
             if body.winfo_manager():
                 body.pack_forget()
-                button.configure(text=f"▸  {title}")
+                self.words.configure(button, text=message('▸  {title}', title=phrase(title)))
             else:
                 body.pack(fill="x", after=button)
-                button.configure(text=f"▾  {title}")
+                self.words.configure(button, text=message('▾  {title}', title=phrase(title)))
 
         button.configure(command=toggle)
         return body
+
+    def _size_navigation(self, main, width, height):
+        # Keep the step column usable on small screens and the last sidebar tool within reach.
+        min_width, min_height = theme.SIDEBAR_MIN_WINDOW
+        compact = width < min_width or height < min_height
+        if compact == self._compact:
+            return
+        self._compact = compact
+        if compact:
+            self.sidebar.pack_forget()
+            self.sidebar_rule.pack_forget()
+            self.step_menu_button.pack(side="left")
+        else:
+            self.step_menu_button.pack_forget()
+            self.sidebar.pack(side="left", fill="y", before=main)
+            self.sidebar_rule.pack(side="left", fill="y", before=main)
+
+    def _populate_step_menu(self):
+        menu, wiz = self.step_menu, self.wizard
+        menu.delete(0, "end")
+        for step_id in wiz.path():
+            info = STEP_BY_ID[step_id]
+            label = f"{info.number}. {self.words.render(info.title)}"
+            menu.add_command(label=label, command=lambda key=step_id: self._sidebar_clicked(key))
+        menu.add_separator()
+        if wiz.saved.mode == "update" or not wiz.one_time_done():
+            label = "Show all nine steps" if wiz.saved.mode == "update" else "Update my card instead"
+            menu.add_command(label=self.words.render(label), command=self._switch_mode)
+        menu.add_command(label=self.words.render(shots.TITLE), command=lambda: self._open_utility(shots.SCREENSHOTS))
+
+    def _language_header(self, main):
+        header = self.ttk.Frame(main, padding=(XL, S))
+        header.pack(side="top", fill="x")
+        self.step_menu_button = self.words.widget(self.ttk.Menubutton, header, text="Steps")
+        self.step_menu = self.tk.Menu(self.step_menu_button, tearoff=False, postcommand=self._populate_step_menu)
+        self.step_menu_button.configure(menu=self.step_menu)
+        self.language_label = self.words.widget(self.ttk.Label, header, text="Language", style="Caption.TLabel")
+        self.language_menu = self.ttk.Combobox(header, state="readonly", values=tuple(LANGUAGES.values()), width=10)
+        self.language_menu.set(LANGUAGES[self.words.language])
+        self.language_menu.bind("<<ComboboxSelected>>", self._change_language)
+        self.language_menu.pack(side="right")
+        self.language_label.pack(side="right", padx=(0, S))
 
     def _footer(self, parent):
         footer = self.ttk.Frame(parent)
@@ -533,12 +652,14 @@ class App:
         self.ttk.Separator(footer, orient="horizontal").pack(fill="x")
         nav = self.ttk.Frame(footer, padding=(XL, M))
         nav.pack(fill="x")
-        self.back_button = self.ttk.Button(nav, text="Back", command=self._back)
-        self.back_button.pack(side="left")
-        self.next_button = self.ttk.Button(nav, text="Next", command=self._next, style="Primary.TButton")
-        self.next_button.pack(side="right")
-        self.nav_note = self.ttk.Label(nav, text="", style="Caption.TLabel", wraplength=380, justify="right")
-        self.nav_note.pack(side="right", padx=M)
+        self.back_button = self.words.widget(self.ttk.Button, nav, text="Back", command=self._back)
+        self.back_button.grid(row=0, column=0, sticky="w")
+        self.next_button = self.words.widget(self.ttk.Button, nav, text="Next", command=self._next, style="Primary.TButton")
+        self.next_button.grid(row=0, column=2, sticky="e")
+        self.nav_note = self.words.widget(self.ttk.Label, nav, text="", style="Caption.TLabel", wraplength=380, justify="right")
+        self.nav_note.grid(row=0, column=1, sticky="ew", padx=M)
+        nav.columnconfigure(1, weight=1)
+        self.nav_note.bind("<Configure>", lambda e: self.nav_note.configure(wraplength=max(100, e.width - 2)))
         return footer
 
     # -- steps ---------------------------------------------------------------------
@@ -554,15 +675,16 @@ class App:
         else:
             info, guide = STEP_BY_ID[step_id], GUIDE[step_id]
             title = info.title
-            eyebrow = f"Step {info.number}" + ("  ·  One-time setup" if info.one_time else "")
+            eyebrow = message("Step {number}  ·  One-time setup" if info.one_time else "Step {number}", number=info.number)
         frame = ttk.Frame(self.content)
         canvas = tk.Canvas(frame, highlightthickness=0, borderwidth=0, background=p.bg, yscrollincrement=1)
         bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview, style="Thin.Vertical.TScrollbar")
+        self.scrollbar_width = bar.winfo_reqwidth()
         inner = ttk.Frame(canvas, padding=(XL, L, XL, XL))
         window = canvas.create_window((0, 0), window=inner, anchor="nw")
 
         def sync(_e=None):
-            canvas.configure(scrollregion=(0, 0, inner.winfo_reqwidth(), inner.winfo_reqheight()))
+            canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), inner.winfo_reqheight()))
             if inner.winfo_reqheight() > canvas.winfo_height() > 1:
                 if not bar.winfo_manager():
                     bar.pack(side="right", fill="y", before=canvas)
@@ -571,8 +693,7 @@ class App:
                 canvas.yview_moveto(0)
 
         def resize(e):
-            canvas.itemconfigure(window, width=min(e.width, theme.CONTENT_MAX_WIDTH + 2 * XL))
-            self._set_column(e.width)
+            canvas.itemconfigure(window, width=e.width)
             sync()
         inner.bind("<Configure>", sync)
         canvas.bind("<Configure>", resize)
@@ -581,7 +702,7 @@ class App:
 
         top = ttk.Frame(inner)
         top.pack(anchor="w", fill="x")
-        ttk.Label(top, text=eyebrow, style="Eyebrow.TLabel").pack(side="left")
+        self.words.widget(ttk.Label, top, text=eyebrow, style="Eyebrow.TLabel").pack(side="left")
         card_size = None if utility else guide.card
         if card_size and step_id != ROM:
             self._badge(top, card_size).pack(side="left", padx=(M, 0))
@@ -599,7 +720,7 @@ class App:
             if getattr(guide, "needs", ()):
                 self._needs_box(help_box, guide.needs, "What you’ll need")
         details_box = self._disclosure(inner, "Details")
-        self._text(details_box, "\n\n".join(t for t in (guide.details, extra_details) if t),
+        self._text(details_box, joined("\n\n", (t for t in (guide.details, extra_details) if t)),
                    "Details.TLabel", inset=CARD_INSET)
         (self.utilities if utility else self.panels)[step_id] = (frame, check, canvas)
         self._inners[step_id] = inner
@@ -609,7 +730,7 @@ class App:
         tab = self._panel(CAMERA, extra_details=CANNOT_DO)
         self._list(tab, GUIDE[CAMERA].todo, numbered=True)
         self.camera_var = self.tk.BooleanVar(value=False)
-        self.ttk.Checkbutton(tab, variable=self.camera_var, command=lambda: (
+        self.words.widget(self.ttk.Checkbutton, tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
             text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
         self.returning_owner = self.ttk.Frame(tab)
@@ -620,19 +741,19 @@ class App:
     def _cbasic_card_selector(self, parent):
         row = self.ttk.Frame(parent)
         row.pack(fill="x", pady=(S, 0))
-        find_btn = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
+        find_btn = self.words.widget(self.ttk.Button, row, text="Find SD cards", command=self._prep_find)
         find_btn.pack(side="left")
         choice = self.tk.StringVar()
         combo = self.ttk.Combobox(row, textvariable=choice, state="disabled", width=40)
         combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
-        combo.bind("<<ComboboxSelected>>", lambda _e, var=choice: self._cbasic_card_selected(var))
+        combo.bind("<<ComboboxSelected>>", lambda _e: self._select_card(combo))
         note = self._text(parent, "", "Caption.TLabel", pady=(XS, 0), inset=CARD_INSET, full=True)
         return find_btn, choice, combo, note
 
-    def _cbasic_card_selected(self, choice_var):
-        summary = choice_var.get()
-        match = next((c for c in self.prep.accepted if c.summary() == summary), None)
-        self.prep.select(match.whole_id if match else None)
+    def _select_card(self, combo):
+        index = combo.current()
+        candidates = self.prep.accepted
+        self.prep.select(candidates[index].whole_id if 0 <= index < len(candidates) else None)
         self.refresh()
 
     def _bootdisk_panel(self):
@@ -641,7 +762,7 @@ class App:
         self.bootdisk_var = self.tk.BooleanVar(value=False)
         self.bd_pages = {key: self.ttk.Frame(tab) for key in ("setup", "camera", "verify", "complete")}
         setup = self.bd_pages["setup"]
-        self.ttk.Checkbutton(setup, variable=self.bootdisk_ack, command=self.refresh,
+        self.words.widget(self.ttk.Checkbutton, setup, variable=self.bootdisk_ack, command=self.refresh,
             text="I understand this changes a permanent camera setting and there is no official way back."
             ).pack(anchor="w", pady=(M, S))
         self._text(setup, "At your computer", "Subheading.TLabel")
@@ -659,12 +780,12 @@ class App:
         self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note = self._cbasic_card_selector(selector)
         self.bd_enable_button = self._button(self._buttons(selector), "Prepare card to enable card startup…",
             lambda: self._prepare_cbasic_card("enable_bootdisk", self.bootdisk_guide_status), primary=True)
-        self.ttk.Button(guide, text="I’m returning with a card from the camera", style="Link.TButton",
+        self.words.widget(self.ttk.Button, guide, text="I’m returning with a card from the camera", style="Link.TButton",
                         command=lambda: self._bootdisk_page("verify")).pack(anchor="w", pady=(M, 0))
         existing = self._disclosure(guide, "My camera already starts from a card")
         self.bd_verify_file_button = self._button(self._buttons(existing), "Check an existing firmware copy…",
                                                 self._verify_bootdisk_file)
-        self.bootdisk_box = self.ttk.Checkbutton(existing, variable=self.bootdisk_var, command=self._bootdisk_changed,
+        self.bootdisk_box = self.words.widget(self.ttk.Checkbutton, existing, variable=self.bootdisk_var, command=self._bootdisk_changed,
             text="I previously confirmed this setting by checking a firmware copy from this camera.")
         self.bootdisk_box.pack(anchor="w", pady=(M, 0))
         advanced = self._disclosure(guide, "Other card options and recovery")
@@ -686,7 +807,7 @@ class App:
                                                 self._verify_bootdisk_card, primary=True)
         self._text(self.bd_pages["complete"], "Camera startup is enabled. Continue to choose your features.")
         for page in ("camera", "verify", "complete"):
-            self.ttk.Button(self.bd_pages[page], text="Show setup and recovery options", style="Link.TButton",
+            self.words.widget(self.ttk.Button, self.bd_pages[page], text="Show setup and recovery options", style="Link.TButton",
                             command=lambda: self._bootdisk_page("setup")).pack(anchor="w", pady=(M, 0))
         self.bd_cbasic_busy = Busy(self, tab)
         self.bootdisk_guide_status = Callout(self, tab)
@@ -711,7 +832,7 @@ class App:
         self.test_vars, self.test_boxes = [], []
         for i, text in enumerate(TEST_CHECKLIST):
             var = self.tk.BooleanVar(value=False)
-            box = self.ttk.Checkbutton(tab, variable=var, text=text, command=lambda i=i, v=var: (
+            box = self.words.widget(self.ttk.Checkbutton, tab, variable=var, text=text, command=lambda i=i, v=var: (
                 self.wizard.set_test_item(i, v.get()), self.refresh()))
             box.pack(anchor="w", pady=(S, 0))
             self.test_vars.append(var)
@@ -727,7 +848,7 @@ class App:
     def _update_path(self):
         reasons = self.wizard.start_update()
         if reasons:
-            self.messagebox.showinfo("Update my card", "\n".join(reasons))
+            self.messagebox.showinfo(self.words.render("Update my card"), self.words.render(joined("\n", reasons)))
         self.utility = None
         self._hint = None
         self.refresh()
@@ -743,7 +864,9 @@ class App:
         self._hint = None
         if step_id in self.wizard.path() and not self.wizard.goto(step_id):
             info = STEP_BY_ID[step_id]
-            self._hint = f"Step {info.number} is locked. {self.wizard.status(step_id).message}"
+            self._hint = message(
+                "Step {number} is locked. {reason}",
+                number=info.number, reason=phrase(self.wizard.status(step_id).message))
         self.refresh()
         return "break"
 
@@ -802,7 +925,8 @@ class App:
         title.configure(font=f["subheading"] if current else f["body"],
                         foreground=p.text_disabled if st == BLOCKED else p.text)
         card_size = GUIDE[step_id].card
-        status.configure(text=SIDEBAR_STATUS[st] + (f"  ·  {CARD_BADGES[card_size]}" if card_size else ""))
+        self.words.configure(status, text=message('{status}  ·  {badge}', status=phrase(SIDEBAR_STATUS[st]),
+                                                     badge=phrase(CARD_BADGES[card_size])) if card_size else SIDEBAR_STATUS[st])
         if st == DONE:
             self.draw_mark(mark, SUCCESS, bg)
         elif st == SKIPPED:
@@ -834,7 +958,7 @@ class App:
                     "Please send a test report with 'Open the test report form' on this step, including what "
                     "didn't work. Next time, choose 'Update my card' in the sidebar to change features and "
                     "copy a new build.")
-        self.messagebox.showinfo("All done", text)
+        self.messagebox.showinfo(self.words.render("All done"), self.words.render(text))
 
     def _back(self):
         self._hint = None
@@ -857,12 +981,12 @@ class App:
             self._paint_row(step_id)
         missing = w.one_time_done()
         if w.saved.mode == "update":
-            self.mode_label.configure(text="Path: Update my card. The one-time steps are already done.")
-            self.mode_link.configure(text="Show all nine steps")
+            self.words.configure(self.mode_label, text="Path: Update my card. The one-time steps are already done.")
+            self.words.configure(self.mode_link, text="Show all nine steps")
             self.mode_link.pack(anchor="w", padx=S, pady=(XS, 0), after=self.mode_label)
         else:
-            self.mode_label.configure(text="Path: full setup. Done steps stay done when you come back.")
-            self.mode_link.configure(text="Update my card instead")
+            self.words.configure(self.mode_label, text="Path: full setup. Done steps stay done when you come back.")
+            self.words.configure(self.mode_link, text="Update my card instead")
             if missing:  # the short path needs the one-time steps
                 self.mode_link.pack_forget()
             else:
@@ -879,21 +1003,21 @@ class App:
             if step_id == current and self.utility is None:
                 st = w.status(step_id)
                 if check is not None:
-                    check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: "))
+                    check.set(STEP_KINDS[st.status], STEP_HEADLINES[st.status], st.message.removeprefix("Skipped: ") if st.status == SKIPPED else st.message)
                 if not frame.winfo_manager():
                     frame.pack(fill="both", expand=True)
             elif frame.winfo_manager():
                 frame.pack_forget()
         if self.utility is not None:
-            self.back_button.configure(state="normal", text="Back to setup")
-            self.next_button.configure(state="disabled", text="Next")
-            self.nav_note.configure(text="")
+            self.words.configure(self.back_button, state="normal", text="Back to setup")
+            self.words.configure(self.next_button, state="disabled", text="Next")
+            self.words.configure(self.nav_note, text="")
         else:
-            self.back_button.configure(state="normal" if path.index(current) > 0 else "disabled", text="Back")
+            self.words.configure(self.back_button, state="normal" if path.index(current) > 0 else "disabled", text="Back")
             blockers = w.next_blockers()
-            self.next_button.configure(state="disabled" if blockers else "normal",
+            self.words.configure(self.next_button, state="disabled" if blockers else "normal",
                                        text="Finish" if w.is_last() else "Continue" if current == ROM else "Next")
-            self.nav_note.configure(text=self._hint or (blockers[0] if blockers else ""),
+            self.words.configure(self.nav_note, text=self._hint or (blockers[0] if blockers else ""),
                                     style="Hint.Caption.TLabel" if self._hint else "Caption.TLabel")
         self.camera_var.set(w.saved.camera_confirmed)
         self.update_button.configure(state="disabled" if missing else "normal")
@@ -965,6 +1089,11 @@ class App:
             self.events.put((done, result))
         threading.Thread(target=target, daemon=True).start()
 
+    def _cancel_poll(self, event):
+        if event.widget is self.root and self._poll_timer is not None:
+            self.root.after_cancel(self._poll_timer)
+            self._poll_timer = None
+
     def _poll(self):
         """Deliver background results on the UI thread; a failing callback never stops the loop."""
         try:
@@ -983,7 +1112,8 @@ class App:
                     except Exception:
                         pass
         finally:
-            self.root.after(100, self._poll)
+            if self._poll_timer is not None:
+                self._poll_timer = self.root.after(100, self._poll)
 
     # -- tabs ---------------------------------------------------------------
 
@@ -1010,22 +1140,22 @@ class App:
         self.rom_prep_button = self._button(self.rom_prep_row, "Prepare this card…",
             lambda: self._prepare_cbasic_card("dump", self.rom_guide_status), primary=True)
 
-        saved_copy = self.ttk.Button(start, text="I already have a firmware copy…", command=self._pick_rom,
+        saved_copy = self.words.widget(self.ttk.Button, start, text="I already have a firmware copy…", command=self._pick_rom,
                                      style="Link.TButton" if self.prep.supported else "Primary.TButton")
         saved_copy.pack(anchor="w", pady=(M, 0))
-        self.ttk.Button(start, text="I’m returning with a card from the camera", style="Link.TButton",
+        self.words.widget(self.ttk.Button, start, text="I’m returning with a card from the camera", style="Link.TButton",
                         command=lambda: self._rom_page("return")).pack(anchor="w")
         help_box = self.ttk.Frame(start)
-        help_toggle = self.ttk.Button(start, text="▸  Which SD card can I use?", style="Toggle.TButton")
+        help_toggle = self.words.widget(self.ttk.Button, start, text="▸  Which SD card can I use?", style="Toggle.TButton")
         help_toggle.pack(anchor="w", pady=(M, 0))
 
         def toggle_card_help():
             if help_box.winfo_manager():
                 help_box.pack_forget()
-                help_toggle.configure(text="▸  Which SD card can I use?")
+                self.words.configure(help_toggle, text="▸  Which SD card can I use?")
             else:
                 help_box.pack(fill="x")
-                help_toggle.configure(text="▾  Which SD card can I use?")
+                self.words.configure(help_toggle, text="▾  Which SD card can I use?")
 
         help_toggle.configure(command=toggle_card_help)
         self._text(help_box, "For a fresh copy, use a card formatted in the camera, without the mod file "
@@ -1076,13 +1206,15 @@ class App:
         self.profile_cards = {}
         for view in self.state.profile_views():
             box = self._card(tab, pady=(M if not self.profile_cards else S, 0))
-            self.ttk.Radiobutton(box, text=view.label, value=view.id, variable=self.profile_var,
+            self.words.widget(self.ttk.Radiobutton, box, text=view.label, value=view.id, variable=self.profile_var,
                                  style="Strong.TRadiobutton", command=self._profile_changed).pack(anchor="w")
             indent = self.ttk.Frame(box, padding=(26, 0, 0, 0))
             indent.pack(fill="x")
             self._text(indent, view.description, pady=(XS, 0), inset=CARD_INSET + 26)
             evidence = self._disclosure(indent, "What has been tested?")
-            self._text(evidence, f"{view.status_label}. {view.status_text}", "Caption.TLabel", inset=CARD_INSET + 26)
+            self._text(evidence, message(
+                "{status_label}. {status_text}",
+                status_label=phrase(view.status_label), status_text=phrase(view.status_text)), "Caption.TLabel", inset=CARD_INSET + 26)
             self.profile_cards[view.id] = box
 
         # Options and WAV inputs that the chosen profile doesn't use are hidden, not greyed out.
@@ -1094,7 +1226,7 @@ class App:
             var = self.tk.StringVar()
             combo = self.ttk.Combobox(box, textvariable=var, state="readonly", width=40,
                                       values=[c.label for c in view.choices])
-            combo.pack(anchor="w", pady=(S, 0))
+            combo.pack(anchor="w", fill="x", pady=(S, 0))
             combo.bind("<<ComboboxSelected>>", lambda _e, oid=view.id: self._option_changed(oid))
             reason = self._text(box, "", "Caption.TLabel", inset=CARD_INSET)
             self.option_widgets[view.id] = (combo, var, reason, slot, box)
@@ -1111,7 +1243,7 @@ class App:
             self.input_widgets[view.id] = (var, button, status, slot, box)
             slot.hide(box)
         self.wav_note_slot = Slot(self.ttk, tab, pady=(S, 0))
-        self.wav_note = self.ttk.Label(self.wav_note_slot.frame, style="Caption.TLabel", justify="left", text=(
+        self.wav_note = self.words.widget(self.ttk.Label, self.wav_note_slot.frame, style="Caption.TLabel", justify="left", text=(
             "WAV files must be 48 kHz, mono, 16-bit PCM (see docs/usage.md for an ffmpeg command). "
             "They are embedded unchanged; nothing is trimmed or normalised."))
         self.wrap(self.wav_note)
@@ -1122,7 +1254,7 @@ class App:
         self.tc_install = self.ttk.Frame(tab)
         self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
                    "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
-        self.ttk.Button(self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
+        self.words.widget(self.ttk.Button, self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
                         command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()
         self.tc_fields = self.ttk.Frame(tab)
@@ -1143,7 +1275,7 @@ class App:
         self._field(destination, "Save the next build in", self.out_var, [("Change…", self._pick_output)])
         self.memory_slot = Slot(self.ttk, tab, pady=(M, 0))
         self.memory = self.ttk.Frame(self.memory_slot.frame)
-        self.ttk.Label(self.memory, text="Canon memory left after this build", style="Caption.TLabel").pack(anchor="w")
+        self.words.widget(self.ttk.Label, self.memory, text="Canon memory left after this build", style="Caption.TLabel").pack(anchor="w")
         self.gauge = self.ttk.Progressbar(self.memory, maximum=100, style="Accent.Horizontal.TProgressbar")
         self.gauge.pack(fill="x", pady=(XS, 0))
         buttons = self._buttons(tab)
@@ -1152,7 +1284,7 @@ class App:
         self.open_contents = self._button(buttons, "Open 'what's in this build'",
                                           lambda: open_path(self.summary.output_dir / runner.CONTENTS_NAME),
                                           state="disabled")
-        self.log_toggle = self.ttk.Button(tab, text="▸  Build log", style="Toggle.TButton", cursor="hand2",
+        self.log_toggle = self.words.widget(self.ttk.Button, tab, text="▸  Build log", style="Toggle.TButton", cursor="hand2",
                                           command=lambda: self._show_log(not self.log_box.winfo_manager()))
         self.log_toggle.pack(anchor="w", pady=(L, 0))
         self.log_slot = Slot(self.ttk, tab, fill="both", pady=(XS, 0))
@@ -1165,7 +1297,7 @@ class App:
             self.log_box.pack(in_=self.log_slot.frame, fill="both", expand=True)
         else:
             self.log_slot.hide(self.log_box)
-        self.log_toggle.configure(text=("▾" if show else "▸") + "  Build log")
+        self.words.configure(self.log_toggle, text="▾  Build log" if show else "▸  Build log")
 
     def _card_tab(self):
         tab = self._panel(COPY)
@@ -1177,7 +1309,7 @@ class App:
         self.card_report = Callout(self, tab)
         self.card_confirm = self.tk.BooleanVar(value=False)
         self.card_confirm_slot = Slot(self.ttk, tab, pady=(M, 0))  # shown only when there are warnings
-        self.card_confirm_box = self.ttk.Checkbutton(
+        self.card_confirm_box = self.words.widget(self.ttk.Checkbutton,
             self.card_confirm_slot.frame, variable=self.card_confirm, command=self.refresh,
             text="I have checked the warnings above and this really is my prepared camera card.")
         row = self._buttons(tab)
@@ -1192,12 +1324,12 @@ class App:
         self._text(tab, "SD card", "Caption.TLabel", pady=(L, XS))
         row = self.ttk.Frame(tab)
         row.pack(fill="x")
-        self.prep_find = self.ttk.Button(row, text="Find SD cards", command=self._prep_find)
+        self.prep_find = self.words.widget(self.ttk.Button, row, text="Find SD cards", command=self._prep_find)
         self.prep_find.pack(side="left")
         self.prep_choice = self.tk.StringVar()
         self.prep_combo = self.ttk.Combobox(row, textvariable=self.prep_choice, state="disabled", width=40)
         self.prep_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
-        self.prep_combo.bind("<<ComboboxSelected>>", lambda _e: self._prep_selected())
+        self.prep_combo.bind("<<ComboboxSelected>>", lambda _e: self._select_card(self.prep_combo))
         self.prep_details = self._text(tab, "", "Muted.TLabel", full=True)
         buttons = self._buttons(tab)
         self.prep_button = self._button(buttons, "Prepare card", lambda: self._prep_run("mark"), primary=True)
@@ -1227,17 +1359,23 @@ class App:
         }
         return self.state.profile, options
 
+    @staticmethod
+    def _refused_cards(cards):
+        rows = (message("{whole_id} ({model}): {reason}", whole_id=c.whole_id,
+                        model=c.model or c.bus or "?", reason=phrase(c.refusals[0])) for c in cards)
+        return message("Not offered: {cards}", cards=joined("; ", rows))
+
     def _refresh_cbasic(self):
         p = self.prep
         accepted = p.accepted
         busy = self._card_busy()
-        values = [c.summary() for c in accepted]
-        selected_text = p.selected.summary() if p.selected else ""
+        values = [self.words.render(c.summary()) for c in accepted]
+        selected_text = self.words.render(p.selected.summary()) if p.selected else ""
         lines: list[str] = []
         unsuitable = p.selected and (p.selected.filesystem != "FAT32" or
                                      (p.selected.disk_bytes or 0) >= layout.SDHC_MAX_SECTORS * layout.SECTOR)
         if p.selected:
-            lines.append(f"Selected: {p.selected.summary()}")
+            lines.append(message('Selected: {card}', card=phrase(p.selected.summary())))
             if unsuitable:
                 lines.append("Note: guided Canon Basic requires a FAT32 SDHC card (up to 32 GB); "
                              "SDXC / exFAT cards are untested and refused.")
@@ -1251,9 +1389,8 @@ class App:
         else:
             lines.append("Click 'Find SD cards' to locate your FAT32 SDHC card (up to 32 GB).")
         if p.refused:
-            lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
-                                                     for c in p.refused))
-        note = "\n".join(lines)
+            lines.append(self._refused_cards(p.refused))
+        note = joined("\n", lines)
         for find_btn, choice, combo, note_label in (
             (self.rom_find_button, self.rom_card_choice, self.rom_card_combo, self.rom_card_note),
             (self.bd_find_button, self.bd_card_choice, self.bd_card_combo, self.bd_card_note),
@@ -1261,14 +1398,14 @@ class App:
             find_btn.configure(state="disabled" if busy else "normal")
             combo.configure(values=values, state="readonly" if accepted and not busy else "disabled")
             choice.set(selected_text)
-            note_label.configure(text=note)
+            self.words.configure(note_label, text=note)
 
-        self.rom_card_note.configure(text=note if p.searched or p.selected else "")
+        self.words.configure(self.rom_card_note, text=note if p.searched or p.selected else "")
         if accepted:
             self.rom_card_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
         else:
             self.rom_card_combo.pack_forget()
-        self.rom_find_button.configure(style="TButton" if p.selected else "Primary.TButton",
+        self.words.configure(self.rom_find_button, style="TButton" if p.selected else "Primary.TButton",
                                        text="Search again" if p.searched else "Find my SD card")
         if p.selected and not unsuitable:
             self.rom_prep_row.pack(fill="x", pady=(S, 0))
@@ -1288,8 +1425,8 @@ class App:
         if page == "auto":
             page = "complete" if self.wizard.saved.bootdisk in ("confirmed", "verified") else "setup"
         elif page.startswith("camera_"):
-            self.bd_camera_title.configure(text="At your camera · " + ("disable" if page == "camera_disable" else "enable")
-                                           + " card startup")
+            self.words.configure(self.bd_camera_title, text="At your camera · disable card startup" if page == "camera_disable" else
+                                 "At your camera · enable card startup")
             page = "camera"
         for name, frame in self.bd_pages.items():
             if name == page:
@@ -1301,7 +1438,7 @@ class App:
         self.bd_find_button.configure(state="normal" if ack and not busy else "disabled",
                                       style="TButton" if p.selected else "Primary.TButton")
         if not p.searched:
-            self.bd_card_note.configure(text="")
+            self.words.configure(self.bd_card_note, text="")
         if accepted:
             self.bd_card_combo.pack(side="left", padx=(S, 0), fill="x", expand=True)
         else:
@@ -1320,13 +1457,10 @@ class App:
 
     @staticmethod
     def _set_cbasic_status(callout: Callout, text: str, kind: str = NEUTRAL):
-        lines = [line for line in text.splitlines() if line.strip()]
-        if not lines:
-            callout.clear()
-        elif len(lines) == 1:
-            callout.set(kind, lines[0])
+        if text.strip():
+            callout.set(kind, *lines_of(text))
         else:
-            callout.set(kind, lines[0], "\n".join(lines[1:]))
+            callout.clear()
 
     @staticmethod
     def _cbasic_task_label(task: str) -> str:
@@ -1354,10 +1488,10 @@ class App:
             return
         if task == "disable_bootdisk":
             if not self.messagebox.askokcancel(
-                "Disable BootDisk (hardware-untested)",
-                "DisableBootDisk() (0xE0B38D74) is the stock inverse in the R5 2.2.1 ROM, "
+                self.words.render("Disable BootDisk (hardware-untested)"),
+                self.words.render("DisableBootDisk() (0xE0B38D74) is the stock inverse in the R5 2.2.1 ROM, "
                 "but it has NEVER been run on real camera hardware yet.\n\n"
-                "Only proceed if you accept the risk of testing this on your camera. Continue?",
+                "Only proceed if you accept the risk of testing this on your camera. Continue?"),
                 icon="warning",
             ):
                 return
@@ -1370,23 +1504,27 @@ class App:
         def read_done(session):
             if isinstance(session, Exception):
                 self.cbasic_busy = None
-                self._set_cbasic_status(status_callout, f"Card preparation stopped\n{session}", DANGER)
+                self._set_cbasic_status(status_callout, message(
+                    "Card preparation stopped\n{session}",
+                    session=session), DANGER)
                 self.refresh()
-                self.messagebox.showerror("Canon Basic card preparation", str(session))
+                self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(session)))
                 return
             if session.needs_write:
                 c = session.snapshot.candidate
                 sectors = ", ".join(str(w.sector) for w in session.plan.writes)
-                prompt = "\n\n".join([
-                    f"Prepare {c.label()} for Canon Basic?",
-                    f"{c.model}, {c.whole_id}.",
-                    f"This writes the Canon Basic SCRIPT marker at FAT32 boot sector byte 496 (sector(s) {sectors}, "
-                    f"{len(session.plan.writes) * 512:,} bytes), then stages script.req and extend.m for "
-                    f"{self._cbasic_task_label(task)}.",
+                prompt = joined("\n\n", [
+                    message('Prepare {card} for Canon Basic?', card=c.label()),
+                    message('{model}, {whole_id}.', model=c.model, whole_id=c.whole_id),
+                    message(
+                        "This writes the Canon Basic SCRIPT marker at FAT32 boot sector byte 496 (sector(s) {sectors}, "
+                        "{size:,} bytes), then stages script.req and extend.m for {task}.",
+                        sectors=sectors, size=len(session.plan.writes) * 512,
+                        task=phrase(self._cbasic_task_label(task))),
                     "Nothing else on the card is changed. macOS will ask for your administrator password.",
-                    f"Backup of the card as it is now: {session.backup.folder}",
+                    message('Backup of the card as it is now: {backup}', backup=session.backup.folder),
                 ])
-                if not self.messagebox.askokcancel("Prepare Canon Basic card", prompt, icon="warning"):
+                if not self.messagebox.askokcancel(self.words.render("Prepare Canon Basic card"), self.words.render(prompt), icon="warning"):
                     self.cbasic_busy = "Mounting the card again..."
                     self.refresh()
                     self._background(lambda: card_flow.cancel(session, ops), lambda r: self._cbasic_cancelled(r, status_callout))
@@ -1423,23 +1561,23 @@ class App:
         lines = ["Cancelled. Nothing was written."]
         if not isinstance(report, Exception) and report is not None:
             lines = [report.title] + report.lines
-        self._set_cbasic_status(status_callout, "\n".join(lines), WARNING)
+        self._set_cbasic_status(status_callout, joined("\n", lines), WARNING)
         self.refresh()
 
     def _cbasic_script_written(self, outcome, task: str, status_callout: Callout):
         if isinstance(outcome, Exception):
             self.cbasic_busy = None
-            self._set_cbasic_status(status_callout, f"Failed\n{outcome}", DANGER)
+            self._set_cbasic_status(status_callout, message('Failed\n{outcome}', outcome=outcome), DANGER)
             self.refresh()
-            self.messagebox.showerror("Canon Basic card preparation", str(outcome))
+            self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(outcome)))
             return
         report, refreshed, backup_folder = outcome
         if report is not None and not report.ok:
             self.cbasic_busy = None
-            msg = "\n".join([report.title] + report.lines)
+            msg = joined("\n", [report.title] + report.lines)
             self._set_cbasic_status(status_callout, msg, DANGER)
             self.refresh()
-            self.messagebox.showinfo("Canon Basic card preparation", msg)
+            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
             return
         mount_point = refreshed.mount_point if refreshed else ""
         if not mount_point:
@@ -1447,10 +1585,10 @@ class App:
             msg = ("SCRIPT marker is on the card, but the card did not report a mount folder.\n"
                    "Mount the card and stage the files on its folder.")
             if task == "dump":
-                msg += " Open ‘Which SD card can I use?’ and choose ‘Use a card already marked for scripts’."
+                msg = joined(" ", [msg, "Open ‘Which SD card can I use?’ and choose ‘Use a card already marked for scripts’."])
             self._set_cbasic_status(status_callout, msg, WARNING)
             self.refresh()
-            self.messagebox.showinfo("Canon Basic card preparation", msg)
+            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
             return
         prefix = [report.title] + report.lines if report is not None else ["Canon Basic SCRIPT marker already present."]
         self._stage_cbasic_folder_impl(Path(mount_point), task, status_callout, backup_dir=backup_folder,
@@ -1461,13 +1599,13 @@ class App:
             self._set_cbasic_status(status_callout, "Wait for the current card operation to finish.", WARNING)
             return
         if task == "disable_bootdisk" and not self.messagebox.askokcancel(
-            "Disable BootDisk (hardware-untested)",
-            "DisableBootDisk() (0xE0B38D74) has NEVER been run on real camera hardware yet. Continue?",
+            self.words.render("Disable BootDisk (hardware-untested)"),
+            self.words.render("DisableBootDisk() (0xE0B38D74) has NEVER been run on real camera hardware yet. Continue?"),
             icon="warning",
         ):
             return
         folder = self.filedialog.askdirectory(
-            title="Choose the FAT32 SDHC card's top folder (must already have SCRIPT)",
+            title=self.words.render("Choose the FAT32 SDHC card's top folder (must already have SCRIPT)"),
             initialdir=self._default_card_initialdir(),
         )
         if not folder:
@@ -1481,27 +1619,31 @@ class App:
             info = card.inspect_card(folder)
         except OSError as exc:
             self.cbasic_busy = None
-            self._set_cbasic_status(status_callout, f"Could not inspect {folder}\n{exc}", DANGER)
+            self._set_cbasic_status(status_callout, message(
+                "Could not inspect {folder}\n{exc}",
+                folder=folder, exc=exc), DANGER)
             self.refresh()
             return
         if info.errors:
             self.cbasic_busy = None
-            msg = " ".join(info.errors)
-            self._set_cbasic_status(status_callout, f"Card refused\n{msg}", DANGER)
+            msg = joined(" ", info.errors)
+            self._set_cbasic_status(status_callout, message('Card refused\n{msg}', msg=phrase(msg)), DANGER)
             self.refresh()
-            self.messagebox.showerror("Card refused", msg)
+            self.messagebox.showerror(self.words.render("Card refused"), self.words.render(msg))
             return
         if info.existing is not None:
             self.cbasic_busy = None
-            msg = (f"{info.existing.name} is on this card. Remove or back up AUTOEXEC.BIN first so a "
-                   "BootDisk-enabled camera starts normal Canon firmware for Canon Basic.")
-            self._set_cbasic_status(status_callout, f"AUTOEXEC.BIN present\n{msg}", DANGER)
+            msg = message(
+                "{name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled camera starts "
+                "normal Canon firmware for Canon Basic.",
+                name=info.existing.name)
+            self._set_cbasic_status(status_callout, message('AUTOEXEC.BIN present\n{msg}', msg=phrase(msg)), DANGER)
             self.refresh()
-            self.messagebox.showerror("AUTOEXEC.BIN present", msg)
+            self.messagebox.showerror(self.words.render("AUTOEXEC.BIN present"), self.words.render(msg))
             return
         if info.warnings and not self.messagebox.askokcancel(
-            "Confirm card folder",
-            "\n".join(info.warnings) + "\n\nStage script.req and extend.m in this folder anyway?",
+            self.words.render("Confirm card folder"),
+            self.words.render(joined("\n\n", [joined("\n", info.warnings), "Stage script.req and extend.m in this folder anyway?"])),
             icon="warning",
         ):
             self.cbasic_busy = None
@@ -1516,18 +1658,20 @@ class App:
         def done(staged):
             self.cbasic_busy = None
             if isinstance(staged, Exception):
-                self._set_cbasic_status(status_callout, f"Could not stage files\n{staged}", DANGER)
+                self._set_cbasic_status(status_callout, message(
+                    "Could not stage files\n{staged}",
+                    staged=staged), DANGER)
                 self.refresh()
-                self.messagebox.showerror("Staging failed", str(staged))
+                self.messagebox.showerror(self.words.render("Staging failed"), self.words.render(error_text(staged)))
                 return
             mode_key = "dump" if task == "dump" else "bootdisk"
             self.cbasic_baselines[mode_key] = (staged.card_root, staged.baseline_gang1)
             if task == "dump":
                 self._rom_page("camera")
-                self._set_cbasic_status(status_callout, "\n".join(list(prefix_lines) + staged.messages), SUCCESS)
+                self._set_cbasic_status(status_callout, joined("\n", list(prefix_lines) + staged.messages), SUCCESS)
                 return
             self._bootdisk_page("camera_disable" if task == "disable_bootdisk" else "camera_enable")
-            self._set_cbasic_status(status_callout, "\n".join(list(prefix_lines) + staged.messages), SUCCESS)
+            self._set_cbasic_status(status_callout, joined("\n", list(prefix_lines) + staged.messages), SUCCESS)
 
         self._background(
             lambda: cbasic.stage_script_files(info.root, task, backup_dir, confirmed_warnings=info.warnings),
@@ -1545,7 +1689,7 @@ class App:
             self._set_cbasic_status(status_callout, "Wait for the current card operation to finish.", WARNING)
             return
         folder = self.filedialog.askdirectory(
-            title="Choose the returned SD card folder",
+            title=self.words.render("Choose the returned SD card folder"),
             initialdir=self._default_card_initialdir(),
         )
         if not folder:
@@ -1570,9 +1714,11 @@ class App:
         def done(returned):
             self.cbasic_busy = None
             if isinstance(returned, Exception):
-                self._set_cbasic_status(status_callout, f"Verification failed\n{returned}", DANGER)
+                self._set_cbasic_status(status_callout, message(
+                    "Verification failed\n{returned}",
+                    returned=returned), DANGER)
                 self.refresh()
-                self.messagebox.showerror("ROM dump / BootInfo check", str(returned))
+                self.messagebox.showerror(self.words.render("ROM dump / BootInfo check"), self.words.render(error_text(returned)))
                 return
             self.cbasic_baselines.pop(mode_key, None)
             if mode == "rom":
@@ -1593,10 +1739,10 @@ class App:
                 else:
                     self.wizard.set_bootdisk("disabled")
                     kind = WARNING
-            text = "\n".join(returned.messages)
+            text = joined("\n", returned.messages)
             self._set_cbasic_status(status_callout, text, kind)
             self.refresh()
-            self.messagebox.showinfo("ROM dump verified", text)
+            self.messagebox.showinfo(self.words.render("ROM dump verified"), self.words.render(text))
 
         self._background(
             lambda: cbasic.collect_returned_dump(
@@ -1619,16 +1765,17 @@ class App:
         target: Path | None = None
         if self.state.rom_path is not None and self.state.rom_path.is_file():
             choice = self.messagebox.askyesnocancel(
-                "Verify BootDisk from ROM",
-                f"Check the ROM dump already selected in Step 2?\n\n{self.state.rom_path}\n\n"
-                "Yes = check Step 2's ROM\nNo = choose another ROM file",
+                self.words.render("Verify BootDisk from ROM"),
+                self.words.render(message(
+                    "Check the ROM dump already selected in Step 2?\n\n{rom_path}\n\nYes = check Step 2's ROM\nNo = choose another ROM file",
+                    rom_path=self.state.rom_path)),
             )
             if choice is None:
                 return
             if choice:
                 target = self.state.rom_path
         if target is None:
-            picked = self.filedialog.askopenfilename(title="Choose a 64 MiB ROM dump (e.g. gang101.bin)")
+            picked = self.filedialog.askopenfilename(title=self.words.render("Choose a 64 MiB ROM dump (e.g. gang101.bin)"))
             if not picked:
                 return
             target = Path(picked)
@@ -1645,21 +1792,29 @@ class App:
             self.cbasic_busy = None
             if isinstance(result, Exception):
                 self.refresh()
-                self._set_cbasic_status(self.bootdisk_guide_status, f"Check failed\n{result}", DANGER)
+                self._set_cbasic_status(self.bootdisk_guide_status, message(
+                    "Check failed\n{result}",
+                    result=result), DANGER)
                 return
             if not result.ok:
-                self._set_cbasic_status(self.bootdisk_guide_status, f"ROM refused\n{result.message}", DANGER)
+                self._set_cbasic_status(self.bootdisk_guide_status, message(
+                    "ROM refused\n{message}",
+                    message=phrase(result.message)), DANGER)
                 self.refresh()
                 return
             self.wizard.saved.bootdisk_page = "auto"
             if result.facts.get("boot_disk_state") == "enabled":
                 self.wizard.set_bootdisk("verified", rom_path=target, rom_sha256=result.facts["rom_sha256"])
-                self._set_cbasic_status(self.bootdisk_guide_status, f"BootDisk enabled\n{result.message}", SUCCESS)
+                self._set_cbasic_status(self.bootdisk_guide_status, message(
+                    "BootDisk enabled\n{message}",
+                    message=phrase(result.message)), SUCCESS)
             else:
                 self.wizard.set_bootdisk("disabled")
                 self._set_cbasic_status(
                     self.bootdisk_guide_status,
-                    f"BootDisk disabled\n{result.message} Enable BootDisk on the camera before running autoexec.bin.",
+                    message(
+                        "BootDisk disabled\n{message} Enable BootDisk on the camera before running autoexec.bin.",
+                        message=phrase(result.message)),
                     WARNING,
                 )
             self.refresh()
@@ -1673,18 +1828,19 @@ class App:
         p = self.prep
         accepted = p.accepted
         busy = self._card_busy()
-        self.prep_combo.configure(values=[c.summary() for c in accepted],
+        self.prep_combo.configure(values=[self.words.render(c.summary()) for c in accepted],
                                   state="readonly" if accepted and not busy else "disabled")
-        self.prep_choice.set(p.selected.summary() if p.selected else "")
+        self.prep_choice.set(self.words.render(p.selected.summary()) if p.selected else "")
         lines = p.selected.details() if p.selected else []
         if p.searched and not accepted:
             lines.append(p.error or "No usable SD card found. Check the card is in the built-in SD slot and search again.")
         if p.refused:
-            lines.append("Not offered: " + "; ".join(f"{c.whole_id} ({c.model or c.bus or '?'}): {c.refusals[0]}"
-                                                     for c in p.refused))
-        self.prep_details.configure(text="\n".join(lines))
+            lines.append(self._refused_cards(p.refused))
+        self.words.configure(self.prep_details, text=joined("\n", lines))
         self.prep_details.pack_configure(pady=(S, 0) if lines else (0, 0))
-        blocked = p.blockers() + ([f"Wait: {self.cbasic_busy}"] if self.cbasic_busy else [])
+        blocked = p.blockers() + ([message(
+            "Wait: {cbasic_busy}",
+            cbasic_busy=phrase(self.cbasic_busy))] if self.cbasic_busy else [])
         if p.selected:
             self.prep_button.pack(side="left")
         else:
@@ -1698,7 +1854,9 @@ class App:
         for button in (self.prep_button, self.prep_undo, self.prep_restore):
             button.configure(state="disabled" if blocked else "normal")
         self.prep_busy.set(p.busy)
-        self.prep_blockers.configure(text="" if not blocked else "Next:\n" + bullets(blocked))
+        self.words.configure(self.prep_blockers, text="" if not blocked else message(
+            "Next:\n{steps}",
+            steps=bullets(blocked)))
         if p.error:
             self.prep_title.set(DANGER, p.error)
             body = []
@@ -1708,7 +1866,7 @@ class App:
         else:
             self.prep_title.clear()
             body = []
-        self._set_text(self.prep_log, "\n".join(body))
+        self._set_text(self.prep_log, joined("\n", body))
         if body:
             self.prep_log_slot.show(self.prep_log_box)
         else:
@@ -1724,17 +1882,11 @@ class App:
             self.prep.busy = None
             if isinstance(result, Exception):
                 self.prep.set_candidates([])
-                self.prep.error = f"Could not list cards: {result}"
+                self.prep.error = message('Could not list cards: {result}', result=result)
             else:
                 self.prep.set_candidates(result)
             self.refresh()
         self._background(card_devices.enumerate_candidates, done)
-
-    def _prep_selected(self):
-        summary = self.prep_choice.get()
-        match = next((c for c in self.prep.accepted if c.summary() == summary), None)
-        self.prep.select(match.whole_id if match else None)
-        self.refresh()
 
     def _prep_run(self, kind):
         """Prepare ("mark"), Undo ("undo": the latest backup) or Restore ("restore": a chosen backup)."""
@@ -1744,20 +1896,22 @@ class App:
         cand, source = p.selected, None
         if kind == "undo":
             if card_flow.latest_backup(cand, p.backup_root) is None:  # early hint; the choice is made after the read
-                p.failed(f"No backup of this card from before it was prepared was found in {p.backup_root}. "
-                         "Use 'Restore from a chosen backup...' instead.")
+                p.failed(message(
+                    "No backup of this card from before it was prepared was found in {backup_root}. Use 'Restore from a "
+                    "chosen backup...' instead.",
+                    backup_root=p.backup_root))
                 self.refresh()
                 return
             source = card_flow.LATEST
         elif kind == "restore":
-            folder = self.filedialog.askdirectory(title="Choose a card backup folder (it contains manifest.json)",
+            folder = self.filedialog.askdirectory(title=self.words.render("Choose a card backup folder (it contains manifest.json)"),
                                                   initialdir=str(p.backup_root))
             if not folder:
                 return
             try:
                 source = card_flow.load_backup(Path(folder))
             except card_flow.PrepFailure as exc:
-                p.failed(str(exc))
+                p.failed(error_text(exc))
                 self.refresh()
                 return
         p.restore_from = source if isinstance(source, card_flow.Backup) else None
@@ -1767,7 +1921,7 @@ class App:
 
         def read_done(result):
             if isinstance(result, Exception):
-                p.failed(f"Not {'prepared' if kind == 'mark' else 'restored'}: {result}")
+                p.failed(message("Not prepared: {result}" if kind == "mark" else "Not restored: {result}", result=result))
                 self.refresh()
                 return
             verdict = p.read_finished(token, result)
@@ -1784,7 +1938,7 @@ class App:
                     self.refresh()
                 return
             title, text = p.confirmation()
-            ok = self.messagebox.askokcancel(title, text, icon="warning")
+            ok = self.messagebox.askokcancel(self.words.render(title), self.words.render(text), icon="warning")
             if not ok or not p.may_write(token, result):
                 p.busy = "Mounting the card again..."
                 p.session = None
@@ -1812,15 +1966,15 @@ class App:
         self.prep.finished(report)
         self.refresh()
         if show:
-            self.messagebox.showinfo("Card preparation", "\n".join([report.title] + report.lines))
+            self.messagebox.showinfo(self.words.render("Card preparation"), self.words.render(joined("\n", [report.title] + report.lines)))
 
     def _on_close(self):
         p = self.prep
         if self.shots.busy and not self.messagebox.askokcancel(
-                "Quit", "Screenshots are still being converted. Quit anyway? The card is not changed."):
+                self.words.render("Quit"), self.words.render("Screenshots are still being converted. Quit anyway? The card is not changed.")):
             return
         if (p.busy or self.cbasic_busy) and not self.messagebox.askokcancel(
-                "Quit", "A card operation is still running. Quitting now can leave the card unmounted. Quit anyway?"):
+                self.words.render("Quit"), self.words.render("A card operation is still running. Quitting now can leave the card unmounted. Quit anyway?")):
             return
         if p.session is not None:
             try:
@@ -1837,7 +1991,7 @@ class App:
         self.rom_var.set(str(s.rom_path or ""))
         check = s.rom_check()
         self.rom_status.show_check(check)
-        self.rom_result_title.configure(text="Firmware copy verified" if check.status == OK else
+        self.words.configure(self.rom_result_title, text="Firmware copy verified" if check.status == OK else
                                         "Choose another firmware copy" if check.status == FAILED else
                                         "Checking your firmware copy…")
         self.profile_var.set(s.profile)
@@ -1847,14 +2001,15 @@ class App:
             combo, var, reason, slot, box = self.option_widgets[view.id]
             (slot.show if view.enabled else slot.hide)(box)
             combo.configure(state="readonly" if view.enabled else "disabled")
-            choice = next(c for c in view.choices if c.value == view.value)
-            var.set(choice.label)
+            choice = self._show_option(view)
             if not view.enabled:
-                reason.configure(text=view.reason)
+                self.words.configure(reason, text=view.reason)
             elif choice.status_label:
-                reason.configure(text=f"Status: {choice.status_label}. {choice.status_text}")
+                self.words.configure(reason, text=message(
+                    "Status: {status_label}. {status_text}",
+                    status_label=phrase(choice.status_label), status_text=phrase(choice.status_text)))
             else:
-                reason.configure(text="Off. With both record cues off, no indicator code, hook or memory is added.")
+                self.words.configure(reason, text="Off. With both record cues off, no indicator code, hook or memory is added.")
         any_wav = False
         for view in s.input_views():
             var, button, status, slot, box = self.input_widgets[view.id]
@@ -1893,13 +2048,13 @@ class App:
         warned = bool(self.card_info and self.card_info.warnings)
         self.card_confirm_box.configure(state="normal" if warned else "disabled")
         (self.card_confirm_slot.show if warned else self.card_confirm_slot.hide)(self.card_confirm_box)
-        self.root.after_idle(self._offer_prepared_card)
         self.copy_busy.set("Copying..." if self.copying else None)
         self._refresh_cbasic()
         self._refresh_prep()
         self._refresh_shots()
         for what, input_id in s.needs_check():
             self._start_check(what, input_id)
+        self._offer_prepared_card()
 
     def _start_check(self, what, input_id=None):
         s = self.state
@@ -1914,7 +2069,7 @@ class App:
 
         def done(result):
             if isinstance(result, Exception):
-                result = checks.CheckResult(False, f"Check failed: {result}")
+                result = checks.CheckResult(False, message('Check failed: {result}', result=result))
             s.finish(what, key, result.ok, result.message, result.facts, input_id=input_id)
             self.refresh()
         self._background(work, done)
@@ -1924,7 +2079,7 @@ class App:
     def _pick_rom(self):
         if self._card_busy():
             return
-        path = self.filedialog.askopenfilename(title="Choose your camera’s firmware copy (ROM dump)")
+        path = self.filedialog.askopenfilename(title=self.words.render("Choose your camera’s firmware copy (ROM dump)"))
         if path:
             self.state.set_rom(Path(path))
             self._rom_page("file")
@@ -1938,11 +2093,11 @@ class App:
     def _option_changed(self, option_id):
         combo, var = self.option_widgets[option_id][:2]
         view = next(v for v in self.state.option_views() if v.id == option_id)
-        value = next(c.value for c in view.choices if c.label == var.get())
+        value = view.choices[combo.current()].value
         try:
             self.state.set_option(option_id, value)
         except ValueError as exc:
-            self.messagebox.showerror("Option not available", str(exc))
+            self.messagebox.showerror(self.words.render("Option not available"), self.words.render(error_text(exc)))
         self._new_output()
         self.wizard.features_changed()
         self.refresh()
@@ -1954,15 +2109,16 @@ class App:
         self.state.set_output_dir(parent / name)
 
     def _pick_wav(self, input_id):
-        path = self.filedialog.askopenfilename(title=self.state.manifest.inputs[input_id].label,
-                                               filetypes=[("WAV audio", "*.wav *.WAV"), ("All files", "*")])
+        path = self.filedialog.askopenfilename(title=self.words.render(self.state.manifest.inputs[input_id].label),
+                                               filetypes=[(self.words.render("WAV audio"), "*.wav *.WAV"),
+                                                          (self.words.render("All files"), "*")])
         if path:
             self.state.set_input(input_id, Path(path))
             self.wizard.features_changed()
             self.refresh()
 
     def _pick_toolchain(self):
-        path = self.filedialog.askdirectory(title="Choose the toolchain's bin folder (contains arm-none-eabi-gcc)")
+        path = self.filedialog.askdirectory(title=self.words.render("Choose the toolchain's bin folder (contains arm-none-eabi-gcc)"))
         if path:
             self.state.set_toolchain(Path(path))
             self.refresh()
@@ -1975,20 +2131,20 @@ class App:
             self._detecting = False
             self.refresh()
             if isinstance(result, Exception):
-                self.tc_status.set(DANGER, f"Detection failed: {result}")
+                self.tc_status.set(DANGER, message('Detection failed: {result}', result=result))
                 return
             path, check, notes = result
             if path is None:
-                note = ("\n" + "\n".join(notes)) if notes else ""
-                self.tc_status.set(DANGER, "No GNU Arm 15.2.1 toolchain found. Download and unpack the compiler, "
-                                           "then choose its bin folder." + note)
+                headline = ("No GNU Arm 15.2.1 toolchain found. Download and unpack the compiler, "
+                            "then choose its bin folder.")
+                self.tc_status.set(DANGER, joined("\n", [headline, *notes]))
                 return
             self.state.offer_detected_toolchain(path, check.message, check.facts, explicit=explicit)
             self.refresh()
         self._background(checks.detect_toolchain, done)
 
     def _pick_output(self):
-        parent = self.filedialog.askdirectory(title="Choose where to create the new output folder")
+        parent = self.filedialog.askdirectory(title=self.words.render("Choose where to create the new output folder"))
         if parent:
             name = default_output_dir(self.state.profile, self.state.options, self.state.manifest).name
             self.state.set_output_dir(Path(parent) / name)
@@ -2019,7 +2175,7 @@ class App:
         def done(outcome):
             s.building = False
             if isinstance(outcome, Exception):
-                self.result.set(DANGER, "Build could not run", str(outcome))
+                self.result.set(DANGER, "Build could not run", error_text(outcome))
                 self._show_log(True)
             elif not outcome.ok:
                 self.result.set(DANGER, "Build refused or failed", outcome.error_text())
@@ -2035,7 +2191,7 @@ class App:
             summary = runner.summarize(out)
             contents = runner.write_contents(summary, self.state.manifest)
         except (OSError, ValueError, KeyError) as exc:
-            self.result.set(DANGER, "Build finished but its record could not be read", str(exc))
+            self.result.set(DANGER, "Build finished but its record could not be read", error_text(exc))
             return
         self.summary = summary
         self.wizard.set_build(summary if summary.sha256_matches_build_json else None,
@@ -2044,8 +2200,10 @@ class App:
         match = "matches build.json" if matches else "DOES NOT MATCH build.json"
         self.result.set(SUCCESS if matches else DANGER,
                         "Built and verified" if matches else "Built, but autoexec.bin DOES NOT MATCH build.json",
-                        f"Built: {summary.autoexec}\nSHA-256 {summary.sha256} ({match})\n"
-                        f"{runner.memory_line(summary)}\nWhat's in this build: {contents}", mono=True)
+                        message(
+                            "Built: {autoexec}\nSHA-256 {sha256} ({match})\n{memory}\nWhat's in this build: {contents}",
+                            autoexec=summary.autoexec, sha256=summary.sha256, match=phrase(match),
+                            memory=phrase(runner.memory_line(summary)), contents=contents), mono=True)
         self.gauge.configure(value=100 * summary.remaining_heap / summary.heap_pool)
         self.memory_slot.show(self.memory)
         self.open_out.configure(state="normal")
@@ -2061,7 +2219,7 @@ class App:
             self._inspect_card_folder(mount)
 
     def _pick_card(self):
-        path = self.filedialog.askdirectory(title="Choose the card's top folder", initialdir=self._default_card_initialdir())
+        path = self.filedialog.askdirectory(title=self.words.render("Choose the card's top folder"), initialdir=self._default_card_initialdir())
         if path:
             self._inspect_card_folder(path)
 
@@ -2077,15 +2235,21 @@ class App:
         if self.card_var.get() != path:
             return  # another folder was chosen meanwhile
         if isinstance(info, Exception):
-            self.card_report.set(DANGER, "Could not look at the card", str(info))
+            self.card_report.set(DANGER, "Could not look at the card", error_text(info))
             return
         self.card_info = info
-        lines = [f"Folder: {info.root}"]
+        lines = [message('Folder: {root}', root=info.root)]
         if info.total_bytes is not None:
-            lines.append(f"Drive size: {info.total_bytes / 1000**3:,.1f} GB")
-        lines.append("DCIM folder: " + ("found" if info.has_dcim else "not found"))
-        lines.append("Existing autoexec.bin: " + (info.existing.name if info.existing else "none"))
-        lines += ["REFUSED: " + e for e in info.errors] + ["Warning: " + w for w in info.warnings]
+            lines.append(message('Drive size: {size:,.1f} GB', size=info.total_bytes / 1000 ** 3))
+        lines.append("DCIM folder: found" if info.has_dcim else "DCIM folder: not found")
+        lines.append(message(
+            "Existing autoexec.bin: {name}",
+            name=info.existing.name) if info.existing else "Existing autoexec.bin: none")
+        lines += [message(
+            "REFUSED: {reason}",
+            reason=phrase(e)) for e in info.errors] + [message(
+            "Warning: {reason}",
+            reason=phrase(w)) for w in info.warnings]
         if self.summary is None:
             lines.append("Build autoexec.bin first (step 6).")
         if info.errors:
@@ -2094,15 +2258,17 @@ class App:
             kind, headline = WARNING, "Check the warnings before you copy"
         else:
             kind, headline = NEUTRAL, "Card folder checked"
-        self.card_report.set(kind, headline, "\n".join(lines))
+        self.card_report.set(kind, headline, joined("\n", lines))
         self.refresh()
 
     def _copy(self):
         summary, info = self.summary, self.card_info
         backups = summary.output_dir / "card-backup"
         if not self.messagebox.askokcancel(
-            "Copy to card",
-            f"Copy autoexec.bin to {info.root}?\n\nAny existing autoexec.bin is backed up to {backups} first.",
+            self.words.render("Copy to card"),
+            self.words.render(message(
+                "Copy autoexec.bin to {root}?\n\nAny existing autoexec.bin is backed up to {backups} first.",
+                root=info.root, backups=backups)),
         ):
             return
         if self.prep.blocks_copy or self.cbasic_busy:
@@ -2115,25 +2281,26 @@ class App:
         def done(result):
             self.copying = self.prep.copying = False
             if isinstance(result, (card.CardError, OSError)):
-                self.copy_result.set(DANGER, "Not copied", str(result))
+                self.copy_result.set(DANGER, "Not copied", error_text(result))
             elif isinstance(result, Exception):
-                self.copy_result.set(DANGER, "Copy failed unexpectedly", str(result))
+                self.copy_result.set(DANGER, "Copy failed unexpectedly", error_text(result))
             else:
-                self.copy_result.set(SUCCESS, "Copy verified. Eject the card before removing it.", "\n".join(result.messages))
+                self.copy_result.set(SUCCESS, "Copy verified. Eject the card before removing it.", joined("\n", result.messages))
                 try:
                     self.wizard.set_copied(result.sha256)
                 except ValueError:
                     pass  # a newer build replaced the one that was copied
-                self.messagebox.showinfo("Done", "\n\n".join(result.messages))
+                self.messagebox.showinfo(self.words.render("Done"), self.words.render(joined("\n\n", result.messages)))
             self.refresh()
+        screenshot = summary.options.get("screenshot", "off") != "off"
         self._background(lambda: card.copy_to_card(summary.autoexec, summary.sha256, info.root, backups,
-                                                   confirmed_warnings=confirmed), done)
+                                                   confirmed_warnings=confirmed, screenshot_folder=screenshot), done)
 
     # -- screenshots (a utility, not a setup step) ---------------------------------------
 
     def _screenshots_panel(self):
         tab = self._panel(shots.SCREENSHOTS, utility=True)
-        Callout(self, tab, pady=(S, 0)).set(INFO, "Private lab feature", shots.LAB_NOTE)
+        Callout(self, tab, pady=(S, 0)).set(INFO, "Where these files come from", shots.LAB_NOTE)
         self.shots_src_var = self.tk.StringVar()
         self._field(tab, "Screenshots from (the card's top folder, DCIM, or an R5SHOTS folder)", self.shots_src_var,
                     [("Choose card or folder…", self._pick_shots_source)], pady=(L, 0))
@@ -2174,7 +2341,7 @@ class App:
         self.shots_open.configure(state="normal" if st.can_open_output() else "disabled")
         self.shots_busy.set(st.busy)
         shown = [b for b in blockers if b != problem and not (src and b == src.describe())] if not st.busy else []
-        self.shots_blockers.configure(text=bullets(shown))
+        self.words.configure(self.shots_blockers, text=bullets(shown))
         self.shots_blockers.pack_configure(pady=(S, 0) if shown else (0, 0))
         report = st.report()
         if report is None:
@@ -2183,14 +2350,14 @@ class App:
         else:
             kind, headline, lines = report
             self.shots_result.set(kind, headline)
-        self._set_text(self.shots_log, "\n".join(lines))
+        self._set_text(self.shots_log, joined("\n", lines))
         if lines:
             self.shots_log_slot.show(self.shots_log_box)
         else:
             self.shots_log_slot.hide(self.shots_log_box)
 
     def _pick_shots_source(self):
-        folder = self.filedialog.askdirectory(title="Choose the card's top folder, or a folder with screenshots")
+        folder = self.filedialog.askdirectory(title=self.words.render("Choose the card's top folder, or a folder with screenshots"))
         if not folder:
             return
         self.shots.busy = "Looking for screenshots..."
@@ -2200,14 +2367,14 @@ class App:
             self.shots.busy = None
             if isinstance(result, Exception):
                 self.shots.set_source(shots.Source(Path(folder), None, (), False))
-                self.shots.error = f"Could not look at {folder}: {result}"
+                self.shots.error = message('Could not look at {folder}: {result}', folder=folder, result=result)
             else:
                 self.shots.set_source(result)
             self.refresh()
         self._background(lambda: shots.find_source(Path(folder)), done)
 
     def _pick_shots_output(self):
-        folder = self.filedialog.askdirectory(title="Choose where to save the PNG files")
+        folder = self.filedialog.askdirectory(title=self.words.render("Choose where to save the PNG files"))
         if folder:
             self.shots.set_output(Path(folder))
             self.refresh()

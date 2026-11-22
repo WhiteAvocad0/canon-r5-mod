@@ -156,7 +156,7 @@ Neither the builder nor the assistant enables the camera's BootDisk setting, wri
 
 1. With the camera off, insert the prepared SD card. For an initial controlled test, remove CFexpress and disconnect USB/HDMI. Added startup/shutter clips are disabled; Canon's own Beep setting is unchanged.
 2. Select **RAW + Large JPEG** and **XPan** (the replaced 16:9 option) through the Shooting Menu or Q screen. Record the Auto-Rotate setting; the admitted playback scope uses effective rotation `r7=0` (for example Auto-Rotate Off or Computer-Only).
-3. Take Full-frame control and XPan landscape/portrait photos. Check **automatic review immediately after the shot separately** from normal ▶ playback. Record which guide/mask appears first, the display used, orientation and any visible delay. With the current profile an XPan shot should show XPan bars at once with no 16:9 outline, a Full-frame shot its stock review, and a burst the stock review without bars (by design). This was verified on a private lab build on 18 November 2026, and the public `xpan-crop` + `ding` image passed the same check that day.
+3. Take Full-frame control and XPan landscape/portrait photos. Check **automatic review immediately after the shot separately** from normal ▶ playback. Record which guide/mask appears first, the display used, orientation and any visible delay. With the current profile an XPan shot should show XPan bars at once with no 16:9 outline, a Full-frame shot its stock review, and a burst the stock review without bars (by design). This was verified on a private lab build on 18 November 2026, and the public `xpan-crop` + `ding` image passed the same check that day. **Known issue:** with RAW off (JPEG only), the immediate review of an XPan shot is stretched vertically, although the bars are correct; RAW + JPEG reviews look right ([#31](https://github.com/WhiteAvocad0/canon-r5-mod/issues/31)).
 4. Open each XPan photo in normal ▶ playback for the first time and inspect it before navigating away/back. Check rear LCD and EVF, landscape and portrait, LCD↔EVF switching, and that the Full-frame control retains its normal framing. The owner reported the private `4838eb81` four-case normal ▶ session working on 17 November 2026; the **public repackaged image is still hardware-untested**.
 5. Check saved JPEG dimensions and RAW crop metadata using the [documented AspectInfo fields](xpan.md#stored-crop-tags). Other still qualities/modes (M/S/C-RAW/burst/movie), active in-camera rotation `r7!=0`, and cached orientations outside `{0,2}` remain unverified or declined.
 6. Wait for card activity to stop before power-off/removal. Submit text hashes/observations through the [XPan report form](https://github.com/WhiteAvocad0/canon-r5-mod/issues/new?template=xpan-test-report.yml); **do not upload ROM dumps, photos or card images**. Optional Canon Basic debug exports are not a prerequisite for this visual test.
@@ -222,6 +222,20 @@ python3 src/experimental/xpan/tools/record_indicator_log.py path/to/DbgRA001.bin
 ```
 
 They count presses, submissions of both cues, settled/stopped/rejected/timeout outcomes and drops. The stop row counts ended takes (`W=`), dong submissions (`B=`), and dongs dropped because another cue was in flight (`K=`), a new press arrived while the dong was pending (`H=`), or RecState was not idle at its tick (`I=`; in a build without a start cue a new take lands here). The hook counts the end before Canon stores it, so a rare worker tick in that window drops the dong; `I=` counts this. The counters record what the worker saw, not what was audible. Exports from builds before the stop cue (four rows, such as `0adff001`) decode only with the decoder of their own source version.
+
+### One-press screenshot (`--screenshot`)
+
+`--screenshot rate` (an `xpan-crop` option, off by default) makes RATE in ▶ save a 2400×1600 JPEG of the whole screen next to your photos. Create the folder `DCIM/R5SHOTS` on the SD card before the first use. Add it to any `xpan-crop` command, alone or with the record cues:
+
+```sh
+python3 tools/build.py --profile xpan-crop \
+  --rom /path/to/eos-r5-221-rom.bin \
+  --toolchain /path/to/arm-none-eabi-15.2.1/bin \
+  --screenshot rate \
+  --output build/r5-xpan-screenshot
+```
+
+Test it like this: show a JPEG photo full screen in ▶, press RATE once, wait for the click, and check that a new 2400×1600 JPEG appears after it. Then press RATE once in live view: you should hear a click and get no JPEG. The sounds, the files it writes and the evidence boundary (the public image is hardware-untested) are in [docs/screenshot.md](screenshot.md).
 
 ---
 

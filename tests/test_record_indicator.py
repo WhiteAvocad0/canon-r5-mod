@@ -54,7 +54,10 @@ _TMP = tempfile.TemporaryDirectory(prefix="r5-record-indicator-")
 
 def _compile(name, sources, extra=()):
     lib = Path(_TMP.name) / (name + ".so")
-    subprocess.run([find_host_cc(), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", *extra,
+    # rec_tone.c compiles its engine only for the record indicator (a --screenshot-only
+    # build links its preflight alone), so these host libraries define it.
+    subprocess.run([find_host_cc(), "-std=c11", "-O1", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
+                    "-DR5_RECORD_INDICATOR=1", *extra,
                     "-I", _TMP.name, "-I", str(XPAN_SRC), "-I", str(R5_221_SRC), *map(str, sources), "-o", str(lib)],
                    check=True)
     return ctypes.CDLL(str(lib))

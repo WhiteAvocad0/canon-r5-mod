@@ -10,6 +10,9 @@ XPAN_SRC = TOOLS_DIR.parent
 REPO_ROOT = XPAN_SRC.parents[2]
 
 
+SCREENSHOT_EXTENSION = "screenshot-hooks.json"  # tools/screenshot.py HOOK_EXTENSION
+
+
 def native_limit(header: str, name: str) -> int:
     matches = re.findall(r"^#define " + re.escape(name) + r" ([0-9]+)u$", (XPAN_SRC / header).read_text(), re.M)
     if len(matches) != 1 or int(matches[0]) < 1:
@@ -112,10 +115,12 @@ def generate(
     if any(v & 4095 or not rom_base <= v < rom_base + 0x04000000 for v in witnesses):
         raise ValueError("source witness page")
 
+    # --screenshot compiles with R5_SCREENSHOT, which selects the *_SCREENSHOT limits.
+    suffix = "_SCREENSHOT" if SCREENSHOT_EXTENSION in optional_extensions else ""
     capacity = {
-        "pages": native_limit("multi_plan.h", "MULTI_MAX_PAGES"),
-        "tables": native_limit("multi_plan.h", "MULTI_MAX_TABLES"),
-        "patches": native_limit("code_patch.h", "CODE_PATCH_MAX"),
+        "pages": native_limit("multi_plan.h", "MULTI_MAX_PAGES" + suffix),
+        "tables": native_limit("multi_plan.h", "MULTI_MAX_TABLES" + suffix),
+        "patches": native_limit("code_patch.h", "CODE_PATCH_MAX" + suffix),
     }
     if not pages or pages[0] != 0xE0100000 or len(pages) > capacity["pages"]:
         raise ValueError("feature page layout")

@@ -29,6 +29,9 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from gui.i18n import LANGUAGES
+from messages import joined, message, phrase
+
 from gui.state import FAILED, OK, AssistantState
 
 DONE, NEEDS_ACTION, SKIPPED, BLOCKED = "done", "needs action", "skipped", "blocked"
@@ -53,7 +56,8 @@ TEST_CHECKLIST = (
     "Powered on normally; the camera started as usual.",
     "Took a full-frame photo as a control: it looks normal.",
     "Tried the features in this build (for XPan: chose XPan in the menu, took landscape and portrait shots, "
-    "checked the review and playback on the LCD and in the viewfinder).",
+    "checked the review and playback on the LCD and in the viewfinder; with the screenshot: pressed RATE on a "
+    "photo in playback, heard the click and found the new JPEG).",
     "Waited for the card light to go out before switching off.",
 )
 REPORT_URLS = {
@@ -96,6 +100,7 @@ class StepStatus:
 @dataclass
 class Saved:
     """What survives closing the window. Facts that can be re-checked are re-checked on resume."""
+    language: str = "en"
     camera_confirmed: bool = False
     bootdisk: str = "unknown"  # "unknown", "confirmed" (by the person), "verified" (readback), "disabled"
     bootdisk_rom_path: str | None = None
@@ -125,6 +130,8 @@ class Saved:
             return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         saved = cls(**known)
+        if not isinstance(saved.language, str) or saved.language not in LANGUAGES:
+            saved.language = "en"
         if saved.bootdisk_page not in ("auto", "setup", "camera_enable", "camera_disable", "verify"):
             saved.bootdisk_page = "auto"
         if "rom_page" not in data and saved.rom_path:
@@ -289,7 +296,7 @@ class Wizard:
             if check.status == OK:
                 return StepStatus(DONE, check.message)
             if check.status == FAILED:
-                return StepStatus(NEEDS_ACTION, "The ROM was refused: " + check.message)
+                return StepStatus(NEEDS_ACTION, message("The ROM was refused: {reason}", reason=phrase(check.message)))
             return StepStatus(NEEDS_ACTION, "Checking the ROM...")
         if step_id == BOOTDISK:
             if s.bootdisk == "verified":
@@ -302,8 +309,10 @@ class Wizard:
         if step_id == FEATURES:
             missing = self._feature_problems()
             if missing:
-                return StepStatus(NEEDS_ACTION, " ".join(missing))
-            return StepStatus(DONE, f"{a.manifest.profiles[a.profile].label}.") if s.features_confirmed \
+                return StepStatus(NEEDS_ACTION, joined(" ", missing))
+            return StepStatus(DONE, message(
+                "{label}.",
+                label=phrase(a.manifest.profiles[a.profile].label))) if s.features_confirmed \
                 else StepStatus(NEEDS_ACTION, "Check your choice, then press Next to use it.")
         if step_id == TOOLCHAIN:
             check = a.toolchain_check()
@@ -311,14 +320,18 @@ class Wizard:
                 return StepStatus(DONE, check.message)
             if a.toolchain_path is None:
                 return StepStatus(NEEDS_ACTION, "Install the GNU Arm 15.2.1 toolchain and choose its bin folder.")
-            return StepStatus(NEEDS_ACTION, "The toolchain was refused: " + check.message if check.status == FAILED
+            return StepStatus(NEEDS_ACTION, message(
+                "The toolchain was refused: {reason}",
+                reason=phrase(check.message)) if check.status == FAILED
                               else "Checking the toolchain...")
         if step_id == BUILD:
             needed = [STEP_BY_ID[x].title for x in (ROM, FEATURES, TOOLCHAIN) if self.status(x).status != DONE]
             if self.build_summary is not None and self._build_matches(self.build_summary):
-                return StepStatus(DONE, f"autoexec.bin built and verified (SHA-256 {self.build_summary.sha256[:12]}...).")
+                return StepStatus(DONE, message(
+                    "autoexec.bin built and verified (SHA-256 {sha256}...).",
+                    sha256=self.build_summary.sha256[:12]))
             if needed:
-                return StepStatus(BLOCKED, "Finish first: " + ", ".join(needed) + ".")
+                return StepStatus(BLOCKED, message("Finish first: {steps}.", steps=joined(", ", needed)))
             return StepStatus(NEEDS_ACTION, self.build_note or "Press Build.")
         if step_id == BOOTCARD:
             if s.card_prepared == "prepared":
@@ -343,7 +356,9 @@ class Wizard:
                 return StepStatus(BLOCKED, "Copy autoexec.bin to the card first.")
             if len(s.test_checked) == len(TEST_CHECKLIST):
                 return StepStatus(DONE, "Checklist complete. Please send a test report.")
-            return StepStatus(NEEDS_ACTION, f"{len(s.test_checked)} of {len(TEST_CHECKLIST)} items checked.")
+            return StepStatus(NEEDS_ACTION, message(
+                "{checked} of {total} items checked.",
+                checked=len(s.test_checked), total=len(TEST_CHECKLIST)))
         raise KeyError(step_id)
 
     def _feature_problems(self) -> list[str]:
@@ -351,10 +366,12 @@ class Wizard:
         problems = []
         for view in self.a.input_views():
             if view.policy == "required" and view.path is None:
-                problems.append(f"Pick the {view.label}.")
+                problems.append(message('Pick the {label}.', label=phrase(view.label)))
             elif view.policy == "required" and view.check.status != OK:
-                problems.append(f"The {view.label} was refused: {view.check.message}" if view.check.status == FAILED
-                                else f"The {view.label} is being checked.")
+                problems.append(message(
+                    "The {label} was refused: {message}",
+                    label=phrase(view.label), message=phrase(view.check.message)) if view.check.status == FAILED
+                                else message('The {label} is being checked.', label=phrase(view.label)))
         return problems
 
     def statuses(self) -> dict[str, StepStatus]:
@@ -378,7 +395,7 @@ class Wizard:
         """Switch to the short path; returns the reasons it isn't available (empty on success)."""
         missing = self.one_time_done()
         if missing:
-            return [f"First finish the one-time steps: {', '.join(missing)}."]
+            return [message('First finish the one-time steps: {steps}.', steps=joined(', ', missing))]
         self.saved.mode = "update"
         self.saved.features_confirmed = False
         self.saved.card_prepared = None  # the card may have been formatted since; check it again
@@ -537,8 +554,8 @@ GUIDE = {
         "The mod comes in two versions. XPan adds a 2.71:1 panoramic crop; Custom sounds plays your own startup "
         "and shutter sounds. They can't be combined.",
         ("Choose XPan or Custom sounds below.",
-         "For XPan, choose a movie record cue if you want one. For Custom sounds, choose your startup and "
-         "shutter WAV files.",
+         "For XPan, choose a movie record cue or the one-press screenshot if you want them. For Custom sounds, "
+         "choose your startup and shutter WAV files.",
          "Press Next to use these features."),
         "The choices come from config/features.json, the same manifest the command-line builder uses, so the "
         "window can't offer a combination the builder would refuse. Every public build is hardware-untested; "

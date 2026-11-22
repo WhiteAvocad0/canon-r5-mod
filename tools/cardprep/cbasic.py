@@ -31,6 +31,8 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import joined, message, phrase
+
 from gui import card
 
 ROM_BYTES = 0x4000000  # 67,108,864 bytes (64 MiB)
@@ -138,7 +140,8 @@ def _unique_path(directory: Path, filename: str) -> Path:
         candidate = directory / (filename if n == 1 else f"{stem}-{n}{suffix}")
         if not candidate.exists():
             return candidate
-    raise CBasicError("backup_collision", f"Could not choose a new filename for {filename} in {directory}.")
+    raise CBasicError("backup_collision", message("Could not choose a new filename for {filename} in {directory}.",
+        filename=filename, directory=directory))
 
 
 def _write_backup(backup_dir: Path, name: str, data: bytes) -> Path:
@@ -149,14 +152,14 @@ def _write_backup(backup_dir: Path, name: str, data: bytes) -> Path:
         f.flush()
         os.fsync(f.fileno())
     if _sha256(card._read_file(dest, limit=max(len(data), 1))) != expected:
-        raise CBasicError("backup_verify_failed", f"The backup at {dest} did not read back correctly.")
+        raise CBasicError("backup_verify_failed", message("The backup at {backup} did not read back correctly.", backup=dest))
     return dest
 
 
 def _check_card_dir(card_root: Path) -> Path:
     root = Path(card_root)
     if not root.is_dir():
-        raise CBasicError("card_refused", f"{root} is not a folder.")
+        raise CBasicError("card_refused", message("{folder} is not a folder.", folder=root))
     resolved = root.resolve()
     protected = card.protected_location(
         resolved, windows=os.name == "nt", home=Path.home().resolve(), environ=os.environ
@@ -174,31 +177,33 @@ def inspect_bootinfo(
 ) -> BootInfoFacts:
     """Verify wizard BootInfo/loader/IsScriptMode fingerprints, loader invariants, and BootDisk state."""
     if len(rom_bytes) != ROM_BYTES:
-        raise CBasicError("rom_length", f"ROM dump must be exactly {ROM_BYTES:,} bytes, got {len(rom_bytes):,}.")
+        raise CBasicError("rom_length", message("ROM dump must be exactly {expected:,} bytes, got {actual:,}.",
+            expected=ROM_BYTES, actual=len(rom_bytes)))
     fps = WIZARD_FINGERPRINTS if fingerprints is None else fingerprints
     mismatches = []
     for name, (start_va, end_va, expected) in fps.items():
         got = _sha256(rom_bytes[start_va - ROM_BASE : end_va - ROM_BASE])
         if got != expected:
-            mismatches.append(f"{name} (got {got[:12]}..., expected {expected[:12]}...)")
+            mismatches.append(message("{region} (got {actual}..., expected {expected}...)",
+                region=name, actual=got[:12], expected=expected[:12]))
     if mismatches:
         raise CBasicError(
             "wizard_fingerprint_mismatch",
-            "Wizard BootInfo/script fingerprints do not match EOS R5 2.2.1: " + "; ".join(mismatches),
+            message("Wizard BootInfo/script fingerprints do not match EOS R5 2.2.1: {details}", details=joined("; ", mismatches)),
         )
 
     blk = rom_bytes[BOOTINFO_OFFSET : BOOTINFO_OFFSET + BOOTINFO_BYTES]
     failures = []
     if _u32(blk, 0x00) != 0:
-        failures.append(f"+0x00 main_firm is 0x{_u32(blk, 0x00):08X}, expected 0x00000000")
+        failures.append(message("+0x00 main_firm is 0x{value:08X}, expected 0x00000000", value=_u32(blk, 0x00)))
     if _u32(blk, 0x0C) != 0xFFFFFFFF:
-        failures.append(f"+0x0C firmware is 0x{_u32(blk, 0x0C):08X}, expected 0xFFFFFFFF")
+        failures.append(message("+0x0C firmware is 0x{value:08X}, expected 0xFFFFFFFF", value=_u32(blk, 0x0C)))
     if blk[0x10:0x20] != b"\xff" * 16:
         failures.append("+0x10..+0x1F loader flags are not all 0xFF")
     if _u32(blk, 0x24) != 0xFFFFFFFF:
-        failures.append(f"+0x24 alt_path is 0x{_u32(blk, 0x24):08X}, expected 0xFFFFFFFF")
+        failures.append(message("+0x24 alt_path is 0x{value:08X}, expected 0xFFFFFFFF", value=_u32(blk, 0x24)))
     if failures:
-        raise CBasicError("bootinfo_invariant", "Unexpected BootInfo invariants: " + "; ".join(failures))
+        raise CBasicError("bootinfo_invariant", message("Unexpected BootInfo invariants: {details}", details=joined("; ", failures)))
 
     bd = _u32(blk, 0x04)
     if bd == 0xFFFFFFFF:
@@ -208,7 +213,8 @@ def inspect_bootinfo(
     else:
         raise CBasicError(
             "unexpected_bootdisk_value",
-            f"BootInfo +0x04 has unexpected value 0x{bd:08X} (expected 0x00000000 or 0xFFFFFFFF).",
+            message("BootInfo +0x04 has unexpected value 0x{value:08X} (expected 0x00000000 or 0xFFFFFFFF).",
+                value=bd),
         )
 
     before_compared = False
@@ -244,7 +250,7 @@ def scan_gang1_files(card_root: Path) -> list[Path]:
             continue
         st = os.lstat(entry)
         if stat.S_ISLNK(st.st_mode):
-            raise CBasicError("symlink_refused", f"{entry.name} on the card is a symbolic link; refusing it.")
+            raise CBasicError("symlink_refused", message("{file} on the card is a symbolic link; refusing it.", file=entry.name))
         if stat.S_ISREG(st.st_mode) and st.st_size == ROM_BYTES:
             matches.append((int(m.group(1)), entry.name.casefold(), entry))
     matches.sort(key=lambda item: (item[0], item[1]))
@@ -257,21 +263,22 @@ def _write_card_file(root: Path, filename: str, content: bytes, backup_dir: Path
     if len(matches) > 1:
         raise CBasicError(
             "ambiguous_file",
-            f"More than one {filename} spelling exists on the card: " + ", ".join(p.name for p in matches),
+            message("More than one {filename} spelling exists on the card: {names}",
+                    filename=filename, names=", ".join(p.name for p in matches)),
         )
     existing = matches[0] if matches else None
     existing_sha: str | None = None
     if existing is not None:
         st = os.lstat(existing)
         if not stat.S_ISREG(st.st_mode):
-            raise CBasicError("not_regular_file", f"{existing.name} on the card is not a regular file.")
+            raise CBasicError("not_regular_file", message("{file} on the card is not a regular file.", file=existing.name))
         old = card._read_file(existing, limit=MAX_SCRIPT_BYTES)
         existing_sha = _sha256(old)
         if existing_sha == expected_sha:
-            messages.append(f"{existing.name} on the card already has the exact expected bytes.")
+            messages.append(message("{file} on the card already has the exact expected bytes.", file=existing.name))
             return
         backup = _write_backup(backup_dir, existing.name, old)
-        messages.append(f"Backed up existing {existing.name} to {backup}.")
+        messages.append(message("Backed up existing {file} to {backup}.", file=existing.name, backup=backup))
 
     target = existing if existing is not None else root / filename
     temp = root / f"{card.TEMP_PREFIX}{secrets.token_hex(4).upper()}{card.TEMP_SUFFIX}"
@@ -284,13 +291,13 @@ def _write_card_file(root: Path, filename: str, content: bytes, backup_dir: Path
             f.flush()
             os.fsync(f.fileno())
         if _sha256(card._read_file(temp, limit=MAX_SCRIPT_BYTES)) != expected_sha:
-            raise CBasicError("write_verify_failed", f"Temporary copy for {filename} did not read back correctly.")
+            raise CBasicError("write_verify_failed", message("Temporary copy for {file} did not read back correctly.", file=filename))
         now_matches = sorted(p for p in root.iterdir() if p.name.casefold() == filename.casefold())
         if existing is None:
             if now_matches:
-                raise CBasicError("card_changed", f"{filename} appeared on the card during staging.")
+                raise CBasicError("card_changed", message("{file} appeared on the card during staging.", file=filename))
         elif now_matches != [existing] or _sha256(card._read_file(existing, limit=MAX_SCRIPT_BYTES)) != existing_sha:
-            raise CBasicError("card_changed", f"{existing.name} on the card changed during staging.")
+            raise CBasicError("card_changed", message("{file} on the card changed during staging.", file=existing.name))
         os.replace(temp, target)
         created = False
     finally:
@@ -300,8 +307,9 @@ def _write_card_file(root: Path, filename: str, content: bytes, backup_dir: Path
             except FileNotFoundError:
                 pass
     if _sha256(card._read_file(target, limit=MAX_SCRIPT_BYTES)) != expected_sha:
-        raise CBasicError("write_verify_failed", f"{target.name} on the card did not read back with the expected SHA-256.")
-    messages.append(f"Staged and verified {target.name} ({len(content)} bytes, SHA-256 {expected_sha[:12]}...).")
+        raise CBasicError("write_verify_failed", message("{file} on the card did not read back with the expected SHA-256.", file=target.name))
+    messages.append(message("Staged and verified {file} ({size} bytes, SHA-256 {digest}...).",
+        file=target.name, size=len(content), digest=expected_sha[:12]))
 
 
 def stage_script_files(
@@ -316,24 +324,26 @@ def stage_script_files(
         raise ValueError(f"unknown Canon Basic task {task!r}")
     info = card.inspect_card(card_root)
     if info.errors:
-        raise CBasicError("card_refused", " ".join(info.errors))
+        raise CBasicError("card_refused", joined(" ", info.errors))
     if info.existing is not None:
         raise CBasicError(
             "autoexec_present",
-            f"{info.existing.name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled "
-            "camera boots normal Canon firmware during Canon Basic steps.",
+            message("{name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled camera "
+                "boots normal Canon firmware during Canon Basic steps.",
+                name=info.existing.name),
         )
     unconfirmed = [w for w in info.warnings if w not in confirmed_warnings]
     if unconfirmed:
-        raise card.NeedsConfirmation(" ".join(unconfirmed))
+        raise card.NeedsConfirmation(joined(" ", unconfirmed))
     try:
         free_bytes = shutil.disk_usage(info.root).free
     except OSError as exc:
-        raise CBasicError("free_space_unknown", f"Could not check free space on {info.root}: {exc}") from exc
+        raise CBasicError("free_space_unknown", message("Could not check free space on {folder}: {error}", folder=info.root, error=exc)) from exc
     if free_bytes < MIN_FREE_BYTES:
         raise CBasicError(
             "insufficient_free_space",
-            f"Need at least 300 MiB free on the card for ROM dumps (only {free_bytes / (1024 * 1024):.1f} MiB free).",
+            message("Need at least 300 MiB free on the card for ROM dumps (only {free:.1f} MiB free).",
+                free=free_bytes / (1024 * 1024)),
         )
 
     backup_dir = Path(backup_dir)
@@ -417,7 +427,8 @@ def collect_returned_dump(
 
     data = card._read_file(chosen, ROM_BYTES)
     if len(data) != ROM_BYTES:
-        raise CBasicError("rom_length", f"{chosen.name} must be exactly {ROM_BYTES:,} bytes, got {len(data):,}.")
+        raise CBasicError("rom_length", message("{file} must be exactly {expected:,} bytes, got {actual:,}.",
+            file=chosen.name, expected=ROM_BYTES, actual=len(data)))
 
     opts: dict[str, str | None] = dict(options or {})
     if record_indicator is not None and "record_indicator" not in opts:
@@ -425,7 +436,7 @@ def collect_returned_dump(
     try:
         rom_summary = build.check_rom(chosen, profile=profile, **opts)
     except (ValueError, OSError) as exc:
-        raise CBasicError("rom_refused", f"{chosen.name} was refused by the ROM check: {exc}") from exc
+        raise CBasicError("rom_refused", message("{file} was refused by the ROM check: {error}", file=chosen.name, error=exc)) from exc
 
     before_bytes = card._read_file(Path(before_rom), ROM_BYTES) if before_rom is not None else None
     bootinfo = inspect_bootinfo(data, before_bytes=before_bytes)
@@ -455,18 +466,21 @@ def collect_returned_dump(
             except FileNotFoundError:
                 pass
     if _sha256(card._read_file(local_path, ROM_BYTES)) != rom_sha:
-        raise CBasicError("copy_verify_failed", f"Saved ROM dump at {local_path} failed final readback verification.")
+        raise CBasicError("copy_verify_failed", message("Saved ROM dump at {path} failed final readback verification.", path=local_path))
 
     cleaned = remove_script_files(root, backup_dir or dest_dir) if clean_scripts else []
     regions = rom_summary["verified_code_regions"] + rom_summary.get("verified_xpan_regions", 0)
     messages = [
-        f"Imported {chosen.name} ({len(data):,} bytes, SHA-256 {rom_sha}) to {local_path}.",
-        f"ROM admission passed for {profile}: {regions} fingerprinted regions match.",
-        f"BootInfo check passed: BootDisk is {bootinfo.state.upper()} (+0x04 = 0x{bootinfo.boot_disk_raw:08X}).",
+        message("Imported {file} ({size:,} bytes, SHA-256 {digest}) to {path}.",
+            file=chosen.name, size=len(data), digest=rom_sha, path=local_path),
+        message("ROM admission passed for {profile}: {count} fingerprinted regions match.",
+            profile=profile, count=regions),
+        message("BootInfo check passed: BootDisk is {state} (+0x04 = 0x{value:08X}).",
+            state=phrase(bootinfo.state.upper()), value=bootinfo.boot_disk_raw),
     ]
     if bootinfo.before_compared:
         messages.append("Compared 48-byte BootInfo block with previous dump: only +0x04..+0x07 changed.")
     if cleaned:
-        messages.append("Removed Canon Basic script file(s) from the card: " + ", ".join(cleaned) + ".")
+        messages.append(message("Removed Canon Basic script file(s) from the card: {files}.", files=", ".join(cleaned)))
     messages.append("Keep this ROM dump private; never upload or share it. gang2NN.bin is not needed by the builder.")
     return ReturnedDump(chosen, local_path, rom_sha, rom_summary, bootinfo, cleaned, messages)

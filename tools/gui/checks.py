@@ -19,6 +19,8 @@ ROOT = TOOLS_DIR.parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import joined, message, phrase
+
 TOOLCHAIN_RELEASES_URL = "https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases"
 TOOLCHAIN_FOLDER = "xpack-arm-none-eabi-gcc-15.2.1-1.1"
 @dataclass
@@ -41,12 +43,13 @@ def check_rom(path: Path, *, profile: str, options: dict[str, str | None]) -> Ch
     try:
         summary = _builder().check_rom(Path(path), profile=profile, **options)
     except (ValueError, OSError) as exc:
-        return CheckResult(False, f"ROM refused: {exc}")
+        return CheckResult(False, message('ROM refused: {exc}', exc=exc))
     regions = summary["verified_code_regions"] + summary.get("verified_xpan_regions", 0)
     return CheckResult(
         True,
-        f"ROM accepted for {profile}: {summary['target']}, {summary['bytes']:,} bytes, "
-        f"{regions} fingerprinted regions match.",
+        message(
+            "ROM accepted for {profile}: {target}, {bytes:,} bytes, {regions} fingerprinted regions match.",
+            profile=profile, target=summary['target'], bytes=summary['bytes'], regions=regions),
         summary,
     )
 
@@ -74,11 +77,11 @@ def check_bootinfo(
         before = card._read_file(Path(before_path), cbasic.ROM_BYTES) if before_path is not None else None
         info = cbasic.inspect_bootinfo(data, before_bytes=before)
     except (cbasic.CBasicError, card.CardError, ValueError, OSError) as exc:
-        return CheckResult(False, f"BootInfo check failed: {exc}")
+        return CheckResult(False, message('BootInfo check failed: {exc}', exc=exc))
     state_text = "ENABLED (0xFFFFFFFF)" if info.state == "enabled" else "DISABLED (0x00000000)"
-    msg = f"BootInfo verified: BootDisk is {state_text} at offset 0x3FF8004."
+    msg = message('BootInfo verified: BootDisk is {state_text} at offset 0x3FF8004.', state_text=phrase(state_text))
     if info.before_compared:
-        msg += " Only +0x04..+0x07 changed compared to the earlier ROM dump."
+        msg = joined(" ", [msg, "Only +0x04..+0x07 changed compared to the earlier ROM dump."])
     return CheckResult(
         True,
         msg,
@@ -99,11 +102,13 @@ def check_wav(path: Path) -> CheckResult:
     try:
         _, facts = admit_pcm(Path(path))
     except (ValueError, OSError) as exc:
-        return CheckResult(False, f"WAV refused: {exc}")
+        return CheckResult(False, message('WAV refused: {exc}', exc=exc))
     ms = facts["decoded_frames"] * 1000 // facts["format"]["sample_rate"]
     return CheckResult(
         True,
-        f"WAV accepted: 48 kHz mono 16-bit, {ms:,} ms, {facts['embedded_pcm_bytes']:,} bytes embedded.",
+        message(
+            "WAV accepted: 48 kHz mono 16-bit, {ms:,} ms, {embedded_pcm_bytes:,} bytes embedded.",
+            ms=ms, embedded_pcm_bytes=facts['embedded_pcm_bytes']),
         {"duration_ms": ms, **facts},
     )
 
@@ -115,10 +120,13 @@ def check_toolchain(path: Path) -> CheckResult:
     try:
         _, admission = admit_toolchain(Path(path))
     except (ValueError, OSError) as exc:
-        return CheckResult(False, f"Toolchain refused: {exc}")
+        return CheckResult(False, message('Toolchain refused: {exc}', exc=exc))
     return CheckResult(
         True,
-        f"Toolchain accepted: {admission['target']} GCC {admission['gcc_version']} in {admission['resolved_path']}",
+        message(
+            "Toolchain accepted: {target} GCC {gcc_version} in {resolved_path}",
+            target=admission['target'], gcc_version=admission['gcc_version'],
+            resolved_path=admission['resolved_path']),
         {"resolved_path": admission["resolved_path"], "gcc_version": admission["gcc_version"]},
     )
 
@@ -173,5 +181,5 @@ def detect_toolchain(candidates: list[Path] | None = None) -> tuple[Path | None,
         result = check_toolchain(candidate)
         if result.ok:
             return candidate, result, notes
-        notes.append(f"{candidate}: {result.message}")
+        notes.append(message('{candidate}: {message}', candidate=candidate, message=phrase(result.message)))
     return None, None, notes

@@ -953,5 +953,158 @@
       "bytes": 4096,
       "sha256": "be99677f2463d7164604eb574bc5636f45d31cee01b437502858e6a4052025aa"
     }
+  ],
+  "screenshot_note": "Opt-in --screenshot only: the three hook pages (GUI dispatch E04A8000, JPEG encode E0CCB000, INDEV_DevelopEnd E0549000), the pages of every Canon function the screenshot calls (FIO, MapCpuBuffer and its VA-to-PA helper, RscMgr suite calls, FM resize check, INDEV start), and the Canon code pages that define the RAM words it reads (GUI mode 0x8F40, playback view handle 0x13F1D0, develop state 0x17454, the GUI dispatcher and display-driver literals). Admitted only when --screenshot is selected.",
+  "screenshot_code_fingerprints": [
+    {
+      "name": "screenshot_page_e0108000",
+      "address": 3759177728,
+      "bytes": 4096,
+      "sha256": "8975f82adc58b903022a9ffefb2982315266a400b96ce2e1f4e2fb23ac04bdd2"
+    },
+    {
+      "name": "screenshot_page_e0109000",
+      "address": 3759181824,
+      "bytes": 4096,
+      "sha256": "f8dc6d4dbd57061f1d72eec9eb1f6becd216511da109b449a00281376ed4aef4"
+    },
+    {
+      "name": "screenshot_page_e016c000",
+      "address": 3759587328,
+      "bytes": 4096,
+      "sha256": "2bc964187ee4219b9865da20b8de5cae00359274e692acab28641feea4d8feea"
+    },
+    {
+      "name": "screenshot_page_e0236000",
+      "address": 3760414720,
+      "bytes": 4096,
+      "sha256": "396ff70373f9ba8ef9a35254d377e6937fcb4c80033dc2bf3ed060f222f89e33"
+    },
+    {
+      "name": "screenshot_page_e0260000",
+      "address": 3760586752,
+      "bytes": 4096,
+      "sha256": "2b328770e39724829d690223474985e17c86b9849f8ded4d29488fc643bc1b60"
+    },
+    {
+      "name": "screenshot_page_e0263000",
+      "address": 3760599040,
+      "bytes": 4096,
+      "sha256": "f8dac0d42826c64edc352c2df623e6b4859cc38c2d25ea8d41f60c9560bc054e"
+    },
+    {
+      "name": "screenshot_page_e04a7000",
+      "address": 3762974720,
+      "bytes": 4096,
+      "sha256": "8e5a08199fba4191a016d05c19b0479c6740b06eff4dd9bf19d5f45f9a5193eb"
+    },
+    {
+      "name": "screenshot_page_e04a8000",
+      "address": 3762978816,
+      "bytes": 4096,
+      "sha256": "58aa0fc82adeb7b54428fc4320f8b847329d8a66552ba97eb705bb365320ea11"
+    },
+    {
+      "name": "screenshot_page_e0548000",
+      "address": 3763634176,
+      "bytes": 4096,
+      "sha256": "dc0da72efdc23bafc0c7ff54a810e0df5abd727404144f4ecadc01efe44d3b31"
+    },
+    {
+      "name": "screenshot_page_e0549000",
+      "address": 3763638272,
+      "bytes": 4096,
+      "sha256": "d7d29a64a2eabccb97228f70b6bc9b44f07737da7ac77ff397200c61841d052b"
+    },
+    {
+      "name": "screenshot_page_e0719000",
+      "address": 3765538816,
+      "bytes": 4096,
+      "sha256": "3cb12e1b3a9b261d0bb856af9127fa3460217aaa94035fa0d58a0f15dfb67cfd"
+    },
+    {
+      "name": "screenshot_page_e0750000",
+      "address": 3765764096,
+      "bytes": 4096,
+      "sha256": "aa041d34da71e828e79f5fc80411b908be3a0e3c84bdb8aada1d89c08dbb7b63"
+    },
+    {
+      "name": "screenshot_page_e07c6000",
+      "address": 3766247424,
+      "bytes": 4096,
+      "sha256": "235d42b153ba7c1d96c311f922b0a058cf77e32641bdd28a6c43454d2a1304c4"
+    },
+    {
+      "name": "screenshot_page_e07e1000",
+      "address": 3766358016,
+      "bytes": 4096,
+      "sha256": "863e8585bfba9a603aecaddee39699ce9c72b97c881a5f6d24bfc0aa1a792900"
+    },
+    {
+      "name": "screenshot_page_e07e2000",
+      "address": 3766362112,
+      "bytes": 4096,
+      "sha256": "ce31c4b5de2cf3f6d5852767ca47969c082d33e4d77d8ffdfbbf2e79fca034c6"
+    },
+    {
+      "name": "screenshot_page_e07e3000",
+      "address": 3766366208,
+      "bytes": 4096,
+      "sha256": "50ff97e390d43addeab2e2df4f93cde6eaa08e3d4ca59ee45435c483bd9b0a3e"
+    },
+    {
+      "name": "screenshot_page_e07e4000",
+      "address": 3766370304,
+      "bytes": 4096,
+      "sha256": "bc97544aad1b3f3143bba9bbe0fbe707dd11357ce75c5107eed9dbdeb634688a"
+    },
+    {
+      "name": "screenshot_page_e07ea000",
+      "address": 3766394880,
+      "bytes": 4096,
+      "sha256": "594da8ffc804d245d9b799a54237ce01ae67eab5d409aa0f4a2ce31b264d11cc"
+    },
+    {
+      "name": "screenshot_page_e07f0000",
+      "address": 3766419456,
+      "bytes": 4096,
+      "sha256": "f548230ac45804a7544dd53cce667c7c0767f193c41c02d3c5169d249bda024c"
+    },
+    {
+      "name": "screenshot_page_e08ab000",
+      "address": 3767185408,
+      "bytes": 4096,
+      "sha256": "fa7433ce455293a822e0492ecd856e688ad6d98116ead20e9846cb4fbc2c102a"
+    },
+    {
+      "name": "screenshot_page_e091b000",
+      "address": 3767644160,
+      "bytes": 4096,
+      "sha256": "53e959ee52b0387ace4337bcbb69b5d2c105dbad0683b701a6698e1c4c0a8364"
+    },
+    {
+      "name": "screenshot_page_e099d000",
+      "address": 3768176640,
+      "bytes": 4096,
+      "sha256": "c1febec801a6b5736ff32c99b6404459ee64ef30660b3587ccdc754a414190a3"
+    },
+    {
+      "name": "screenshot_page_e0a08000",
+      "address": 3768614912,
+      "bytes": 4096,
+      "sha256": "2415fb6166f2cac16ebf0e5cb348a2d4af521d84be1141248c03c4b1b22177c2"
+    },
+    {
+      "name": "screenshot_page_e0ccb000",
+      "address": 3771510784,
+      "bytes": 4096,
+      "sha256": "a4961ca20befc7036e5e0c3a1035fbd210a824dd76586a12f1c526003a586be7"
+    },
+    {
+      "name": "screenshot_page_e0d5b000",
+      "address": 3772100608,
+      "bytes": 4096,
+      "sha256": "add0fe7f3b4c6a2f90dc663376b750652cab06bd9739189b5d1d82f6c139ff52"
+    }
   ]
 }

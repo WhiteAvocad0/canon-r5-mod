@@ -4,6 +4,9 @@
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 #include "rec_tone.h"
 #endif
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+#include "combo_observe.h"
+#endif
 
 _Static_assert(sizeof(unsigned) == 4, "stock scalar ABI is u32");
 _Static_assert(sizeof(int) == 4, "stock signed scalar ABI is i32");
@@ -232,6 +235,10 @@ CODE void sound_worker_entry(void *arg)
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
         /* Issue #14: one non-blocking record-indicator step per tick. */
         rec_tone_step();
+#endif
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+        /* --screenshot: drain the GUI dispatch ring, run the RATE detector, capture and one-press. */
+        combo_observe_step();
 #endif
         boot_mmu_tick();
         if (sound_worker_api.sleep_ms) {

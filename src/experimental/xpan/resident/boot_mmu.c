@@ -13,6 +13,9 @@
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
 #include "../rec_tone.h"
 #endif
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+#include "../combo_observe.h"
+#endif
 #endif
 #ifdef OBSERVER_FIRMWARE
 #include "observer.h"
@@ -142,6 +145,9 @@ CODE void boot_mmu_emit_bundle(void *unused, unsigned reports)
     playback_report(reports);
 #if defined(R5_RECORD_INDICATOR) && R5_RECORD_INDICATOR
     rec_tone_report(reports);
+#endif
+#if defined(R5_SCREENSHOT) && R5_SCREENSHOT
+    combo_observe_report(reports);
 #endif
 }
 static const char refresh_fmt[] DATA = "R5R1 S=" OBSERVER_SOURCE_ID " Q=%u I=%u R=%u";

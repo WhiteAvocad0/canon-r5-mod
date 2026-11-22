@@ -17,6 +17,8 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from messages import error_text, message, phrase
+
 import screenshots
 from gui import card
 from gui.theme import DANGER, SUCCESS, WARNING
@@ -25,8 +27,9 @@ from gui.wizard import Guide
 SCREENSHOTS = "screenshots"  # the utility's id (not a setup step)
 TITLE = "Screenshots"
 
-LAB_NOTE = ("The on-camera screenshot build is a private lab feature. It isn't in the public firmware build yet, "
-            "so a public build doesn't save screenshots.")
+LAB_NOTE = ("A build with the One-press screenshot option (--screenshot rate) saves these screen files. Its "
+            "JPEG screenshots are ordinary photos and need no conversion; this tool turns the SS_*.YCA "
+            "on-screen display files into PNG.")
 
 
 GUIDE = Guide(
@@ -57,13 +60,16 @@ class Source:
 
     def describe(self) -> str:
         if self.shots is None:
-            return (f"No {screenshots.SHOTS_FOLDER} folder in {self.picked}. Choose the card's top folder, "
-                    f"its DCIM folder, or a copied {screenshots.SHOTS_FOLDER} folder.")
+            return message(
+                "No {SHOTS_FOLDER} folder in {picked}. Choose the card's top folder, its DCIM folder, or a copied "
+                "{SHOTS_FOLDER} folder.",
+                SHOTS_FOLDER=screenshots.SHOTS_FOLDER, picked=self.picked)
         n = len(self.files)
         where = " on the camera card" if self.on_card else ""
         if not n:
-            return f"{self.shots}{where} has no screenshots (SS_*.YCA)."
-        return f"{n} screenshot{'s' if n != 1 else ''} in {self.shots}{where}."
+            return message('{folder}{where} has no screenshots (SS_*.YCA).', folder=self.shots, where=phrase(where))
+        return message("{n} screenshot in {folder}{where}." if n == 1 else "{n} screenshots in {folder}{where}.",
+                       n=n, folder=self.shots, where=phrase(where))
 
 
 def find_source(picked: Path) -> Source:
@@ -100,17 +106,17 @@ class ShotsState:
         protected = card.protected_location(resolved, windows=os.name == "nt", home=home.resolve(),
                                             environ=os.environ)
         if protected:
-            return protected.replace("not a camera card", "not a folder for screenshots")
+            return message("Choose a different output folder. {path} is a system or home folder.", path=resolved)
         if self.source is not None and self.source.shots is not None:
             try:
                 screenshots.check_output(self.output_dir, self.source.shots, self.source.picked, home=home)
             except screenshots.ScreenshotError as exc:
-                return str(exc)
+                return error_text(exc)
         return None
 
     def blockers(self) -> list[str]:
         if self.busy:
-            return [f"Wait: {self.busy}"]
+            return [message('Wait: {busy}', busy=phrase(self.busy))]
         if self.source is None:
             return ["Choose the card or a folder with screenshots."]
         if self.source.shots is None or not self.source.files:
@@ -126,12 +132,12 @@ class ShotsState:
 
     def progress(self, index: int, total: int, name: str | None) -> None:
         if self.busy and name:
-            self.busy = f"Converting {index + 1} of {total}: {name}"
+            self.busy = message('Converting {index} of {total}: {name}', index=index + 1, total=total, name=name)
 
     def finished(self, result) -> None:
         self.busy = None
         if isinstance(result, Exception):
-            self.result, self.error = None, f"Not converted: {result}"
+            self.result, self.error = None, message('Not converted: {result}', result=result)
         else:
             self.result, self.error = result, None
 
@@ -142,17 +148,26 @@ class ShotsState:
         r = self.result
         if r is None:
             return None
-        lines = [f"Saved in {r.out_dir}"]
-        lines += [f"{c.source.name}: {c.header.describe()} -> {c.png.name}" for c in r.converted]
-        lines += [f"{c.source.name}: already converted ({c.png.name})" for c in r.skipped]
-        lines += [f"{name}: not converted ({reason})" for name, reason in r.errors]
+        lines = [message('Saved in {out_dir}', out_dir=r.out_dir)]
+        lines += [message(
+            "{name}: {header} -> {name_2}",
+            name=c.source.name, header=c.header.describe(), name_2=c.png.name) for c in r.converted]
+        lines += [message(
+            "{name}: already converted ({name_2})",
+            name=c.source.name, name_2=c.png.name) for c in r.skipped]
+        lines += [message(
+            "{name}: not converted ({reason})",
+            name=name, reason=phrase(reason)) for name, reason in r.errors]
         if self.source is not None and self.source.on_card:
             lines.append(card.eject_hint())
         if r.errors:
             kind = WARNING if r.converted or r.skipped else DANGER
         else:
             kind = SUCCESS
-        return kind, r.summary().capitalize() + ".", lines
+        template = ("{converted} converted, {skipped} already converted, {errors} not converted."
+                    if r.errors else "{converted} converted, {skipped} already converted.")
+        summary = message(template, converted=len(r.converted), skipped=len(r.skipped), errors=len(r.errors))
+        return kind, summary, lines
 
     def can_open_output(self) -> bool:
         return not self.busy and self.output_dir.is_dir()

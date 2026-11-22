@@ -2,6 +2,7 @@
 from datetime import datetime
 import hashlib
 import os
+import shutil
 from pathlib import Path
 import struct
 import sys
@@ -264,3 +265,50 @@ class CardCopyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScreenshotFolderTests(unittest.TestCase):
+    """A --screenshot build's copy also makes the empty DCIM/R5SHOTS the camera writes into."""
+
+    setUp = CardCopyTests.setUp
+    copy = CardCopyTests.copy
+
+    def test_copy_creates_only_the_empty_folder(self):
+        before = snapshot(self.card)
+        result = self.copy(screenshot_folder=True)
+        self.assertTrue((self.card / "DCIM" / "R5SHOTS").is_dir())
+        self.assertEqual(list((self.card / "DCIM" / "R5SHOTS").iterdir()), [])
+        self.assertIn("Created the empty screenshot folder DCIM/R5SHOTS on the card.", result.messages)
+        after = snapshot(self.card)
+        self.assertEqual({k: v for k, v in after.items() if k.casefold() not in ("autoexec.bin", "dcim/r5shots")}, before)
+
+    def test_without_the_option_no_folder_is_made(self):
+        self.copy()
+        self.assertFalse((self.card / "DCIM" / "R5SHOTS").exists())
+
+    def test_existing_folder_and_its_files_are_left_alone(self):
+        shots = self.card / "DCIM" / "r5shots"
+        shots.mkdir()
+        (shots / "SS_00001.YCA").write_bytes(b"x")
+        result = self.copy(screenshot_folder=True)
+        self.assertEqual([p.name for p in (self.card / "DCIM").iterdir() if p.name.casefold() == "r5shots"], ["r5shots"])
+        self.assertEqual((shots / "SS_00001.YCA").read_bytes(), b"x")
+        self.assertIn("The screenshot folder DCIM/r5shots is already on the card.", result.messages)
+
+    def test_a_file_in_the_way_is_reported_not_replaced(self):
+        (self.card / "DCIM" / "R5SHOTS").write_bytes(b"not a folder")
+        result = self.copy(screenshot_folder=True)
+        self.assertEqual((self.card / "DCIM" / "R5SHOTS").read_bytes(), b"not a folder")
+        self.assertTrue(any("is not a plain folder" in m for m in result.messages))
+
+    def test_no_dcim_means_no_folder(self):
+        shutil.rmtree(self.card / "DCIM")
+        result = self.copy(screenshot_folder=True)
+        self.assertFalse(any(p.name.casefold() == "dcim" for p in self.card.iterdir()))
+        self.assertTrue(any("no DCIM folder" in m for m in result.messages))
+
+    def test_identical_image_still_gets_the_folder(self):
+        self.copy()
+        result = self.copy(screenshot_folder=True)
+        self.assertTrue(result.already_identical)
+        self.assertTrue((self.card / "DCIM" / "R5SHOTS").is_dir())
