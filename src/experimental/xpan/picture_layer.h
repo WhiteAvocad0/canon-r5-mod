@@ -1,12 +1,10 @@
 #ifndef R5_PICTURE_LAYER_H
 #define R5_PICTURE_LAYER_H
-/* P0 + Stage I (opt-in --picture-layer, build-12; issue-research/screenshot/
- * all-layers-research.md sections 1, 2, 4). Owner of the picture-layer record
+/* Picture layer (opt-in --screenshot). Owner of the picture-layer record
  * ABI (ring, rows, the .PIC header) shared by combo_capture.c (the RATE writer,
- * its only producer), picture_layer.c (sampling, selection, report) and the host
- * tools (combo_observe_log.py, pic2png.py).
+ * its only producer) and picture_layer.c (sampling, selection, report).
  *
- * Display driver state (O, ROM f317c69f..., re-verified in build-12/NOTES.md):
+ * Display driver state (ROM 2.2.1):
  *  dvctrl = *(u32 *)0x106A4 (literal E0260A5C). DISP_GetImageAddress(out)
  *  E07E0324 -> E0260A0A returns the Active u64 at dvctrl + 0x130 (TFT, out 0)
  *  or + 0x140 (EVF, out 1). The panel / EVF vsync handlers (E063A9BA, E063AAB4)
@@ -17,19 +15,19 @@
  *  WholeW, +0x18 WholeH, +0x1C/+0x20 InputStart, +0x24/+0x28 OutputStart,
  *  +0x2C/+0x30 Disp size, +0x34 colour space, +0x38 range/depth, +0x3C, +0x74.
  *  Canon's VramRead (E016E140 writer) writes Active with FIO_WriteFile_IBUS
- *  E07E283E (fd, 0, lo, hi, bytes) straight from IBUS: no CPU copy. Stage I does
- *  the same for the selected output only.
+ *  E07E283E (fd, 0, lo, hi, bytes) straight from IBUS: no CPU copy. The .PIC
+ *  write does the same for the selected output only.
  *
- * Format (build-13, O): +0x34 names (table E16DA910) 0 709, 1 601, 2 2020,
+ * Format: +0x34 names (table E16DA910) 0 709, 1 601, 2 2020,
  * 3 C_GAMUT; +0x38 names (E16DA920) 0 0_255, 1 16_254, 2 16_235, 3 0_1023,
- * 4 64_1019, 5 64_940. The live panel / EVF planes are range 3 (returned-14) and
+ * 4 64_1019, 5 64_940. The live panel / EVF planes are range 3 (on camera) and
  * ▶'s own builder E05E0A6E writes +0x38 = 3 or 5 (E05E0B28). Ranges 3 and 5 are
  * 10-bit 4:2:2 at 20 bits per pixel: EngCalcLib's format table E09F67B2 gives
  * code 6 = 20 bpp, and both Canon dumps of these planes size them W*H*5/2
  * (VramRead E016E1A0..AA, RawPbTest "Yuv(Panel).yuv (%d x %d(10bit))"
  * E0A7A592..9C). Only ranges 3 and 5 are accepted. The bit layout inside each
- * 5-byte pixel pair and the chroma sign are U (no software packer in the ROM);
- * the host decoder chooses them from the data (pic2png.py). */
+ * 5-byte pixel pair and the chroma sign are not in the ROM (no software
+ * packer); y22_composite_row has the layout found from the data. */
 #define PL_DVCTRL_POINTER 0x000106a4u
 #define PL_MASK_POINTER 0x00010684u
 #define PL_MASK_OFFSET 0x18u
@@ -55,7 +53,7 @@
 #define PL_ENTRIES 4u
 #define PL_REPORTED 3u
 
-/* outcomes (Stage I) */
+/* outcomes (the .PIC write) */
 #define PL_NONE 0
 #define PL_OK 1
 #define PL_SKIP_DVCTRL 2   /* dvctrl pointer unreadable */

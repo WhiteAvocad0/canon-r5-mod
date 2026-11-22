@@ -18,7 +18,7 @@ static uint32_t op_fm_buffer[8] __attribute__((aligned(32))); /* 32 B for PTP's 
 #define S one_press_state
 
 /* The block Canon's GUI passed to INDEV_DevelopStart for a stock S2 Resize of a
- * 3:2 JPEG (O: returned-14 Probe 2 P1, 20 nonzero words; every other word 0).
+ * 3:2 JPEG (seen on camera: 20 nonzero words; every other word 0).
  * +0x04 = 4 (Resize), +0x5C bytes 0 / 15 (S2) / 0xFF, +0x60 = 3 (quality). */
 static const uint16_t op_block_offsets[20] DATA = {0x04, 0x1c, 0x20, 0x24, 0x2c, 0x38, 0x3c, 0x40, 0x44, 0x4c,
                                                    0x58, 0x5c, 0x60, 0x64, 0x68, 0x70, 0x78, 0xd4, 0x104, 0x108};
@@ -55,7 +55,7 @@ const struct one_press_api one_press_api DATA = {
 
 CODE static void op_start_stub(uint32_t message)
 {
-    (void)message; /* type 4 never calls startCBR (O, E097D19A..E097D408); non-null to be safe */
+    (void)message; /* type 4 never calls startCBR (E097D19A..E097D408); non-null to be safe */
 }
 
 CODE uint32_t one_press_busy(void)
@@ -124,7 +124,7 @@ CODE void one_press_release(void)
         refuse(OP_BUSY);
         return;
     }
-    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* review O O1: ▶ left since the press */
+    if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK) { /* ▶ left since the press */
         refuse(OP_NOT_PLAYBACK);
         return;
     }
@@ -207,10 +207,10 @@ CODE void one_press_done(uint32_t result)
         ++S.saves;
     else
         ++S.cancels;
-    /* Canon's RequestPlayDevelopEnd (E0719D22) clears these two words before its End (O: returned-14 H8 block). */
+    /* Canon's RequestPlayDevelopEnd (E0719D22) clears these two words before its End (seen in its H8 block on camera). */
     *(uint32_t *)(one_press_block + 0x70u) = 0u;
     *(uint32_t *)(one_press_block + 0xd4u) = 0u;
-    A.set_indev_busy(1u); /* as Canon's End path E0719DE6 (review M R1): busy through the save */
+    A.set_indev_busy(1u); /* as Canon's End path E0719DE6: busy through the save */
     A.end(reason == OP_END_SAVE, one_press_block, one_press_end);
 }
 
@@ -235,7 +235,7 @@ CODE void one_press_step(uint32_t tick)
         return; /* a callback moved it meanwhile: next tick */
     S.latched = 1u;
     ++S.timeouts;
-    /* review M R3: both busy flags stay set; playback stays inert (no decode while
+    /* Both busy flags stay set; playback stays inert (no decode while
      * INDEV may hold its memory map) until a late callback or power-off. */
 }
 

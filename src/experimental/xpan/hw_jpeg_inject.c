@@ -1,4 +1,4 @@
-/* Screenshot Level B Stage A1: H8 arm, H3 injection (hook context) and the
+/* Screenshot JPEG injection: H8 arm, H3 injection (hook context) and the
  * export report. Host-testable through inject_api and observer_api
  * (COMBO_OBSERVE_HOST). hw_jpeg_inject.h holds the windows and the evidence. */
 #include "hw_jpeg_inject.h"
@@ -26,10 +26,10 @@ struct inject_guard inject_guard;
 uint8_t inject_shared_strip[INJECT_SHARED_STRIP_BYTES] __attribute__((aligned(32)));
 uint8_t inject_shared_row[INJECT_SHARED_ROW_BYTES] __attribute__((aligned(32)));
 uint8_t inject_dma_row[INJECT_SHARED_ROW_BYTES] __attribute__((aligned(32)));
-_Static_assert(INJECT_SHARED_ROW_BYTES % 32u == 0u, "whole cache lines (review K N2)");
+_Static_assert(INJECT_SHARED_ROW_BYTES % 32u == 0u, "whole cache lines");
 _Static_assert(INJECT_BAND_OUT_BYTES + INJECT_BAND_ROWS_LCD * (3u * 1024u + 1024u * 5u / 2u) <= INJECT_BAND_REQUEST, "LCD band fits");
 _Static_assert(INJECT_BAND_OUT_BYTES + INJECT_BAND_ROWS_EVF * (3u * 1600u + 1600u * 5u / 2u) <= INJECT_BAND_REQUEST, "EVF band fits");
-/* build-21: returned-23's 768,000 B Write64s from a 128-aligned band ran at 5.1 MB/s, the
+/* On camera, 768,000 B Write64s from a 128-aligned band ran at 5.1 MB/s, the
  * capture's 2 MB Write64 from a 1 KiB-aligned buffer at 16-29 MB/s; the band start (every
  * Write64 source) is rounded to 4 KiB. The read regions are then 512-aligned for the LCD
  * layout; the EVF PIC rows stay 32-aligned (46 * 4800 is not a multiple of 512). */
@@ -70,7 +70,7 @@ CODE uint32_t inject_capture_begin(void)
     uint32_t busy = __atomic_load_n(&inject_guard.busy, __ATOMIC_SEQ_CST);
     uint32_t develop = __atomic_load_n(&inject_guard.develop, __ATOMIC_ACQUIRE);
     uint32_t age = __atomic_load_n(&combo_worker_tick, __ATOMIC_RELAXED) - __atomic_load_n(&inject_guard.develop_tick, __ATOMIC_RELAXED);
-    if ((int32_t)age < 0) /* review K N1: a newer H8 stamp than our tick read is a live window */
+    if ((int32_t)age < 0) /* a newer H8 stamp than our tick read is a live window */
         age = 0u;
     if (busy || (develop && age <= INJECT_DEVELOP_TICKS)) {
         __atomic_store_n(&inject_guard.capture, 0u, __ATOMIC_RELEASE);
@@ -104,7 +104,7 @@ CODE static void inject_native_barrier(void)
 {
     __asm__ volatile("dsb sy" ::: "memory");
 }
-/* Canon's AllocateUncacheableMemory without the malloc (O: E07F76FC -> E0808DD8,
+/* Canon's AllocateUncacheableMemory without the malloc (E07F76FC -> E0808DD8,
  * E04E1FE0): drop the range's cache lines, then the 0x40000000 alias. The buffer
  * is 32-aligned and whole lines; the CPU must use only the returned alias. */
 CODE void *inject_native_uncached(void *buffer, uint32_t bytes)
@@ -144,7 +144,7 @@ static const char i_build3_fmt[] DATA = CC_FMT_INJECT_BUILD3;
 static const char i_band_fmt[] DATA = CC_FMT_INJECT_BAND;
 static const char inject_drive[] DATA = "B:/";
 
-/* As hw_jpeg_probe.c: 1 inside the RAM range, 2 inside the caller frame above
+/* 1 inside the RAM range, 2 inside the caller frame above
  * the entry SP, 0 refused. */
 CODE static uint32_t readable(uint32_t p, uint32_t bytes, uint32_t sp)
 {
@@ -194,7 +194,7 @@ struct source_reader {
     int32_t pic;        /* the admitted .PIC (open_pic), else -1 */
     uint32_t pic_bytes; /* one 10-bit row: w * 5 / 2 */
     uint8_t *pic_dma;   /* inject_pic_row's uncacheable alias */
-    /* build-19 band mode (rows != 0): `rows` source rows of each file per read */
+    /* band mode (rows != 0): `rows` source rows of each file per read */
     uint32_t rows, height, first, end;
     uint8_t *yca_band, *pic_band;
 };
@@ -251,7 +251,7 @@ CODE static int32_t fetch_row(void *ctx, uint32_t sy, uint8_t *row, uint32_t byt
     return 0;
 }
 
-/* build-19 band buffer (hw_jpeg_inject.h INJECT_BAND_*): state machine shared with
+/* The band buffer (hw_jpeg_inject.h INJECT_BAND_*): state machine shared with
  * the RscMgrTask callback. IDLE -> WAITING (request posted) -> DONE (callback
  * stored the suite; it gives the semaphore) or ABANDONED (timeout; the callback
  * frees the suite on arrival and returns to IDLE). */
@@ -263,7 +263,7 @@ uint8_t *inject_host_band(uint32_t a); /* the fake's arena for its chunk address
 #define BAND_ALIAS_OK(a) ((a) != 0u)
 #define BAND_POINTER(a) inject_host_band(a)
 #else
-#define BAND_ALIAS_OK(a) ((a) >= 0x40000000u && (a) < 0x80000000u) /* FIO_ReadFile's uncacheable test (build-15 §1) */
+#define BAND_ALIAS_OK(a) ((a) >= 0x40000000u && (a) < 0x80000000u) /* FIO_ReadFile's uncacheable test */
 #define BAND_POINTER(a) ((uint8_t *)(uintptr_t)(a))
 #endif
 
@@ -281,7 +281,7 @@ CODE static void band_cbr(uint32_t ctx, uint32_t suite)
 }
 
 /* GuiMainTask: the band's CPU address (an uncacheable alias, rounded up to BAND_ALIGN), or 0 for the strip path.
- * Not inlined, so test_one_press_asm can run its linked words. */
+ * Not inlined, so its linked words can be run on their own. */
 CODE __attribute__((noinline)) static uint8_t *band_get(struct inject_build *b)
 {
     if (__atomic_load_n(&band_state, __ATOMIC_ACQUIRE) != BAND_IDLE) {
@@ -297,7 +297,7 @@ CODE __attribute__((noinline)) static uint8_t *band_get(struct inject_build *b)
     uint32_t t = inject_api.timer_us();
     BA.alloc(INJECT_BAND_REQUEST, band_cbr, 0u, INJECT_BAND_TYPE);
     int32_t took = BA.sem_take(band_sem, INJECT_BAND_TIMEOUT_MS);
-    /* Still WAITING: no give within the timeout, or (build-22, review R N1) a stale give
+    /* Still WAITING: no give within the timeout, or a stale give
      * left by an earlier callback that gave after band_get stopped waiting. Either way
      * abandon this request; its callback frees the suite on arrival and does not give. */
     uint32_t st = BAND_WAITING;
@@ -324,14 +324,14 @@ CODE __attribute__((noinline)) static uint8_t *band_get(struct inject_build *b)
         return 0;
     }
     b->band = INJECT_BAND_USED;
-    /* Canon's chunk is only 16-aligned (returned-22/23: 0x476F4070). build-20 started the
-     * layout at the next 32-byte boundary; build-21 at the next 4 KiB one (BAND_ALIGN). */
+    /* Canon's chunk is only 16-aligned (on camera e.g. 0x476F4070). The layout starts
+     * at the next 4 KiB boundary (BAND_ALIGN). */
     return BAND_POINTER(a) + ((0u - a) & (BAND_ALIGN - 1u));
 }
 
 CODE static void band_put(void)
 {
-    BA.free(band_suite, 0u, 0u); /* before any INDEV start: RscMgrTask serves requests in order (D) */
+    BA.free(band_suite, 0u, 0u); /* before any INDEV start: RscMgrTask serves requests in order */
 }
 #ifdef COMBO_OBSERVE_HOST
 void inject_host_band_reset(void) { band_sem = band_suite = band_state = 0u; }
@@ -583,8 +583,8 @@ CODE static uint32_t encode_main(struct inject_entry *e, uint32_t desc, uint32_t
         return INJECT_REFUSE_EXPIRED;
     }
     /* Consumed before the read: one screenshot, one attempt. A clear that raced
-     * in since the check above wins. build-15: HWJPG.Y22 is already complete (it
-     * was built at RATE); this H3 makes only the A1 calls below. */
+     * in since the check above wins. HWJPG.Y22 is already complete (it
+     * was built at RATE); this H3 makes only the read calls below. */
     if (!__atomic_exchange_n(&inject_pending.pending, 0u, __ATOMIC_ACQ_REL)) {
         (void)__atomic_add_fetch(&inject_pending.not_pending, 1u, __ATOMIC_RELAXED);
         return INJECT_REFUSE_NOT_PENDING;

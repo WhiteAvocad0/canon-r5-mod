@@ -1,4 +1,4 @@
-/* Issue #15 Phase C': RATE-press screenshot writer on GuiMainTask, plus the
+/* Issue #15: RATE-press screenshot writer on GuiMainTask, plus the
  * worker-side click / low-bip feedback. Host-testable through capture_api,
  * combo_observe_api and rec_tone_api (COMBO_OBSERVE_HOST). */
 #include "combo_capture.h"
@@ -18,9 +18,9 @@ struct capture_state capture_state;
 struct capture_feedback capture_feedback;
 struct capture_watch capture_watch;
 /* Our own 32-byte aligned header sector, cleaned by MapCpuBuffer before Write.
- * Shared by the YCA header (fill_header) and, with --picture-layer, the .PIC
- * header (pl_select); each writer fills the whole sector (build-14: returned-16
- * SS_00011..13 carried the previous .PIC header in bytes 32..511). */
+ * Shared by the YCA header (fill_header) and the .PIC header (pl_select); each
+ * writer fills the whole sector (otherwise a YCA file carried the previous .PIC
+ * header in bytes 32..511 on camera). */
 static uint8_t capture_header[CAPTURE_HEADER_BYTES] __attribute__((aligned(32)));
 static char capture_path[CAPTURE_PATH_BYTES];
 static const char capture_drive[] DATA = "B:/";
@@ -59,7 +59,7 @@ CODE static void put32(uint8_t *p, uint32_t v)
         p[i] = (uint8_t)(v >> (8u * i));
 }
 
-/* "B:/DCIM/R5SHOTS/SS_nnnnn.YCA" (.PNG) without sprintf. */
+/* "B:/DCIM/R5SHOTS/SS_nnnnn.YCA" without sprintf. */
 CODE static void format_path(uint32_t number)
 {
     uint32_t n = 0;
@@ -181,11 +181,11 @@ CODE static int32_t write_buffer(int32_t fd, uint32_t vaddr, uint32_t map_bytes,
 
 
 
-/* build-12 P0 + Stage I. Static: GuiMainTask's 8 KiB stack; one attempt at a time. */
+/* The picture layer and its .PIC. Static: GuiMainTask's 8 KiB stack; one attempt at a time. */
 static struct pl_entry capture_pl;
 static char capture_pic_path[CAPTURE_PATH_BYTES];
 
-/* Stage I, after a CAPTURE_OK SS_nnnnn.YCA: the current picture layer as
+/* After a CAPTURE_OK SS_nnnnn.YCA: the current picture layer as
  * SS_nnnnn.PIC, VramRead's way (FIO_WriteFile_IBUS straight from the Active
  * IBUS address, no CPU copy), behind a 512-byte header sector. Any doubt in
  * pl_select skips it with a reason; a failed file is removed. */
@@ -255,7 +255,7 @@ CODE void combo_capture_gui(const uint32_t *slot)
     uint32_t code = slot[1];
     if (code == CAPTURE_TRIGGER_CODE + 1u) {
         G.held = 0u;
-        one_press_release(); /* review M R2: after Canon has handled the press itself */
+        one_press_release(); /* after Canon has handled the press itself */
         return;
     }
     if (code != CAPTURE_TRIGGER_CODE)
@@ -315,7 +315,7 @@ CODE void combo_capture_gui(const uint32_t *slot)
     }
     r.pass |= COMBO_V_SHOT_QUIET;
     /* Canon's writer, before any FIO: our FIO calls would queue behind it on
-     * the storage lock and freeze the GUI (returned-05). Both checks are
+     * the storage lock and freeze the GUI (seen on camera). Both checks are
      * evaluated (and logged); the job state refuses first. */
     r.known |= COMBO_V_JOB_IDLE | COMBO_V_MOVIE_QUIET;
     r.rec_idle = CAPTURE_REC_NEVER;
@@ -349,7 +349,7 @@ CODE void combo_capture_gui(const uint32_t *slot)
     }
     guarded = 1u;
     inject_y22_clear(); /* every admitted RATE: no older screenshot stays pending */
-    /* P0 S0: the picture layer before any FIO (plain RAM reads). */
+    /* S0: the picture layer before any FIO (plain RAM reads). */
     {
         volatile uint32_t *z = (volatile uint32_t *)&capture_pl;
         for (uint32_t i = 0; i < sizeof(capture_pl) / 4u; ++i)
@@ -435,9 +435,9 @@ CODE void combo_capture_gui(const uint32_t *slot)
         write_pic(&capture_pl, m);
     }
 done:
-    /* build-15: HWJPG.Y22 here, on GuiMainTask, still under the capture guard and
-     * after the log write (the converter reuses the strip that holds the image);
-     * only a complete Y22 is pending. build-11a..14 did this inside H3 (Err 70). */
+    /* HWJPG.Y22 here, on GuiMainTask, still under the capture guard; only a
+     * complete Y22 is pending. Converting inside H3 failed with Err 70
+     * (hw_jpeg_inject.h). */
     if (guarded) {
         const char *y22_source = r.outcome == CAPTURE_OK ? capture_path : 0;
         uint32_t ready = y22_source && !inject_y22_build(y22_source);
@@ -493,7 +493,7 @@ CODE static void publish_cues(void)
 
 /* One-press cues reuse the low bip (no new PCM), CAPTURE_BIP_GAP_TICKS apart: a
  * refusal (screenshot kept pending, or no Y22) bips twice, a cancelled job three
- * times (review O O6). A bip waits up to CAPTURE_BIP_WAIT_TICKS for the stock beep. */
+ * times. A bip waits up to CAPTURE_BIP_WAIT_TICKS for the stock beep. */
 #define CAPTURE_BIP_GAP_TICKS 10u
 #define CAPTURE_BIP_WAIT_TICKS 40u
 
@@ -520,7 +520,7 @@ CODE static uint32_t sound(uint32_t cue, uint32_t may_wait)
     }
     FB.last_reason = reason;
     if (reason == REC_TONE_PF_BUSY && may_wait && FB.bip_waits < CAPTURE_BIP_WAIT_TICKS) {
-        ++FB.bip_waits; /* returned-18/19: the first refusal bip met the click still playing */
+        ++FB.bip_waits; /* on camera the first refusal bip met the click still playing */
         return 1u;
     }
     if (reason) {

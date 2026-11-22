@@ -1,14 +1,11 @@
 #ifndef R5_COMBO_OBSERVE_H
 #define R5_COMBO_OBSERVE_H
 
-/* Issue #15 Phase B' passive button-combo observer (opt-in
- * --screenshot-combo-observe). Owner of the H2 ring ABI (combo_observe_hook.S
- * is its only writer), the worker drain, the combo detector, the display-state
- * sampler and the R5K1/R5X1/R5Y1/R5C1 report rows (also the R5C5 capture and
- * R5C6 hw-jpeg probe or inject summary rows, whose owners are combo_capture.c,
- * hw_jpeg_probe.c and hw_jpeg_inject.c).
- * Design: issue-research/screenshot/button-combo/research.md sections 1-3,
- * plan.md Phase B', hooks-proposal.json (gui_class0_dispatch).
+/* Issue #15 passive button-combo observer (opt-in --screenshot). Owner of the
+ * H2 ring ABI (combo_observe_hook.S is its only writer), the worker drain, the
+ * combo detector, the display-state sampler and the R5K1/R5X1/R5Y1/R5C1 report
+ * rows (also the R5C5 capture and R5C6 inject summary rows, whose owners are
+ * combo_capture.c and hw_jpeg_inject.c).
  *
  * The hook (GuiMainTask, class-0 handler E04A8028) copies one 16-byte record
  * per class-0 GUI event, publishes it with one release store of its seq word,
@@ -37,8 +34,8 @@
 #define COMBO_F_MODE_WIDE 16
 #define COMBO_F_CLASS_NONZERO 32 /* slot+0 != 0 (never expected: table entry 0) */
 
-/* B'2/C' trigger press code (build flag --screenshot-trigger-code; RATE 50 by
- * owner decision). Plain integer: also used by combo_observe_hook.S. */
+/* Trigger press code (RATE 50 by owner decision). Plain integer: also used by
+ * combo_observe_hook.S. */
 #ifndef COMBO_TRIGGER_CODE
 #define COMBO_TRIGGER_CODE 50
 #endif
@@ -46,11 +43,10 @@
 /* Canon's log timestamp: the logger's record writer stores
  * ~*(volatile uint32_t *)0xC021000C as each record's timer word (ROM 2.2.1
  * E0124B1E-E0124B28: ldr r0,=0xC0210000; ldr r0,[r0,#12]; mvns r0,r0;
- * str r0,[r4,#4]). It counts microseconds (returned-04: Create to Close in
- * Canon's log 2,323,330 against 116 worker ticks). Read only; both log
- * partitions carry it on one time base (returned-08). Users: the capture
- * stage timer (combo_capture.c), the probe recorder (hw_jpeg_probe.c) and
- * the Stage A1 inject freshness check (hw_jpeg_inject.c). */
+ * str r0,[r4,#4]). It counts microseconds (on camera, Create to Close took
+ * 2,323,330 in Canon's log against 116 worker ticks). Read only; both log
+ * partitions carry it on one time base. Users: the capture stage timer
+ * (combo_capture.c) and the inject freshness check (hw_jpeg_inject.c). */
 #define COMBO_LOG_TIMER_REGISTER 0xc021000cu
 
 #ifndef __ASSEMBLER__
@@ -78,9 +74,8 @@ extern struct combo_hook_ring combo_hook_ring;
 extern volatile uint32_t combo_worker_tick;
 void combo_gui_dispatch_entry(void);
 
-/* Physical-button press/release codes (Sw*CBR callbacks, ROM E0108400-E0109D80,
- * issue-research/screenshot/button-combo/work/button-codes.txt). release =
- * press + 1 for every pair below. Which R5 control each name is: test T1. */
+/* Physical-button press/release codes (Sw*CBR callbacks, ROM E0108400-E0109D80).
+ * release = press + 1 for every pair below. */
 #define COMBO_BUTTONS(X) \
     X(SET, 10) X(MENU, 12) X(INFO, 14) X(DISP, 16) X(PLAY, 18) X(ERASE, 20) X(FRAMING_ASSIST, 22) \
     X(ZOOM_TELE, 24) X(ZOOM_WIDE, 26) X(SCALE, 28) X(PROTECT, 30) X(M_FN, 34) X(M_FN2, 36) \
@@ -92,21 +87,20 @@ void combo_gui_dispatch_entry(void);
 #define COMBO_BUTTON_COUNT_X(name, code) +1
 #define COMBO_BUTTON_COUNT (0 COMBO_BUTTONS(COMBO_BUTTON_COUNT_X))
 
-/* B'2 primary detector: one dedicated button, candidate 0. Owner decision:
+/* Primary detector: one dedicated button, candidate 0. Owner decision:
  * RATE (50) everywhere, including playback, where Canon also applies a rating.
  * AE lock (72) was dropped: with it set OFF in Custom Controls it still never
- * reached E04A8028 (returned-02). The press code is a build flag
- * (--screenshot-trigger-code, default 50); build.py admits only a press code
- * of COMBO_BUTTONS. One fire per press, at most one per debounce window. */
+ * reached E04A8028 on camera. One fire per press, at most one per debounce
+ * window. */
 /* GUI mode word, observed only: getter E07C659E (1158 BL callers) is
  * `ldr r0,=0x8ED0; ldr r0,[r0,#0x70]`, and Canon's Extend-script gate
- * (E05A7314) requires 0x2002 there (the lab's playback SET export path). */
+ * (E05A7314) requires 0x2002 there (the playback SET script path). */
 #define COMBO_GUI_MODE_WORD UINT32_C(0x00008f40)
 #define COMBO_GUI_MODE_PLAYBACK_SCRIPT UINT32_C(0x2002)
 #define COMBO_TRIGGER_DEBOUNCE_TICKS 100u /* 2 s */
-/* Secondary (diagnostic) candidate pairs (research section 2), unordered. Candidate 1
+/* Secondary (diagnostic) candidate pairs, unordered. Candidate 1
  * (AF-ON + AE lock) is retired: AF-ON and AE lock never reached E04A8028 as
- * 70..73 on the owner's camera (analysis-01). Candidate 2 must not fire in
+ * 70..73 on camera. Candidate 2 must not fire in
  * playback (Rate writes a rating there); the playback context is UNKNOWN to
  * this build, so its verdict bit stays unknown. */
 #define COMBO_PAIRS(X) X(2, 14, 50) X(3, 179, 14)
@@ -131,7 +125,7 @@ void combo_gui_dispatch_entry(void);
 #define COMBO_OTHER_CODES 16u  /* distinct non-button codes counted in the summary */
 #define COMBO_OVERLAPS 32u     /* latest press-while-held pairs kept for the summary */
 #define COMBO_CAPTURES 8u      /* latest would_capture verdicts kept for the summary */
-/* Resident census (analysis-01 section 2): it is emitted inside the export
+/* Resident census: it is emitted inside the export
  * bundle, so it survives Canon overwriting the live rows within seconds. */
 #define COMBO_HIST_CODES 256u    /* class-0 event counts by code (u16, saturating) */
 #define COMBO_SEQ_EVENTS 512u    /* last events: code u8 | min(dt ticks, 255) u8 */
@@ -140,7 +134,7 @@ void combo_gui_dispatch_entry(void);
 #define COMBO_MATRIX 16u         /* first 16 distinct buttons pressed: overlap count / min skew */
 #define COMBO_MATRIX_NONE 255u
 
-/* Precondition verdict bits (known mask and pass mask, research 3.2). */
+/* Precondition verdict bits (known mask and pass mask). */
 #define COMBO_V_NOT_RECORDING (1u << 0) /* [0x16DD4] == 0 */
 #define COMBO_V_SHOT_QUIET (1u << 1)    /* shot counter unchanged for >= 2 s */
 #define COMBO_V_GEOMETRY (1u << 2)      /* output 0 (w,h) in {1024x682, 1600x1200} */
@@ -149,7 +143,7 @@ void combo_gui_dispatch_entry(void);
 #define COMBO_V_DEBOUNCE (1u << 5)      /* no would_capture in the previous 2 s */
 #define COMBO_V_CONTEXT (1u << 6)       /* candidate allowed in the current context */
 #define COMBO_V_CARD (1u << 7)          /* card mounted: never known here (no FIO) */
-/* C' build-05 (combo_capture.c only): Canon's writer state before any FIO. */
+/* combo_capture.c only: Canon's writer state before any FIO. */
 #define COMBO_V_JOB_IDLE (1u << 8)      /* Canon job state (PROP_LAST_JOB_STATE source words) == 0 */
 #define COMBO_V_MOVIE_QUIET (1u << 9)   /* recording state 0 for >= CAPTURE_MOVIE_QUIET_TICKS */
 #define COMBO_V_ALL 0x3ffu
@@ -234,9 +228,8 @@ uint32_t combo_button_index(uint32_t code, uint32_t *is_release);
 uint32_t combo_display_verdict(const struct combo_display *d, uint32_t *known, uint32_t *geometry);
 void combo_sample_display(struct combo_display *d);
 
-/* Row formats: the single owner of their text. combo-observe-model-export.c
- * publishes them to the host decoder (combo_observe_log.py). Every row is one
- * 84-byte KUWA record (text + 4 bytes per argument <= 72). */
+/* Row formats: the single owner of their text. Every row is one 84-byte KUWA
+ * record (text + 4 bytes per argument <= 72). */
 #define CK_FMT_EVENT "R5K1 E=%u T=%u C=%u A=%u B=%u F=%08X"
 #define CK_FMT_LOST "R5K1 L=%u N=%u"
 #define CW_FMT_HEAD "R5X1 W=%u T=%u X=%u P=%u Q=%u D=%u"

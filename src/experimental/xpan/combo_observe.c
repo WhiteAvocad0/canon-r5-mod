@@ -1,4 +1,4 @@
-/* Issue #15 Phase B' passive button-combo observer: worker side.
+/* Issue #15 passive button-combo observer: worker side.
  * Host-testable through combo_observe_api (COMBO_OBSERVE_HOST). */
 #include "combo_observe.h"
 #include "observer.h"
@@ -206,9 +206,9 @@ CODE static uint32_t admitted_size(uint32_t w, uint32_t h)
  * 0; magic 'MARV' at +0; data +4; format +24 whose bytes [23:16] / [15:8] give
  * the bytes per pixel (6 / 2 = 3 for Ycc422A); width +28, height +32; the
  * MapCpuBuffer(op 0, mode 1) preconditions of E07F068A: vaddr < 0xC0000000 and,
- * for cacheable vaddr < 0x40000000, start and end 32-byte aligned. B'2 also
- * required format == 0x11060200 and MARV w/h == table w/h, and that failed on
- * every camera press (returned-03); the table w/h is now recorded only. */
+ * for cacheable vaddr < 0x40000000, start and end 32-byte aligned. An earlier
+ * check also required format == 0x11060200 and MARV w/h == table w/h, and that
+ * failed on every camera press; the table w/h is now recorded only. */
 CODE uint32_t combo_display_verdict(const struct combo_display *d, uint32_t *known, uint32_t *geometry)
 {
     uint32_t pass = 0u, cur = d->vmix[3];
@@ -318,7 +318,7 @@ CODE static void counter_tick(uint32_t tick)
     }
 }
 
-/* ---- combo detector (research section 2) ---- */
+/* ---- combo detector ---- */
 
 CODE static void would_capture(uint32_t candidate, uint32_t first, uint32_t second, uint32_t dt, uint32_t tick)
 {

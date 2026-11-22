@@ -1,4 +1,4 @@
-/* P0 sampling, Stage I selection and the report (picture_layer.h). Reads Canon
+/* Sampling, selection and the report (picture_layer.h). Reads Canon
  * RAM only through combo_observe_api.read (aligned u32, guarded ranges). */
 #include "picture_layer.h"
 #include "combo_observe.h"
@@ -35,7 +35,7 @@ CODE void pl_sample(struct pl_entry *e)
     uint32_t dv = RD(PL_DVCTRL_POINTER), mp = RD(PL_MASK_POINTER);
     e->dvctrl = dv;
     e->mask = ram(mp, PL_MASK_OFFSET + 4u) ? RD(mp + PL_MASK_OFFSET) : 0xffffffffu;
-    e->stable = 2u; /* not measured: set only around a PIC write (build-12 printed 0 for skips) */
+    e->stable = 2u; /* not measured: set only around a PIC write */
     if (!ram(dv, PL_DVCTRL_SPAN))
         return;
     addresses(e, e->addr[0], PL_READY_TFT, PL_READY_EVF);

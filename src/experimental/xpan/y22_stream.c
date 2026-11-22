@@ -1,4 +1,4 @@
-/* Stage A2-1: display buffer -> HWJPG.Y22 strips (y22_stream.h). */
+/* Display buffer -> HWJPG.Y22 strips (y22_stream.h). */
 #include "y22_stream.h"
 #ifdef OBSERVER_FIRMWARE
 #define CODE __attribute__((section(".resident_text")))

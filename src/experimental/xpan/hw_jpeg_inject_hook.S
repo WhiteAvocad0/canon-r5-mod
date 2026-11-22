@@ -1,5 +1,5 @@
-/* Screenshot Level B Stage A1 (opt-in --hw-jpeg-inject): H3 / H8 entries.
- * hw_jpeg_inject.h describes both windows (the build-05 probe windows). Each
+/* Screenshot JPEG injection (opt-in --screenshot): H3 / H8 entries.
+ * hw_jpeg_inject.h describes both windows. Each
  * entry saves r0-r5, r12, lr and APSR, calls inject_record(hook, saved,
  * entry_sp) with an 8-byte aligned SP (AAPCS; Canon's FIO uses strd/ldrd on
  * its frame), restores everything and replays the window's instructions

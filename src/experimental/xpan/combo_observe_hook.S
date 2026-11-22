@@ -1,6 +1,6 @@
-/* Issue #15 Phase B' hook H2 gui_class0_dispatch (opt-in --screenshot-combo-observe).
+/* Issue #15 hook H2 gui_class0_dispatch (opt-in --screenshot).
  * Window E04A8028, 8 bytes 0146784808b58368 (bit 1 clear; interior E04A802A..
- * E04A8030 has no branch target, branch_into.py):
+ * E04A8030 has no branch target):
  *   E04A8028 4601  mov r1, r0
  *   E04A802A 4878  ldr r0, [pc, #480]   @ literal E04A820C = 0x00005474
  *   E04A802C b508  push {r3, lr}
@@ -77,7 +77,7 @@ combo_gui_dispatch_entry:
  ldr r4, .Lring
  str r5, [r4, #COMBO_RING_WRITTEN_OFFSET]  @ hook-private count
  dmb ish                        @ the count is visible before the next record's payload
- /* Phase C': a plain class-0 trigger press or release goes to the GuiMainTask
+ /* A plain class-0 trigger press or release goes to the GuiMainTask
   * capture owner (combo_capture.h explains the context). r0 is still the
   * slot; r4/r5 are callee-saved, so APSR (r12) and SP survive the call. */
  tst lr, #(COMBO_F_CODE_WIDE | COMBO_F_CLASS_NONZERO)  @ lr still holds this record's flags

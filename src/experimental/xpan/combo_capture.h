@@ -4,17 +4,16 @@
 #include "combo_observe.h"
 #include "tone_gen.h"
 
-/* Issue #15 Phase C' (opt-in --screenshot-capture): one YCCA screenshot per
- * RATE press, written by our own writer on GuiMainTask.
+/* Issue #15 (opt-in --screenshot): one YCCA screenshot per RATE press,
+ * written by our own writer on GuiMainTask.
  *
- * Context decision (ROM + lab evidence): the capture runs synchronously inside
+ * Context decision (ROM and camera evidence): the capture runs synchronously inside
  * the H2 hook (class-0 handler entry E04A8028) on GuiMainTask, on the trigger
  * press itself, before Canon dispatches it.
  *  - Stock SaveVRAM ran this same FIO sequence (Open probe, CreateSC,
  *    MapCpuBuffer op 0 / mode 1, Write E07E283E, UnmapCpuBuffer, Close) on
- *    GuiMainTask from inside the SET dispatcher three times without error
- *    (stock-vram-capture DbgRA108 "@GuiMainTask Open/Create(B:/YCCA_0000.bin)";
- *    card16/card-01 idx 00-02).
+ *    GuiMainTask from inside the SET dispatcher three times without error on
+ *    camera (Canon's log: "@GuiMainTask Open/Create(B:/YCCA_0000.bin)").
  *  - H2 is entered straight from the GuiMainTask loop (E04A775C receive;
  *    E04A778A blx handler[class]), so no GUI lock is held and the stack is
  *    shallower than in that dispatcher path; GuiMainTask has a 0x2000 stack
@@ -28,13 +27,13 @@
  * (buffer drain after a burst, movie finalisation) GuiMainTask, and the GUI,
  * stall until the lock is free. The 2 s shot-quiet window does not cover a
  * long drain; each result records its duration in worker ticks.
- * build-05 (returned-05: captures 3, 6 and 10 s after a 10-frame RAW burst
- * froze the GUI 2.7, 6.6 and 3.3 s in the probes, Create, Close and Flush)
- * refuses, before any FIO, while Canon's job state is nonzero (a shot not yet
+ * On camera, captures 3, 6 and 10 s after a 10-frame RAW burst froze the GUI
+ * 2.7, 6.6 and 3.3 s in the name probes, Create, Close and Flush, so the
+ * writer refuses, before any FIO, while Canon's job state is nonzero (a shot not yet
  * written, CAPTURE_JOB_STATE_* below) and for CAPTURE_MOVIE_QUIET_TICKS after
  * the recording state was last seen nonzero. Moving the writer off GuiMainTask
  * stays future work (a worker-task FIO context is unproven, see above).
- * Every other class-0 event keeps the B' path; only codes TRIGGER and
+ * Every other class-0 event keeps the observer-only path; only codes TRIGGER and
  * TRIGGER + 1 reach combo_capture_gui. */
 
 #define CAPTURE_TRIGGER_CODE COMBO_TRIGGER_CODE
@@ -42,14 +41,14 @@
 #define CAPTURE_HELD_TICKS 50u        /* a press code within 1 s of the last one while held is a repeat */
 #define CAPTURE_SHOT_QUIET_TICKS 100u /* no shot-counter change for 2 s */
 /* No capture in the first 5 s of worker ticks (the worker starts with the
- * boot; returned-04: worker steps x 20 ms tracked Canon's boot timer). The one
- * 2.3 s capture so far (returned-04 SS_00005) came 2.9 s after power-on. */
+ * boot; on camera, worker steps x 20 ms tracked Canon's boot timer). A 2.3 s
+ * capture on camera came 2.9 s after power-on. */
 #define CAPTURE_BOOT_GUARD_TICKS 250u
 #define CAPTURE_RESULTS 8u
 #define CAPTURE_MAX_NUMBER 99999u
 #define CAPTURE_PROBE_LIMIT 40u       /* Open probes per attempt */
 /* One 512-byte sector: the 32 used bytes, then zeros, so the YCCA data write
- * starts sector-aligned (SaveVRAM and the witness only ever wrote at offset 0). */
+ * starts sector-aligned (SaveVRAM only ever writes at offset 0). */
 #define CAPTURE_HEADER_BYTES 512u
 #define CAPTURE_HEADER_USED 32u
 #define CAPTURE_PATH_BYTES 32u
@@ -58,8 +57,8 @@
 /* Thumb entry points (ROM 2.2.1). Evidence: SaveVRAM's YCCA pass
  * E0263F2C-E026403A (Open E07E1E4A probe, CreateSC E07E1F0A, MapCpuBuffer
  * E07F068A, Write E07E283E, UnmapCpuBuffer E07F0718, Close E07E2D6E); its RGBA
- * pass (Remove E07E207C before Create); the lab's hardware-run R5BOOT witness
- * (MountCheck E07E4860, Flush E07E40EE, Close E07E2D6E). */
+ * pass (Remove E07E207C before Create); MountCheck E07E4860, Flush E07E40EE
+ * and Close E07E2D6E, run on camera. */
 #define CAPTURE_FIO_OPEN UINT32_C(0xe07e1e4b)
 #define CAPTURE_FIO_CREATE UINT32_C(0xe07e1f0b)
 #define CAPTURE_FIO_REMOVE UINT32_C(0xe07e207d)
@@ -71,26 +70,26 @@
 #define CAPTURE_UNMAP_CPU_BUFFER UINT32_C(0xe07f0719)
 
 /* Canon's log timestamp (COMBO_LOG_TIMER_REGISTER, combo_observe.h owns the
- * evidence). Its width is >= 28 bits (largest lab value 0x8E5400F); the
+ * evidence). Its width is >= 28 bits (largest value seen 0x8E5400F); the
  * start stamp is kept raw, each stage as its offset from it, and the host
  * derives the per-stage times. */
 #define CAPTURE_TIMER_REGISTER COMBO_LOG_TIMER_REGISTER
 
-/* Canon's job state, read before any FIO (build-05 busy-card refusal).
- * O (ROM 2.2.1): jobUpdateLastJobState E07F7AB6 keeps the main bits at
+/* Canon's job state, read before any FIO (the busy-card refusal).
+ * ROM 2.2.1: jobUpdateLastJobState E07F7AB6 keeps the main bits at
  * [0xA084 + 0x50] and the sub bits at [0xA084 + 0x54] (literal 0xA084 at
  * E07F7B74) and publishes main | sub as PROP_LAST_JOB_STATE 0x80030012
- * (literal E07F7D28) on every change. O (Canon logs returned-05..08, four
- * single shots): 0 -> 0x16 at CreateJob, 0x14, 0x10 at develop end, and 0
+ * (literal E07F7D28) on every change. Canon's logs on camera (four single
+ * shots): 0 -> 0x16 at CreateJob, 0x14, 0x10 at develop end, and 0
  * only after fwCompleteJob / fssCompleteJob, i.e. once the file is written;
- * a playback Resize (INDEV) job leaves it 0. D: a burst keeps it nonzero
- * until its last file is written; whether movie finalisation sets it is U
+ * a playback Resize (INDEV) job leaves it 0. A burst keeps it nonzero
+ * until its last file is written; whether movie finalisation sets it is unknown
  * (hence CAPTURE_MOVIE_QUIET_TICKS). Aligned single-word reads, no lock. */
 #define CAPTURE_JOB_STATE_MAIN UINT32_C(0x0000a0d4)
 #define CAPTURE_JOB_STATE_SUB UINT32_C(0x0000a0d8)
 /* Fallback without a Canon signal: refuse for 5 s after the worker last saw
- * the recording state nonzero (returned-05: a capture right after a 5 s
- * movie spent 0.92 s in its data write). The window length is D. */
+ * the recording state nonzero (on camera, a capture right after a 5 s
+ * movie spent 0.92 s in its data write). */
 #define CAPTURE_MOVIE_QUIET_TICKS 250u
 #define CAPTURE_REC_NEVER UINT32_C(0xfffffffe) /* rec_idle: no recording seen since boot */
 #define CAPTURE_STAGE_NOT_REACHED UINT32_MAX
@@ -131,7 +130,7 @@ enum capture_outcome {
     CAPTURE_REFUSED_BOOT = 12,     /* within CAPTURE_BOOT_GUARD_TICKS of the worker start */
     CAPTURE_REFUSED_WRITING = 13,  /* Canon's job state nonzero: a shot is still being written */
     CAPTURE_REFUSED_MOVIE = 14,    /* within CAPTURE_MOVIE_QUIET_TICKS of the last recording */
-    CAPTURE_REFUSED_DEVELOP = 15,  /* --hw-jpeg-y22: a Resize save (H8) or its H3 holds the guard */
+    CAPTURE_REFUSED_DEVELOP = 15,  /* a Resize save (H8) or its H3 holds the guard */
     CAPTURE_OUTCOMES = 16
 };
 
@@ -150,18 +149,14 @@ struct capture_result {
      * all read at the writer check; CAPTURE_STAGE_NOT_REACHED when an earlier
      * check refused. */
     uint32_t job_main, job_sub, rec_idle;
-    /* Stage A2 with --screenshot-png: the raw copy HWJPG.YCA after a CAPTURE_OK
-     * PNG (enum capture_yca). rc_yca_header / rc_yca_data: bytes the card accepted
-     * for the header sector and the display buffer; rc_yca_cleanup: Remove of a
-     * failed file. us_yca_*: offsets from us_start after the old file's Remove
-     * (start), Create, header write, data write and Flush. Without the PNG the
-     * capture file itself (SS_nnnnn.YCA) is the source and yca_outcome stays 0. */
+    /* A raw-copy stage (enum capture_yca) not built here: the capture file
+     * itself (SS_nnnnn.YCA) is the source and yca_outcome stays 0. */
     uint32_t yca_outcome;
     int32_t rc_yca_remove, rc_yca_create, rc_yca_header, rc_yca_data, rc_yca_close, rc_yca_flush, rc_yca_cleanup;
     uint32_t us_yca_start, us_yca_create, us_yca_header, us_yca_data, us_yca_flush;
 };
-enum capture_yca { /* --hw-jpeg-y22 with --screenshot-png (also exported to the decoder) */
-    CAPTURE_YCA_NONE = 0,          /* not attempted: the PNG was not CAPTURE_OK (or no PNG build) */
+enum capture_yca { /* the raw-copy stage (not built here) */
+    CAPTURE_YCA_NONE = 0,          /* not attempted */
     CAPTURE_YCA_OK = 1,            /* written, closed, flushed: y22_pending set */
     CAPTURE_YCA_FAILED_CREATE = 2,
     CAPTURE_YCA_FAILED_WRITE = 3,  /* short write or Map failure: file removed */
@@ -193,7 +188,7 @@ void combo_capture_gui(const uint32_t *slot);
 /* --- feedback cues (worker) ------------------------------------------------ */
 enum { CAPTURE_CUE_CLICK = 0, CAPTURE_CUE_BIP = 1, CAPTURE_CUES = 2 };
 struct capture_cue { uint32_t segment_first, segment_count, offset_samples, padded_samples, bytes; };
-/* Generated by build.py from tone_ref.VARIANTS["click"] and ["bip_low"]. */
+/* Generated by screenshot.py from tone_ref.SCREENSHOT_CUES click / bip_low. */
 extern const struct tone_segment capture_cue_segments[];
 extern const struct capture_cue capture_cues[CAPTURE_CUES];
 extern const uint32_t capture_cue_segment_total, capture_cue_capacity;
