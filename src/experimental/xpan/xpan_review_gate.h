@@ -89,4 +89,17 @@ uint32_t xpan_review_gate_crop(uint32_t caller);
  * and its force argument (sl). May write only [sp+28] and [sp+32] (both 0). */
 void xpan_review_outline_decide(uint32_t native_sp, uint32_t force);
 void xpan_review_outline_entry(void);
+/* JPEG-only XPan Quick Review (issue #31). The SR flag closes the claim before
+ * Canon's Quick Review draws the saved JPEG, so review_crop keeps the ordinal
+ * of the claim it cropped for and the playback fit asks whether that event is
+ * still the newest one. Both are read only (no counter, no store):
+ *   - claim_ordinal: the open, unrevoked XPan claim's ordinal (30 bits), else 0.
+ *     Called right after xpan_review_gate_crop() admitted.
+ *   - event_current: XPAN_GATE_R_NONE when ordinal != 0 is still the latest
+ *     stable authority record and the newest event count, and that record is a
+ *     Job of aspect 7 with a Large JPEG and no RAW bit (JPEG only); else the
+ *     reason (NO_CLAIM, UNSTABLE, STALE, INVALID or NOT_XPAN). */
+#define XPAN_GATE_RAW_MASK UINT32_C(0x00f00000) /* image-type flags: any RAW bit (E0840D88 tst.w r0,#0xF00000) */
+uint32_t xpan_review_gate_claim_ordinal(void);
+uint32_t xpan_review_gate_event_current(uint32_t ordinal);
 #endif
