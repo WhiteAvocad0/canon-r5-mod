@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 import build_app
 
 
-class PackagedToolchainTests(unittest.TestCase):
+class ToolchainFixture(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -41,6 +41,8 @@ class PackagedToolchainTests(unittest.TestCase):
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         return mock.patch.dict(build_app.TOOLCHAIN_ARCHIVES, {key: (suffix, digest)})
 
+
+class PackagedToolchainTests(ToolchainFixture):
     def test_wrong_digest_fails_before_extraction(self):
         target = self.target("win32", "AMD64")
         with self.assertRaisesRegex(SystemExit, "SHA-256 .* expected .* for .*win32-x64.zip"):
@@ -82,6 +84,9 @@ class PackagedToolchainTests(unittest.TestCase):
             alias = tarfile.TarInfo(f"{build_app.TOOLCHAIN_ROOT}/bin/arm-none-eabi-gcc")
             alias.type, alias.linkname = tarfile.SYMTYPE, "gcc"
             tar.addfile(alias)
+            license = tarfile.TarInfo(f"{build_app.TOOLCHAIN_ROOT}/distro-info/licenses/gcc-15.2.1/COPYING3")
+            license.size = 4
+            tar.addfile(license, io.BytesIO(b"GPL3"))
         with self.pin(target, archive), mock.patch.object(build_app.urllib.request, "urlretrieve") as download:
             build_app.install_toolchain(target, archive)
             download.assert_not_called()
@@ -90,9 +95,69 @@ class PackagedToolchainTests(unittest.TestCase):
         self.assertTrue(os.access(alias, os.X_OK))
         self.assertEqual(alias.read_bytes(), b"gcc")
         notices = target.tree.parent / "arm-toolchain/distro-info/R5-notices"
-        self.assertEqual({p.name for p in notices.iterdir()}, {"common.txt", "macos.txt"})
+        self.assertEqual({p.name for p in notices.iterdir()}, {"common.txt", "macos.txt", "THIRD-PARTY-NOTICE.txt"})
+        self.assertIn("Readline, which GDB uses", (notices / "THIRD-PARTY-NOTICE.txt").read_text(encoding="utf-8"))
 
     def test_refuses_unsupported_windows_architecture(self):
         target = self.target("win32", "ARM64")
         with self.assertRaisesRegex(SystemExit, "No bundled xPack toolchain for windows arm64"):
             build_app.install_toolchain(target, self.zip)
+
+
+class ToolchainNoticeTests(ToolchainFixture):
+    """The notice names the toolchain, its version and source, and the bundle stays unmodified."""
+
+    def install(self):
+        target = self.target("win32", "AMD64")
+        with self.pin(target, self.zip):
+            unmodified = build_app.install_toolchain(target, self.zip)
+        return target, unmodified
+
+    def test_notice_names_toolchain_version_archive_and_source(self):
+        target, _ = self.install()
+        digest = hashlib.sha256(self.zip.read_bytes()).hexdigest()
+        notice = (build_app.toolchain_dir(target) / build_app.TOOLCHAIN_NOTICES / "THIRD-PARTY-NOTICE.txt").read_bytes()
+        self.assertIn(b"\r\n", notice)  # Windows packages get Windows line endings
+        text = notice.decode("utf-8")
+        for needle in (f"xPack GNU Arm Embedded GCC {build_app.TOOLCHAIN_VERSION} for windows x64, unmodified",
+                       f"{build_app.TOOLCHAIN_ROOT}-win32-x64.zip", digest, "COPYING.RUNTIME", "newlib-nano",
+                       "(distro-info/licenses): gcc.", "common.txt, windows.txt",
+                       build_app.TOOLCHAIN_SOURCE_NAME, build_app.TOOLCHAIN_SOURCE_SHA256, build_app.TOOLCHAIN_SOURCE_URL,
+                       build_app.TOOLCHAIN_COMPANION_NAME):
+            self.assertIn(needle, text)
+        self.assertNotIn("Readline", text)
+
+    def test_unmodified_check_ignores_only_the_added_notices(self):
+        target, unmodified = self.install()
+        toolchain = build_app.toolchain_dir(target)
+        self.assertEqual(set(unmodified), {"bin/arm-none-eabi-gcc.exe", "distro-info/licenses/gcc/COPYING"})
+        self.assertEqual(build_app.verify_toolchain(toolchain, unmodified), 2)
+        (toolchain / "bin" / "arm-none-eabi-gcc.exe").write_bytes(b"patched")
+        with self.assertRaisesRegex(SystemExit, "changed \\['bin/arm-none-eabi-gcc.exe'\\]"):
+            build_app.verify_toolchain(toolchain, unmodified)
+        (toolchain / "bin" / "arm-none-eabi-gcc.exe").write_bytes(b"compiler")
+        (toolchain / "distro-info" / "extra.txt").write_bytes(b"added")
+        with self.assertRaisesRegex(SystemExit, "extra \\['distro-info/extra.txt'\\]"):
+            build_app.verify_toolchain(toolchain, unmodified)
+
+    def test_refuses_an_archive_without_component_licenses(self):
+        bare = self.base / "bare.zip"
+        with zipfile.ZipFile(bare, "w") as zf:
+            zf.writestr(f"{build_app.TOOLCHAIN_ROOT}/bin/arm-none-eabi-gcc.exe", b"compiler")
+        target = self.target("win32", "AMD64")
+        with self.pin(target, bare), self.assertRaisesRegex(SystemExit, "no component licenses"):
+            build_app.install_toolchain(target, bare)
+
+    def test_release_workflow_attaches_the_pinned_source_and_names_the_toolchain(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "desktop-app.yml").read_text(
+            encoding="utf-8")
+        self.assertIn("packaging/build_app.py --print-toolchain-source", workflow)
+        self.assertIn("./*.tar.xz SHA256SUMS.txt", workflow)
+        notes = workflow.split("cat > notes.md <<'EOF'", 1)[1].split("EOF", 1)[0]
+        for needle in (build_app.TOOLCHAIN_NAME, "unmodified", build_app.TOOLCHAIN_SOURCE_NAME,
+                       build_app.TOOLCHAIN_COMPANION_NAME):
+            self.assertIn(needle, notes)
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.assertEqual(build_app.main(["--print-toolchain-source"]), 0)
+        self.assertEqual(out.getvalue().split(), [build_app.TOOLCHAIN_SOURCE_NAME, build_app.TOOLCHAIN_SOURCE_URL,
+                                                  build_app.TOOLCHAIN_SOURCE_SHA256])

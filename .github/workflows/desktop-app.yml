@@ -5,7 +5,9 @@ name: desktop-app
 # app's --self-test from the built app (on Windows from the unzipped .zip).
 # Installer artifacts are shared alongside their reviewed compiler source companion. A tag app-v<version> (matching tools/gui/bundle.py VERSION)
 # also publishes them as a GitHub prerelease. The package includes the pinned host toolchain. Its compiler smoke test uses
-# a small standalone fixture and requires no Canon ROM.
+# a small standalone fixture and requires no Canon ROM. Every app-v release also attaches Arm's source package for the
+# toolchain's Arm GNU Toolchain release (packaging/build_app.py --print-toolchain-source), checked against the SHA-256
+# that Arm publishes beside it.
 
 on:
   workflow_dispatch:
@@ -54,6 +56,37 @@ jobs:
           name: xpack-compiler-corresponding-source
           path: xpack-15.2.1-1.1-corresponding-source.tar.gz
           compression-level: 0
+          if-no-files-found: error
+
+  toolchain-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Arm's toolchain source package against Arm's published SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r name url sha256 < <(python3 packaging/build_app.py --print-toolchain-source)
+          fetch() { curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --silent --show-error "$@"; }
+          read -r published published_name < <(fetch "$url.sha256asc")
+          if [[ "$published" != "$sha256" || "${published_name#\*}" != "$name" ]]; then
+            echo "::error::Arm publishes $published for $published_name; packaging/build_app.py pins $sha256 for $name"
+            exit 1
+          fi
+          echo "Arm's published SHA-256 for $name matches the pin."
+          if [[ "$GITHUB_REF" == refs/tags/app-v* || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            fetch --output "$name" "$url"
+            echo "$sha256  $name" | sha256sum --check
+            ls -l "$name"
+            echo "SOURCE_NAME=$name" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        with:
+          name: arm-toolchain-source
+          path: ${{ env.SOURCE_NAME }}
+          compression-level: 0
+          retention-days: 7
           if-no-files-found: error
 
   app:
@@ -106,6 +139,11 @@ jobs:
             echo "$SOURCE_URL"
             echo "SHA-256: $SOURCE_SHA256"
             echo "Also available in this run's xpack-compiler-corresponding-source artifact."
+            read -r name url sha256 < <(python packaging/build_app.py --print-toolchain-source)
+            echo
+            echo "Arm GNU Toolchain 15.2.Rel1 source package: $name"
+            echo "$url"
+            echo "SHA-256: $sha256 (attached to app-v releases)"
           } > build/desktop-app/COMPILER-SOURCE.txt
       - uses: actions/upload-artifact@v4
         if: needs.compiler-source.outputs.available == 'true'
@@ -119,7 +157,7 @@ jobs:
           if-no-files-found: error
 
   prerelease:
-    needs: app
+    needs: [app, toolchain-source]
     if: startsWith(github.ref, 'refs/tags/app-v')
     runs-on: ubuntu-latest
     permissions:
@@ -134,13 +172,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd packages
-          sha256sum ./*.dmg ./*.zip ./*.tar.gz > SHA256SUMS.txt
+          sha256sum ./*.dmg ./*.zip ./*.tar.gz ./*.tar.xz > SHA256SUMS.txt
           cat > notes.md <<'EOF'
           Unsigned desktop build of R5 Mod Assistant (prototype, untested). macOS: the `arm64` .dmg for Apple Silicon, `x86_64` for Intel Macs. Windows: the `windows-x64` .zip.
 
           The app is not signed. On macOS, click **Open Anyway** in System Settings > Privacy & Security after the first try (macOS 14 and earlier: Control-click > **Open**). On Windows, extract the whole .zip, and if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. See [docs/gui.md](https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md#download-the-app).
 
-          The app includes xPack GNU Arm Embedded GCC 15.2.1-1.1 and checks it automatically in Step 5. The matching compiler sources and build scripts are in the companion download `xpack-15.2.1-1.1-corresponding-source.tar.gz`. Supply your own camera’s ROM dump. Preparing a card's boot markers is offered on macOS only; on Windows, copy `autoexec.bin` to a card prepared on a Mac. Every build the app makes is a public repackaged build and is hardware-untested.
+          **Bundled compiler:** xPack GNU Arm Embedded GCC 15.2.1-1.1 (GCC 15.2.1, Binutils 2.45, Newlib 4.5.0, GDB 16.3), unmodified: every file of xPack's official archive for each host is included byte for byte, and the app adds only licence notices. xPack builds it from Arm GNU Toolchain 15.2.Rel1 sources. Step 5 checks it automatically. GCC, Binutils and GDB are licensed under the GNU GPL version 3 or later, with the GCC Runtime Library Exception for the runtime libraries; each component's licence is in the package's `Licenses/GNU Arm toolchain` folder and inside the app.
+
+          **Source code:** `arm-gnu-toolchain-src-snapshot-15.2.rel1.tar.xz` below is Arm's source package for 15.2.Rel1 (checked against the SHA-256 Arm publishes). `xpack-15.2.1-1.1-corresponding-source.tar.gz` holds xPack's build scripts, patches and the other source inputs.
+
+          Supply your own camera’s ROM dump. Preparing a card's boot markers is offered on macOS only; on Windows, copy `autoexec.bin` to a card prepared on a Mac. Every build the app makes is a public repackaged build and is hardware-untested.
           EOF
-          gh release create "$GITHUB_REF_NAME" ./*.dmg ./*.zip ./*.tar.gz SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
+          gh release create "$GITHUB_REF_NAME" ./*.dmg ./*.zip ./*.tar.gz ./*.tar.xz SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
             --verify-tag --title "R5 Mod Assistant ${GITHUB_REF_NAME#app-v} for macOS and Windows (unsigned prerelease)" --notes-file notes.md
