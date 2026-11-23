@@ -21,7 +21,7 @@ import sys
 
 APP_NAME = "R5 Mod Assistant"
 BUNDLE_ID = "io.github.whiteavocad0.r5-mod-assistant"
-VERSION = "0.1.0"  # the one version of the packaged app; release tags are app-v<VERSION>
+VERSION = "0.1.1"  # the one version of the packaged app; release tags are app-v<VERSION>
 
 BUILD_FLAG = "--run-build"
 SELF_TEST_FLAG = "--self-test"
