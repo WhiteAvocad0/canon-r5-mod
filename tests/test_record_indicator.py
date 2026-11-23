@@ -1451,9 +1451,13 @@ def _synthetic_indicator_rom():
 # stop cue existed: autoexec.bin, the normalized compile/link commands and every
 # generated build input except those carrying the source digest or a host path.
 # A change here means the default xpan-crop build changed; update it only for a
-# deliberate default-build change.
+# deliberate default-build change. Updated for the issue #31 JPEG-only Quick Review
+# route: the synthetic ROM now holds the pinned fit-caller words in guard page
+# E0711000, which moves that page's witness (feature-targets.h) and the ROM digest
+# (frame_row_constants.h); feature-contract.json carries the new
+# playback-mask-hooks.json digest. Image and commands are unchanged.
 DEFAULT_OFF_MOCK_IMAGE_SHA256 = "d947aeb135c56d02c169d967bb363bc3c48a7fbdfc6b49a47c52d648bbc2241a"
-DEFAULT_OFF_MOCK_DIGEST = "3fc07046c693c870270a3abc34e316ee15e74ed27679ab807c8024ac6ab8665a"
+DEFAULT_OFF_MOCK_DIGEST = "ce186ba537f342978e75674c5b45506f5a8ddcb51e2d0338835a0b0af4603aa0"
 # Outputs that carry the source digest (every tracked input change moves it) or
 # temporary host paths; everything else must be byte-identical.
 DIGEST_OR_PATH_OUTPUTS = {"build.json", "build.log", "source-manifest.json", "observer-source.h",

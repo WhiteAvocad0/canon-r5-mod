@@ -6,6 +6,7 @@
 > - **Evidence boundary:** Private prior candidate `466ca8fe` (`source_id=c9f06053c82fdfe3`) had user-confirmed immediate black bars on rear LCD landscape first-open playback (`DbgRA127`), live LCD/EVF framing bars, Quick Control `"XPan"` label, `8192x3024` Large JPEG and `8192x5464` CR3 crop `(0, 1220, 8192, 3024)` output, and normal photos without errors.
 > - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression.
 > - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. The public `xpan-crop` + `ding` build (`05e9612`) passed a short owner check of this review behaviour on 18 November 2026.
+> - **JPEG-only (RAW off) automatic review ([#31](https://github.com/WhiteAvocad0/canon-r5-mod/issues/31)): fixed.** The profile steers this review onto Canon's aspect-correct route (§3.1). On 23 November 2026 the owner checked the public release-candidate image `e2e7048d`, which has the same code as this version, on a 128 GB card. A fresh-boot check gave two correct JPEG-only XPan reviews, and a full repeat of a long session ended with three correct ones. One JPEG-only review late in the first long session was stretched; that has not been reproduced and remains an open observation (§3.1). M/S JPEG, bursts and the EVF review keep the stretched stock review.
 
 ---
 
@@ -72,16 +73,44 @@ flowchart LR
     Start["_DrawAspectLine 0xE0A956FE<br/>SR Undisp redraw (review start)"] -->|"exactly one new event?"| Claim["per-review claim<br/>XPan = aspect 7 and flags & 0x101"]
     Latest --> Claim
     Claim -->|"fresh XPan claim"| Hide["outline H/V words zeroed<br/>(this call only)"]
-    Claim -->|"fresh XPan claim"| Crop["review descriptor 0xE063FBEE<br/>{0,0,0,0,1024,682} -> {0,152,0,152,1024,378}"]
+    Claim -->|"fresh XPan claim"| Crop["review descriptor 0xE063FBEE<br/>{0,0,0,0,1024,682} or {0,53,0,53,1024,576}<br/>-> {0,152,0,152,1024,378}"]
     Claim -->|"full frame, burst, stale, none"| Stock["stock review unchanged"]
 ```
 
 - **Authority (passive).** `xpan_authority` observes the handler that logs `scsVramDevelopComplete(JobID)` and then permits the simple review. It validates the Job handle signature `0xE2083738`, then reads JobID `[obj+0x3C0]`, aspect `[obj+0x14C0]` and image-type flags `[obj+0x19F0]` inside admitted RAM spans, and publishes them as the single latest record.
 - **Gate.** The review starts at the SR Undisp redraw (`Background_Draw` caller `0xE0A957CB` from `0xE05FDF6D`, SR flag `[0x17268] == 1`, display `0`, force `1`). That review claims the newest event only if exactly one event arrived since the previous review. A burst gives `MULTIPLE` and the stock review. The claim is XPan only for aspect `7` with a Large JPEG (`flags & 0x101`). A newer event during the review revokes it; leaving SR closes it.
 - **Outline.** For an admitted XPan claim, a matching rear-LCD call (GUI aspect `[[0x171DC]+0x18C0] == 7`, Canon's own decision H=1/V=0) gets its two caller-local decision words zeroed, so Canon takes its own no-line path. The 10-byte prologue is replayed exactly.
-- **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
+- **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple (RAW + JPEG) or exactly Canon's stock 16:9 letterbox tuple `{0,53,0,53,1024,576}` (JPEG only) gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
 - **Diagnostics.** Decisions are kept as `.bss` counters only. No report rows are emitted and the lab's per-decision diagnostic records are not ported.
 - **Scope and limits.** Verified on the private lab build only (see the evidence note above). Bursts deliberately keep the stock review (no bars), and an in-review redraw after a newer shot falls back to stock. Other qualities and modes follow the same unverified/declined list as playback. The public `xpan-crop` + `ding` build passed a short owner check on 18 November 2026.
+
+### 3.1 JPEG-only review ([#31](https://github.com/WhiteAvocad0/canon-r5-mod/issues/31))
+
+With RAW off, the simple review (SR) shows the bars, then Canon's Quick Review (QR) redraws the saved `8192x3024` JPEG through the playback fit (`0xE0710D04`, caller `0xE071106E`, category `7`, selector `0`) and leaves it stock (result `0`, region `{0,0,0,0}`). The caller then picks its draw route from its 5th argument, kept in `r8`:
+
+- `r8 == 1` (`0xE0711116 cmp.w r8,#1`): `0xE078DDC8`, whose renderer places the decoded buffer by Canon's five-class aspect table (3:2, 4:3, 16:9, 1.896:1, 1:1). A `2.71:1` buffer lands in the 1:1 row, which is the vertical stretch. This route also caps the decode at about 4 MB (`2048x756` was observed).
+- otherwise: `0xE078DD3E`, which draws the whole decoded buffer aspect-correct inside the review viewport, the route the RAW + JPEG review takes.
+
+The fix, in three parts that need no new hook, page or witness:
+
+1. **Letterbox.** The review crop above also accepts Canon's 16:9 tuple of the JPEG-only review, so SR shows the same XPan band.
+2. **Review token.** Each applied crop records which review it was for: a letterbox crop keeps the gate claim's ordinal, a full-source crop clears it. The SR flag has already closed the claim when QR draws, so the fit asks `xpan_review_gate_event_current` instead. It admits only while that shot is still the newest authority event, a Job of aspect `7` with a Large JPEG and no RAW bit (`flags & 0xF00000 == 0`). The check only reads. The token lasts for that shot's QR redraws and ends at the next shot.
+3. **Route.** The fit admits exactly that QR call: frame and view checks as for RAW_L, selector `0`, category `7`, object and cache `JPEG_L [7,8192,3024,0,0]`, `8192x3024`, plus the token. Canon's native getters refuse a region for a JPEG that is already the crop, so the store is never made and fit still returns Canon's `0`. When Canon's result is `0`, the stock region is all zero, the object and view are unchanged, and the caller's `r8` is `1`, `fit_end` writes `0` into the `r8` word of our own trampoline frame (`scope + 184 + 8 + 4*8`). `restore_cpu` reloads it, and the caller takes `0xE078DD3E`. Nothing else is written. `r8` is read only at `0xE0711116` and restored by the caller's own `ldmia` at `0xE071115C`; these three words (`0xE071107C`, `0xE0711116`, `0xE071115C`) are pinned in `playback-mask-hooks.json` and lie in the fingerprinted guard page `0xE0711000`.
+
+**Evidence boundary.** The public release-candidate image `e2e7048d` (`--record-indicator ding --record-stop-indicator dong --screenshot rate`) was owner-checked on a 128 GB card on 23 November 2026. Every object of this version's build with those options compiles to the same code; only the source digest text differs. This exact image was not separately camera-run.
+
+- **First session:** everything else worked, but one JPEG-only XPan review, late in a long session, was stretched. It has not been reproduced since. It remains an open observation.
+- **Fresh-boot check:** two JPEG-only XPan photos, both reviewed correctly.
+- **Full repeat of the long session:** boot, a movie, two 3:2 photos, screenshots with the automatic INFO, a joystick cancel, RATE in ▶, two quick RAW+L XPan photos, then three JPEG-only XPan photos. The owner reported everything working.
+
+Private lab builds 37 (`6b8da720`) and 39 carry the same fix plus logging. Their logs on the owner's camera showed the steered draw route on every JPEG-only XPan review, after screenshots, after two RAW+L XPan photos and in movie mode; build-37 also logged an `8192x3024` decode. The public port drops the lab's diagnostic recorders. Other option combinations are hardware-untested with this change.
+
+**Expected to stay stretched (stock review):**
+
+- **M and S JPEG** XPan: the gate needs a Large JPEG, so there is no claim, no letterbox and no token.
+- **Bursts:** more than one new shot per review gives `MULTIPLE` and the stock review.
+- **EVF review:** the EVF review descriptor is not the cropped kind, so it never arms the token (untested on a camera).
+- Any review the gate refuses, and a QR redraw after a newer shot.
 
 ## 4. Opt-In Movie Record Indicator (`--record-indicator`)
 
@@ -107,7 +136,7 @@ Not ported from the private lab build: the 2-cue A/B start rotation, the `reques
 
 ## 4b. Opt-In One-Press Screenshot (`--screenshot`)
 
-`--screenshot {off,rate}` (default `off`) adds issue [#15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)'s one-press screenshot: RATE in ▶ saves a 2400×1600 JPEG of the whole screen through Canon's own Resize job and JPEG encoder. It adds three hooks (GUI dispatch `0xE04A8028`, ShtVfxEncJpg_Encode `0xE0CCB284`, INDEV_DevelopEnd `0xE0549258`), whose pages and the pages of every Canon function the feature calls are admitted through `screenshot_code_fingerprints` only when it is selected. A screenshot build has `37` hooks, `23` pages and `11` L2 tables (`38/24/11` with the record indicator); with `off`, none of it is linked. Use, sounds, files and the evidence boundary are in [docs/screenshot.md](screenshot.md).
+`--screenshot {off,rate}` (default `off`) adds issue [#15](https://github.com/WhiteAvocad0/canon-r5-mod/issues/15)'s one-press screenshot: RATE in ▶ saves a 2400×1600 JPEG of the whole screen through Canon's own Resize job and JPEG encoder; RATE in live view or a menu saves the screen and makes the JPEG in ▶, through an INFO press the camera posts 2 s after ▶ opens (or INFO by hand), and an XPan photo is replaced by the last good photo of the session. It adds three hooks (GUI dispatch `0xE04A8028`, ShtVfxEncJpg_Encode `0xE0CCB284`, INDEV_DevelopEnd `0xE0549258`), whose pages and the pages of every Canon function the feature calls are admitted through `screenshot_code_fingerprints` only when it is selected. A screenshot build has `37` hooks, `23` pages and `11` L2 tables (`38/24/11` with the record indicator); with `off`, none of it is linked. Use, sounds, files and the evidence boundary are in [docs/screenshot.md](screenshot.md).
 
 ## 5. Build-Time ROM Derivation & Diagnostic Verification
 

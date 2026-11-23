@@ -20,5 +20,22 @@
       "destination_symbol": "playback_mask_guide_entry",
       "resume_thumb": 3765223393
     }
+  ],
+  "route_words": [
+    {
+      "role": "r8_load",
+      "va": 3765506172,
+      "bytes": "ddf83880"
+    },
+    {
+      "role": "r8_compare",
+      "va": 3765506326,
+      "bytes": "b8f1010f"
+    },
+    {
+      "role": "r8_restore",
+      "va": 3765506396,
+      "bytes": "bde8f083"
+    }
   ]
 }

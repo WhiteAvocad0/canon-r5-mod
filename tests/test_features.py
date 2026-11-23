@@ -208,7 +208,7 @@ class ManifestLoadingTests(unittest.TestCase):
         self.assertIn("timing on a REC press is unverified", indicator.choice("2k150loud").status_detail)
         screenshot = m.options["screenshot"].choice("rate")
         self.assertIn("both recording cues enabled", screenshot.status_detail)
-        self.assertIn("XPan photos produced three beeps and no JPEG", screenshot.status_detail)
+        self.assertIn("RATE captured live view, menus and playback", screenshot.status_detail)
         self.assertIn("without either cue are untested", screenshot.status_detail)
         self.assertIn("earlier versions", m.status_levels["private-lab-verified"].text)
         self.assertIn("still needs a camera test", m.public_build_note)
