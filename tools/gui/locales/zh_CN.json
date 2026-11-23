@@ -481,10 +481,10 @@
   "Dong: two falling notes, 250 ms": "咚声：两个渐低的音，250 毫秒",
   "Owner-checked together with the ding on public image 01956513 and private lab build fbf31293 (18 November 2026). A dong-only image has not run on hardware.": "2026 年 11 月 18 日，机主已在公开构建 01956513 和内部版本 fbf31293 上同时验证了开始时的叮声和结束时的咚声。仅启用咚声的构建尚未经真机测试。",
   "One-press screenshot (RATE)": "一键截图（RATE）",
-  "Press RATE while viewing a photo in playback to save a 2400x1600 JPEG of the whole screen, made by the camera's own encoder, next to your photos. RATE in live view saves the raw screen files only. A click confirms the capture; two low bips mean it was refused, three that the camera cancelled it. Each RATE also leaves working files (about 11 MB) in DCIM/R5SHOTS.": "回放照片时按 RATE 键，相机会使用内置编码器生成一张 2400x1600 的全屏 JPEG 截图，保存在照片旁边。实时取景时按 RATE 只会保存原始屏幕文件。听到一声咔嗒表示截图成功，两声低音表示截图请求被拒绝，三声低音表示相机取消了截图。每按一次 RATE，还会在 DCIM/R5SHOTS 中留下约 11 MB 的工作文件。",
+  "Press RATE anywhere (live view, menus, playback) to save a 2400x1600 JPEG of the whole screen, made by the camera's own encoder, next to your photos. In playback the JPEG is made at once. In live view or a menu the screen is saved at once, and its JPEG appears by itself about 2.5-3 s after you next open playback (the camera presses INFO for you). A button or the joystick used before then cancels that; INFO in playback then delivers it. An XPan photo is replaced by the last photo that gave a screenshot this session. A click confirms the capture; two low bips mean it was refused, three that the camera cancelled it. Each RATE also leaves working files (about 11 MB) in DCIM/R5SHOTS.": "在任何界面（实时取景、菜单、回放）按 RATE 键，相机会使用内置编码器生成一张 2400x1600 的全屏 JPEG 截图，保存在照片旁边。回放时会立即生成 JPEG。在实时取景或菜单中，会先立即保存屏幕，下次打开回放约 2.5-3 秒后，JPEG 会自动生成（相机会替您按 INFO 键）。在此之前按任意按键或拨动摇杆会取消自动生成，之后在回放中按 INFO 键即可生成。XPan 照片会改用本次开机后最后一张成功截图的照片。听到一声咔嗒表示截图成功，两声低音表示截图请求被拒绝，三声低音表示相机取消了截图。每按一次 RATE，还会在 DCIM/R5SHOTS 中留下约 11 MB 的工作文件。",
   "The screenshot is part of the XPan profile only (it needs xpan-crop).": "只有 XPan 方案（xpan-crop）提供截图功能。",
   "Off (no screenshot)": "关闭（不截图）",
-  "RATE in playback: whole-screen JPEG": "回放时按 RATE：保存全屏 JPEG",
+  "RATE anywhere: whole-screen JPEG": "随处按 RATE：保存全屏 JPEG",
   "Language": "语言",
   "Checking...": "正在检查…",
   "{n} screenshot in {folder}{where}.": "在 {folder}{where} 中找到 {n} 张截图。",
@@ -667,5 +667,5 @@
   "{folder} is not a folder.": "{folder} 不是文件夹。",
   "{name} is on this card. Remove or back up AUTOEXEC.BIN first so a BootDisk-enabled camera boots normal Canon firmware during Canon Basic steps.": "卡上已有 {name}。请先备份并移走 AUTOEXEC.BIN，或将它移除。这样，已启用 BootDisk 的相机在执行 Canon Basic 步骤时才会正常启动佳能原厂固件。",
   "{region} (got {actual}..., expected {expected}...)": "{region}（实际为 {actual}…，应为 {expected}…）",
-  "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera.": "2026 年 11 月 22 日，机主在 128 GB SDXC 卡上对公开版本 809d3767（含录像起停提示音）进行了简短测试。回放以 3:2 拍摄的 JPEG 或 RAW+JPEG 照片时，按 RATE 键可将整个画面保存为 2400×1600 的 JPEG。截取 XPan 照片时会取消截屏，并响三声。仅启用截屏功能的版本尚未上机测试。"
+  "On 23 November 2026 the owner checked a public release-candidate image with the ding and dong on 128 GB SDXC: RATE in live view and in a menu gave its JPEG by itself after playback opened, a joystick move cancelled that and INFO then delivered it, and RATE in playback saved a JPEG. This version's screenshot code is identical to that image's, but this exact image was not separately camera-run. A screenshot-only image has not run on a camera.": "2026 年 11 月 23 日，机主在 128 GB SDXC 卡上测试了一个公开候选版本（含录像起停提示音）：在实时取景和菜单中按 RATE 后，打开回放时会自动生成 JPEG；拨动摇杆会取消自动生成，之后按 INFO 键即可生成；回放时按 RATE 也能保存 JPEG。此版本的截屏代码与该版本完全相同，但此版本本身尚未单独上机测试。仅启用截屏功能的版本尚未上机测试。"
 }
