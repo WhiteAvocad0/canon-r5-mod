@@ -123,7 +123,8 @@ class ToolchainNoticeTests(ToolchainFixture):
                        f"{build_app.TOOLCHAIN_ROOT}-win32-x64.zip", digest, "COPYING.RUNTIME", "newlib-nano",
                        "(distro-info/licenses): gcc.", "common.txt, windows.txt",
                        build_app.TOOLCHAIN_SOURCE_NAME, build_app.TOOLCHAIN_SOURCE_SHA256, build_app.TOOLCHAIN_SOURCE_URL,
-                       build_app.TOOLCHAIN_COMPANION_NAME):
+                       build_app.TOOLCHAIN_COMPANION_NAME, build_app.TOOLCHAIN_COMPANION_URL,
+                       build_app.TOOLCHAIN_COMPANION_SHA256):
             self.assertIn(needle, text)
         self.assertNotIn("Readline", text)
 
@@ -159,5 +160,8 @@ class ToolchainNoticeTests(ToolchainFixture):
             self.assertIn(needle, notes)
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             self.assertEqual(build_app.main(["--print-toolchain-source"]), 0)
-        self.assertEqual(out.getvalue().split(), [build_app.TOOLCHAIN_SOURCE_NAME, build_app.TOOLCHAIN_SOURCE_URL,
-                                                  build_app.TOOLCHAIN_SOURCE_SHA256])
+        self.assertEqual([line.split() for line in out.getvalue().splitlines()], [
+            [build_app.TOOLCHAIN_SOURCE_NAME, build_app.TOOLCHAIN_SOURCE_URL, build_app.TOOLCHAIN_SOURCE_SHA256],
+            [build_app.TOOLCHAIN_COMPANION_NAME, build_app.TOOLCHAIN_COMPANION_URL, build_app.TOOLCHAIN_COMPANION_SHA256]])
+        self.assertNotIn("vars.", workflow)  # the source packages are pinned in the tagged tree, not in settings
+        self.assertIn("vcruntime140.dll", notes)

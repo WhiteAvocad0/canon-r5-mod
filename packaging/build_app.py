@@ -61,8 +61,13 @@ TOOLCHAIN_NAME = f"xPack GNU Arm Embedded GCC {TOOLCHAIN_VERSION}"
 TOOLCHAIN_SOURCE_NAME = "arm-gnu-toolchain-src-snapshot-15.2.rel1.tar.xz"
 TOOLCHAIN_SOURCE_URL = f"https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/srcrel/{TOOLCHAIN_SOURCE_NAME}"
 TOOLCHAIN_SOURCE_SHA256 = "06f4e5792b566a771c300ac6f46c3422e23e34f4e3a5d44a8cb5594ead6fb82e"
-TOOLCHAIN_COMPANION_NAME = f"xpack-{TOOLCHAIN_VERSION}-corresponding-source.tar.gz"
 RELEASES_URL = "https://github.com/WhiteAvocad0/canon-r5-mod/releases"
+# The rest of the corresponding source (xPack's build scripts and patches, host libraries, Python,
+# LLVM and MinGW-w64 runtimes), built by packaging/xpack_source_package.py from
+# packaging/xpack-source-inputs.tsv and published once on its own release tag.
+TOOLCHAIN_COMPANION_NAME = f"xpack-{TOOLCHAIN_VERSION}-corresponding-source.tar"
+TOOLCHAIN_COMPANION_URL = f"{RELEASES_URL}/download/toolchain-src-xpack-{TOOLCHAIN_VERSION}/{TOOLCHAIN_COMPANION_NAME}"
+TOOLCHAIN_COMPANION_SHA256 = "1c1183fe067b958296aed1aa12365e10721bc64e6bb201adead7863afc91e488"
 TOOLCHAIN_NOTICES = "distro-info/R5-notices"  # the only files the app adds to the vendor tree
 TOOLCHAIN_NOTICE = """\
 GNU Arm toolchain in R5 Mod Assistant
@@ -95,7 +100,9 @@ Source code
   that bundles this toolchain, SHA-256 {source_sha256}.
   Also at {source_url}
 - {companion}
-  xPack's build scripts, patches and the other source inputs, on the same release page.
+  xPack's build scripts and patches and every other source input (host libraries,
+  Python, runtimes), SHA-256 {companion_sha256}. Attached to the same releases and
+  kept at {companion_url}
 Releases: {releases}
 """
 README_COMMON = """\
@@ -106,9 +113,10 @@ untested prototype. Every build it makes is hardware-untested. Read the guides f
 
 Built from commit {commit}. App licenses are in the Licenses folder. The toolchain
 licenses and notices are in Licenses/GNU Arm toolchain and, inside the app, in
-{toolchain_path}/distro-info (licenses and R5-notices). Its source code
-({source_name} and {companion}) is on the release page:
-{releases}
+{toolchain_path}/distro-info (licenses and R5-notices). Its source code,
+{source_name} and {companion},
+is attached to this version's release ({releases}); the second is also at
+{companion_url}
 """
 README = {
     "macos": """\
@@ -235,7 +243,8 @@ def install_toolchain(target: Target, local_archive: Path | None) -> dict[str, s
             readline=" (and Readline, which GDB uses)" if target.os == "macos" else "",
             components=", ".join(licenses), extra=", ".join(sorted(p.name for p in included.iterdir())),
             source_name=TOOLCHAIN_SOURCE_NAME, source_sha256=TOOLCHAIN_SOURCE_SHA256,
-            source_url=TOOLCHAIN_SOURCE_URL, companion=TOOLCHAIN_COMPANION_NAME, releases=RELEASES_URL),
+            source_url=TOOLCHAIN_SOURCE_URL, companion=TOOLCHAIN_COMPANION_NAME,
+            companion_sha256=TOOLCHAIN_COMPANION_SHA256, companion_url=TOOLCHAIN_COMPANION_URL, releases=RELEASES_URL),
             encoding="utf-8", newline="\r\n" if target.os == "windows" else "\n")
         vendor.rename(dest)
     print(f"Installed {filename} (SHA-256 {digest})")
@@ -336,7 +345,8 @@ def write_extras(folder: Path, target: Target, facts: dict[str, str], commit: st
     (folder / "Read me first.txt").write_text(
         text.format(version=facts["version"], arch=target.arch, url=GUIDE_URL, commit=commit,
                     toolchain_name=TOOLCHAIN_NAME, source_name=TOOLCHAIN_SOURCE_NAME,
-                    companion=TOOLCHAIN_COMPANION_NAME, releases=RELEASES_URL,
+                    companion=TOOLCHAIN_COMPANION_NAME, companion_url=TOOLCHAIN_COMPANION_URL,
+                    releases=RELEASES_URL,
                     toolchain_path=(target.tree.parent / "arm-toolchain").relative_to(target.app).as_posix()),
         encoding="utf-8", newline="\r\n" if target.os == "windows" else "\n")
     licenses = folder / "Licenses"
@@ -408,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-package", action="store_true", help="build the app only, no .dmg or .zip")
     ap.add_argument("--print-version", action="store_true", help="print the app version and exit")
     ap.add_argument("--print-toolchain-source", action="store_true",
-                    help="print the toolchain source package's file name, URL and SHA-256, and exit")
+                    help="print each toolchain source package's file name, URL and SHA-256 (Arm's first), and exit")
     args = ap.parse_args(argv)
 
     if args.print_version:
@@ -416,6 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.print_toolchain_source:
         print(TOOLCHAIN_SOURCE_NAME, TOOLCHAIN_SOURCE_URL, TOOLCHAIN_SOURCE_SHA256)
+        print(TOOLCHAIN_COMPANION_NAME, TOOLCHAIN_COMPANION_URL, TOOLCHAIN_COMPANION_SHA256)
         return 0
     try:
         import tkinter  # noqa: F401
