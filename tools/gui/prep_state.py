@@ -30,7 +30,7 @@ from messages import joined, message, phrase
 
 from cardprep import devices, workflow
 
-FORMAT_WARNING = ("Use a shooting card formatted in the camera")
+FORMAT_WARNING = "Back up your photos and videos before formatting. Formatting erases everything on the card."
 EXPLAIN = (
     "On macOS, use the built-in SD card slot to prepare the card. Undo can restore its original boot "
     "sectors from the backup. On Windows or Linux, use a card already prepared on a Mac."
