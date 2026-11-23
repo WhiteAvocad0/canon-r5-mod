@@ -322,6 +322,14 @@ def admit_xpan_rom(
         guard_pages=[int(v, 16) for v in loaded_contract["source_guard_pages"]],
     )
 
+    # The JPEG-only XPan Quick Review route rewrites the fit caller's saved r8: its three
+    # instructions must sit in a fingerprinted guard page and read exactly as pinned.
+    guard_pages = {int(v, 16) for v in loaded_contract["source_guard_pages"]}
+    for role, va, raw in playback_mask_profile.ROUTE_WORDS:
+        offset = va - manifest["rom_base"]
+        if (va & ~4095) not in guard_pages or rom_bytes[offset:offset + len(raw) // 2].hex() != raw:
+            raise ValueError(f"playback fit route word {role} at {hex(va)} differs from its pin")
+
     # Derive ROM-backed framing rows and XPan menu vector only after strict ROM admission.
     row_profile = frame_row_profile.build_profile_from_rom(
         rom_bytes,
