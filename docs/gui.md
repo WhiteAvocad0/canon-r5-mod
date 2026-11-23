@@ -19,7 +19,7 @@ There is a ready-made, **unsigned** app for macOS and Windows on the repository'
 
 `SHA256SUMS.txt` on the same page lists each file's SHA-256.
 
-Packages built from version 0.2.0 include xPack GNU Arm Embedded GCC 15.2.1-1.1. Step 5 checks it automatically and works offline. Version 0.1.0 and [source checkouts](#launch) require a separately installed compiler. Supply your own camera’s ROM dump for every version.
+Packages built from version 0.2.0 include xPack GNU Arm Embedded GCC 15.2.1-1.1. Step 5 checks it automatically and works offline. Versions 0.1.x and [source checkouts](#launch) require a separately installed compiler. Supply your own camera’s ROM dump for every version.
 
 ### macOS
 
@@ -125,7 +125,7 @@ XPan and custom sounds aren't offered together. The XPan profile is silent by de
 
 In the packaged app, wait for the included compiler to pass the check, then continue to **Build your mod**. Experienced users can choose a compatible compiler explicitly.
 
-When running from a source checkout or using the older 0.1.0 app, the assistant searches for an existing GNU Arm 15.2.1 toolchain. If you need one, unpack [xPack GNU Arm Embedded GCC 15.2.1-1.1](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/tag/v15.2.1-1.1) and choose its `bin` folder. Step 5 checks the compiler version and the `arm-none-eabi` target.
+When running from a source checkout or using an older 0.1.x app, the assistant searches for an existing GNU Arm 15.2.1 toolchain. If you need one, unpack [xPack GNU Arm Embedded GCC 15.2.1-1.1](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/tag/v15.2.1-1.1) and choose its `bin` folder. Step 5 checks the compiler version and the `arm-none-eabi` target.
 
 ### Step 6. Build and verify
 
