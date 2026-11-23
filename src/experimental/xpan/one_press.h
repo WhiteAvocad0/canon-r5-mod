@@ -345,7 +345,7 @@ void one_press_key(uint32_t code);
  * `tick`, or code 0 for lost hook records (at the drain tick). */
 void one_press_user_key(uint32_t tick, uint32_t code);
 /* worker, combo_observe.c drain: a hook record with COMBO_F_GEN_UNEQUAL marks this playback visit (S4). */
-void one_press_queue_clear(void);
+void one_press_queue_clear(uint32_t tick);
 extern uint32_t one_press_clear_visit; /* the play_since of the visit with a queue clear; 0 = none (worker) */
 extern uint32_t one_press_auto;        /* OP_AUTO_*: our press waiting for its release (worker) */
 extern uint32_t one_press_held_visit;  /* the visit in which an automatic release was held (worker) */

@@ -206,7 +206,9 @@ class Base(unittest.TestCase):
     def assert_held_visit(self):
         """Our held release and INFO by hand in this visit start nothing; the next visit delivers."""
         c = self.c
+        fm = c.g("op_fm_calls")
         c.dispatch()
+        self.assertEqual(c.g("op_fm_calls"), fm, "a held visit is refused before any Resize check")
         for who in ("our held release", "INFO by hand in the held visit"):
             d = c.defer()
             self.assertEqual((d["why"], d["defer"], c.g("op_start_calls"), c.op()["refusals"]), (DW["AUTO_HELD"], OP["DEFER_WAIT"], 0, 0),
@@ -696,6 +698,34 @@ class ReleaseVerdict(Base):
                     self.assertTrue(c.held(), "the drain holds the visit")
                 self.assert_held_visit()
 
+    def test_a_hold_published_during_the_info_dispatch_is_seen_before_the_start(self):
+        """Review 3 P2#1: GuiMainTask has read the old hold; the worker then drains a joystick (holding the visit)
+        and our already-hooked release (retiring it) before GuiMainTask reads the release state. The re-check
+        after the claim gives the deferral back."""
+        c = self.c
+        self.to_release()
+        self.assertEqual(self.verdict(), "ok")
+        c.record(129)  # the joystick, hooked just before our release
+        ran = []
+
+        def worker_between_loads():
+            if not ran:
+                ran.append(1)
+                self.worker(1)
+        cb = ctypes.CFUNCTYPE(None)(worker_between_loads)
+        self.lib.host_set_in_key(cb)
+        try:
+            c.dispatch()
+        finally:
+            self.lib.host_set_in_key(None)
+        d = c.defer()
+        self.assertEqual((ran, c.held(), c.auto()), ([1], True, 0), "held and retired between the two loads")
+        self.assertEqual((d["why"], d["defer"], c.g("op_start_calls"), c.op()["refusals"]), (DW["AUTO_HELD"], OP["DEFER_WAIT"], 0, 0))
+        self.leave()
+        self.enter(ticks=SETTLE + 1)
+        c.info_by_hand()
+        self.assert_started()
+
     def test_an_event_not_drained_at_the_press_tick_stops_the_post(self):
         for name, code, why in (("joystick", 129, AI["KEY"]), ("a Canon event", 167, AI["POSTED"])):
             with self.subTest(name):
@@ -826,6 +856,21 @@ class S4(Base):
         self.worker(ASETTLE * 2)
         self.assert_no_post(AI["LEAVING"])
 
+    def test_a_clear_recorded_before_the_visit_is_not_its_own(self):
+        """Review 3 P3#3: a clear hooked and finished before the worker first sees playback, drained on the entry
+        tick, does not hold the new visit (its generation is the visit's baseline)."""
+        c = self.c
+        self.capture_outside()
+        c.good(VIEW)
+        c.playback(handle=VIEW)
+        c.xpan(OP["XPAN_NO"])
+        c.mem[QUEUE] = c.mem[QUEUE + 8] = 8
+        c.record(166, 1, GEN_UNEQUAL | 8 << 8 | 7)  # stamped with the tick before the visit
+        self.worker(SETTLE + 1)
+        self.assertEqual(c.g("one_press_clear_visit"), 0)
+        c.info_by_hand()
+        self.assert_started()
+
     def test_a_queue_clear_outside_playback_marks_nothing(self):
         c = self.c
         c.mem[UIOPE] = POST_DIRECT
@@ -878,7 +923,7 @@ MUTATIONS = {
     "a held verdict does not hold the visit": ("one_press.c",
         "        __atomic_store_n(&one_press_held_visit, since, __ATOMIC_RELEASE);\n    }\n    op_rel_seen", "    }\n    op_rel_seen"),
     "INFO ignores the held visit": ("one_press.c",
-        "    } else if (since == __atomic_load_n(&one_press_held_visit, __ATOMIC_ACQUIRE) ||", "    } else if (0 ||"),
+        "    uint32_t held = __atomic_load_n(&one_press_held_visit, __ATOMIC_ACQUIRE) == since;", "    uint32_t held = 0u;"),
     "OK without our press seen": ("one_press.c",
         "(state & (OP_AUTO_SEEN | OP_AUTO_USER_KEY)) == OP_AUTO_SEEN &&", "!(state & OP_AUTO_USER_KEY) &&"),
     "a user key in the gap is ignored": ("one_press.c",
@@ -894,7 +939,7 @@ MUTATIONS = {
         "    if (st == OP_AUTO_RELEASED && since) {\n        __atomic_store_n(&one_press_held_visit, since, __ATOMIC_RELEASE);",
         "    if (st == OP_AUTO_RELEASED && since) {\n        (void)0;"),
     "an undrained key while our release is out is ignored": ("one_press.c",
-        "                (undrained & COMBO_UNDRAINED_USER_KEY))) {", "                (0 && undrained))) {"),
+        "            (undrained & COMBO_UNDRAINED_USER_KEY);", "            (0 && undrained);"),
     "our press counts as a user key": ("one_press.c",
         "        st |= (code == OP_INFO_PRESS && !(st & OP_AUTO_SEEN)) ? OP_AUTO_SEEN : OP_AUTO_USER_KEY;", "        st |= OP_AUTO_USER_KEY;"),
     "press and release in one tick": ("one_press.c",
@@ -937,10 +982,14 @@ MUTATIONS = {
         "               A.read(OP_GUI_QUEUE) != __atomic_load_n(&one_press_visit_gen, __ATOMIC_RELAXED)) {", "               0) {"),
     "S4: the release ignores the marked visit": ("one_press.c",
         "                  __atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) != since &&\n", ""),
-    "S4: the drain never reports a queue clear": ("combo_observe.c", "        one_press_queue_clear(); /* S4", "        (void)0; /* S4"),
+    "S4: the drain never reports a queue clear": ("combo_observe.c", "        one_press_queue_clear(tick); /* S4", "        (void)tick; /* S4"),
     "S4: a clear outside playback marks the next visit": ("one_press.c",
-        "    if (since)\n        __atomic_store_n(&one_press_clear_visit, since, __ATOMIC_RELAXED);",
-        "    __atomic_store_n(&one_press_clear_visit, since ? since : 1u, __ATOMIC_RELAXED);"),
+        "    if (since && (int32_t)(tick - since) >= 0)\n        __atomic_store_n(&one_press_clear_visit, since, __ATOMIC_RELAXED);",
+        "    (void)tick;\n    __atomic_store_n(&one_press_clear_visit, since ? since : 1u, __ATOMIC_RELAXED);"),
+    "S4: a clear before the visit marks it (review 3 P3#3)": ("one_press.c",
+        "    if (since && (int32_t)(tick - since) >= 0)", "    if (since && tick)"),
+    "no hold re-check after the claim (review 3 P2#1)": ("one_press.c",
+        "        } else if (__atomic_load_n(&one_press_held_visit, __ATOMIC_SEQ_CST) == since) {", "        } else if (0) {"),
     "S4: the wait drops the deferral": ("one_press.c",
         "        why = OP_DW_NOT_PLAYBACK; /* S4", "        D.defer = OP_DEFER_NONE; why = OP_DW_NOT_PLAYBACK; /* S4"),
 }

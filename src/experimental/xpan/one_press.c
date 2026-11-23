@@ -34,6 +34,7 @@ static uint32_t op_rel_seen, op_rel_visit; /* worker: INFO releases drained befo
 _Static_assert(OP_GUI_QUEUE_POST_LIMIT < OP_GUI_QUEUE_CAPACITY, "a margin below Canon's queue capacity");
 #ifdef COMBO_OBSERVE_HOST
 void (*one_press_host_before_claim)(void); /* host seam: GuiMainTask may run between the worker's checks and its claim */
+void (*one_press_host_in_key)(void);        /* host seam: the worker may run between one_press_key's two hold loads */
 #endif
 
 /* The block Canon's GUI passed to INDEV_DevelopStart for a stock S2 Resize of a
@@ -278,6 +279,13 @@ CODE void one_press_key(uint32_t code)
      * ahead of the tick and counts as unsettled (signed difference), never as old. */
     uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_ACQUIRE);
     uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_ACQUIRE), why;
+    uint32_t held = __atomic_load_n(&one_press_held_visit, __ATOMIC_ACQUIRE) == since;
+#ifdef COMBO_OBSERVE_HOST
+    if (one_press_host_in_key)
+        one_press_host_in_key();
+#endif
+    held |= (__atomic_load_n(&one_press_auto, __ATOMIC_ACQUIRE) & OP_AUTO_STATE) == OP_AUTO_RELEASED &&
+            (undrained & COMBO_UNDRAINED_USER_KEY);
     ++D.decisions;
     if (S.latched) {
         D.defer = OP_DEFER_NONE;
@@ -286,9 +294,7 @@ CODE void one_press_key(uint32_t code)
         why = OP_DW_BUSY;
     } else if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK || !since) { /* re-read at this release */
         why = OP_DW_NOT_PLAYBACK;
-    } else if (since == __atomic_load_n(&one_press_held_visit, __ATOMIC_ACQUIRE) ||
-               ((__atomic_load_n(&one_press_auto, __ATOMIC_ACQUIRE) & OP_AUTO_STATE) == OP_AUTO_RELEASED &&
-                (undrained & COMBO_UNDRAINED_USER_KEY))) {
+    } else if (held) {
         why = OP_DW_AUTO_HELD; /* an automatic release was held in this visit: the next visit delivers */
     } else if (op_leaving(since, undrained)) {
         why = OP_DW_NOT_PLAYBACK; /* S4: wait as outside playback (no job, no bips, the deferral kept) */
@@ -312,8 +318,13 @@ CODE void one_press_key(uint32_t code)
             why = OP_DW_NO_SOURCE;
         } else if (op_canon_busy()) { /* again after the FM calls: only wait */
             why = OP_DW_BUSY;
-        } else if (!__atomic_compare_exchange_n(&D.defer, &expect, OP_DEFER_NONE, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        } else if (!__atomic_compare_exchange_n(&D.defer, &expect, OP_DEFER_NONE, 0, __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE)) {
             why = OP_DW_BUSY; /* the worker is posting its INFO press this instant: wait */
+        } else if (__atomic_load_n(&one_press_held_visit, __ATOMIC_SEQ_CST) == since) {
+            /* The worker held this visit after the first look (it drained a key, then retired our
+             * release): give the deferral back and start nothing. */
+            __atomic_store_n(&D.defer, OP_DEFER_WAIT, __ATOMIC_RELEASE);
+            why = OP_DW_AUTO_HELD;
         } else {
             ++D.starts;
             why = OP_DW_STARTED;
@@ -467,12 +478,14 @@ CODE void one_press_user_key(uint32_t tick, uint32_t code)
     D.auto_why = OP_AI_KEY;
 }
 
-/* worker, combo_observe.c drain: a hook record with COMBO_F_GEN_UNEQUAL (S4). Marks the
- * current playback visit; a clear outside playback marks nothing. */
-CODE void one_press_queue_clear(void)
+/* worker, combo_observe.c drain: a hook record with COMBO_F_GEN_UNEQUAL (S4), recorded at
+ * worker tick `tick`. Marks the current playback visit; a clear outside playback, or one
+ * recorded before the visit began, marks nothing (the visit's generation baseline and the
+ * pending check cover a clear still in progress at its start). */
+CODE void one_press_queue_clear(uint32_t tick)
 {
     uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED);
-    if (since)
+    if (since && (int32_t)(tick - since) >= 0)
         __atomic_store_n(&one_press_clear_visit, since, __ATOMIC_RELAXED);
 }
 

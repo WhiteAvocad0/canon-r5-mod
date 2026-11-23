@@ -608,8 +608,10 @@ void host_fz_reset(void);
  * keeps the depth each post saw. */
 uint32_t host_post_asserts;
 extern void (*one_press_host_before_claim)(void);
+extern void (*one_press_host_in_key)(void);
 static uint32_t rd(uint32_t a) { return combo_observe_api.read(a); }
 void host_set_before_claim(void (*f)(void)) { one_press_host_before_claim = f; }
+void host_set_in_key(void (*f)(void)) { one_press_host_in_key = f; }
 static uint32_t tm(void) { return host_us; }
 char op_log[512]; uint32_t op_log_n;
 static void lg(char c) { if (op_log_n < sizeof op_log - 1) { op_log[op_log_n++] = c; op_log[op_log_n] = 0; } }
@@ -669,7 +671,7 @@ void host_op_reset(void)
     memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u; op_fm_sets_busy = 0u;
     memset(op_posts, 0, sizeof op_posts); op_post_calls = 0u; one_press_auto = one_press_clear_visit = 0u;
     one_press_held_visit = one_press_visit_gen = 0u; host_post_asserts = 0u;
-    one_press_host_before_claim = 0; memset(op_post_depth, 0, sizeof op_post_depth);
+    one_press_host_before_claim = 0; one_press_host_in_key = 0; memset(op_post_depth, 0, sizeof op_post_depth);
     op_log_n = 0; op_log[0] = 0; op_end_calls = op_start_calls = op_fm_calls = op_fm_subs = op_fm_handle = op_start_handle = 0;
     op_gui_busy = op_indev_busy = 0; op_fm_rc = 0;
     memset(op_fm_words, 0, sizeof op_fm_words); memset(&inject_ring, 0, sizeof inject_ring);

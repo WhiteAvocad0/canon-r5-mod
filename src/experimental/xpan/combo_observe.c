@@ -528,7 +528,7 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     uint32_t tick = now - ((now - (code_tick >> 16)) & 0xffffu);
     if (flags & COMBO_F_GEN_UNEQUAL) {
         S.gen_unequal = sat_inc(S.gen_unequal);
-        one_press_queue_clear(); /* S4: a queue clear marks this playback visit (one_press.h) */
+        one_press_queue_clear(tick); /* S4: a queue clear marks this playback visit (one_press.h) */
     }
     if (flags & (COMBO_F_CODE_WIDE | COMBO_F_ARG2_WIDE | COMBO_F_ARG3_WIDE | COMBO_F_MODE_WIDE | COMBO_F_CLASS_NONZERO))
         S.wide = sat_inc(S.wide);
