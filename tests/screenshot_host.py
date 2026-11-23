@@ -119,7 +119,8 @@ class OnePressState(ctypes.Structure):
 
 
 class OnePressDefer(ctypes.Structure):
-    _fields_ = _u("defer why xpan marked starts fallbacks last_good") + _i("last_good_rc") + _u("decisions play_since held_since")
+    _fields_ = (_u("defer why xpan marked starts fallbacks last_good") + _i("last_good_rc")
+                + _u("decisions play_since held_since auto_for auto_why auto_gui auto_posts auto_ticks"))
 
 
 class InjectBuild(ctypes.Structure):
@@ -624,6 +625,14 @@ static int32_t o_fm(uint32_t h, uint32_t *info)
     return op_fm_rc;
 }
 static uint32_t o_xpan(void) { return op_xpan; }
+/* E04A787A(class, code, arg2, arg3): queued for GuiMainTask; the tests dispatch the events. */
+uint32_t op_posts[16][4], op_post_calls;
+static void o_post(uint32_t c, uint32_t code, uint32_t a2, uint32_t a3)
+{
+    lg('P');
+    if (op_post_calls < 16) { op_posts[op_post_calls][0] = c; op_posts[op_post_calls][1] = code; op_posts[op_post_calls][2] = a2; op_posts[op_post_calls][3] = a3; }
+    op_post_calls++;
+}
 static void o_release(void) { lg('R'); }
 uint32_t op_gui_busy, op_indev_busy;
 static void o_set_gui(uint32_t v) { lg(v ? 'G' : 'g'); op_gui_busy = v; }
@@ -642,7 +651,7 @@ static void o_end(uint32_t save, void *blk, op_cb_fn e)
     op_end_calls++; op_end_save = save; memcpy(op_end_block, blk, 284); op_end_cb = (uintptr_t)e;
 }
 const struct one_press_api one_press_api = {rd, tm, o_fm, o_release, o_set_gui, o_set_indev, o_gui, o_indev, o_start, o_end,
-                                            o_xpan};
+                                            o_xpan, o_post};
 uintptr_t host_done_ptr(void) { return (uintptr_t)one_press_done; }
 uintptr_t host_end_ptr(void) { return (uintptr_t)one_press_end; }
 void host_op_reset(void)
@@ -650,6 +659,7 @@ void host_op_reset(void)
     memset(&one_press_state, 0, sizeof one_press_state); memset(one_press_block, 0, sizeof one_press_block);
     memset(&one_press_defer, 0, sizeof one_press_defer); memset(op_fm_good, 0, sizeof op_fm_good);
     memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u; op_fm_sets_busy = 0u;
+    memset(op_posts, 0, sizeof op_posts); op_post_calls = 0u; one_press_auto = one_press_clear_visit = 0u;
     op_log_n = 0; op_log[0] = 0; op_end_calls = op_start_calls = op_fm_calls = op_fm_subs = op_fm_handle = op_start_handle = 0;
     op_gui_busy = op_indev_busy = 0; op_fm_rc = 0;
     memset(op_fm_words, 0, sizeof op_fm_words); memset(&inject_ring, 0, sizeof inject_ring);
@@ -970,6 +980,7 @@ typedef uint32_t (*py_read_fn)(uint32_t);
 typedef void (*py_hook_fn)(uint32_t kind);
 static py_read_fn py_read; static py_hook_fn py_hook;
 volatile uint32_t combo_worker_tick;
+struct combo_observe_state combo_observe_state; /* one_press.c reads the drain's event-sequence words */
 uint32_t host_us = 1000u, host_us_step = 0u, host_cpu = 0x80000000u;
 void host_set(py_read_fn r, py_hook_fn h) { py_read = r; py_hook = h; }
 static uint32_t h_read(uint32_t a) { return py_read(a); }
@@ -1085,7 +1096,8 @@ static void zs(uint32_t v) { (void)v; }
 static uint32_t zg(void) { return 0; }
 static void zst(uint32_t h, void *b, op_cb_fn s, op_cb_fn d, uint32_t r) { (void)h; (void)b; (void)s; (void)d; (void)r; }
 static void zen(uint32_t s, void *b, op_cb_fn e) { (void)s; (void)b; (void)e; }
-const struct one_press_api one_press_api = {zr, h_timer, zm, zv, zs, zs, zg, zg, zst, zen, zg};
+static void zp(uint32_t c, uint32_t k, uint32_t a, uint32_t b) { (void)c; (void)k; (void)a; (void)b; }
+const struct one_press_api one_press_api = {zr, h_timer, zm, zv, zs, zs, zg, zg, zst, zen, zg, zp};
 void host_op_state(uint32_t st) { one_press_state.state = st; one_press_state.dry_seen = one_press_state.dry_ok = one_press_state.dry_wh = 0; }
 void host_composite(uint8_t *osd, const uint8_t *pic, uint32_t w) { y22_composite_row(osd, pic, w); }
 #define HOST_SIZE_0 0u

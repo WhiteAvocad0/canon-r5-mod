@@ -5,7 +5,9 @@ picture layer as SS_nnnnn.PIC), composites both into DCIM/R5SHOTS/HWJPG.Y22 and
 starts Canon's own Resize job on the current image, whose JPEG encode reads that
 file instead of the photo: a 2400x1600 in-camera JPEG of the whole screen. RATE in
 live view or a menu saves the two files and defers the job: the next INFO release in
-playback starts it (one_press.h). An XPan photo, or one Canon cannot resize, is
+playback starts it (one_press.h). The worker posts that INFO itself (press, then
+release) once playback has been stable for 2 s and quiet for 0.5 s; any key first
+cancels the post, and INFO by hand then starts it. An XPan photo, or one Canon cannot resize, is
 replaced by the last photo whose screenshot saved this boot. A click confirms the
 capture; two low bips mean a refusal, three a cancelled job.
 
@@ -63,7 +65,8 @@ SYMBOLS = (
     "inject_capture_end", "inject_shared_strip", "inject_shared_row", "inject_y22",
     "pl_sample", "pl_select", "capture_pl",
     "one_press_arm", "one_press_release", "one_press_done", "one_press_end", "one_press_step", "one_press_report",
-    "one_press_state", "one_press_block", "one_press_api", "one_press_key", "one_press_defer", "inject_pic_row", "y22_composite_row",
+    "one_press_state", "one_press_block", "one_press_api", "one_press_key", "one_press_defer", "one_press_user_key", "one_press_queue_clear",
+    "one_press_clear_visit", "one_press_auto", "inject_pic_row", "y22_composite_row",
 )
 # The rec_tone / tone_gen symbols a screenshot-only build links (no record indicator engine).
 SHARED_SYMBOLS = (

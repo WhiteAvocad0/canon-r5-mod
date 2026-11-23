@@ -484,8 +484,10 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     uint32_t code = code_tick & 0xffffu, flags = context >> 24;
     /* Full tick: the hook stored the low 16 bits of the tick it saw (<= now). */
     uint32_t tick = now - ((now - (code_tick >> 16)) & 0xffffu);
-    if (flags & COMBO_F_GEN_UNEQUAL)
+    if (flags & COMBO_F_GEN_UNEQUAL) {
         S.gen_unequal = sat_inc(S.gen_unequal);
+        one_press_queue_clear(); /* S4: a queue clear marks this playback visit (one_press.h) */
+    }
     if (flags & (COMBO_F_CODE_WIDE | COMBO_F_ARG2_WIDE | COMBO_F_ARG3_WIDE | COMBO_F_MODE_WIDE | COMBO_F_CLASS_NONZERO))
         S.wide = sat_inc(S.wide);
     uint32_t release = 0u;
@@ -508,6 +510,10 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     }
     (void)seq;
     (void)args;
+    if (index < COMBO_BUTTON_COUNT && !release)
+        one_press_user_key(tick, code); /* a user press cancels the automatic INFO post (one_press.h) */
+    else if (plain && code >= OP_DIRECTION_FIRST && code <= OP_MULTI_CONTROLLER_LAST)
+        one_press_user_key(tick, code); /* the joystick and direction keys send no COMBO_BUTTONS code */
     if (index < COMBO_BUTTON_COUNT) {
         S.key_events = sat_inc(S.key_events);
         key_event(index, release, tick);
@@ -519,6 +525,7 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
 
 CODE static void drain(uint32_t now)
 {
+    uint32_t lost = S.lost;
     if (!S.next_seq)
         S.next_seq = 1u;
     for (uint32_t n = 0; n < COMBO_RING_ENTRIES; ++n) {
@@ -565,6 +572,8 @@ CODE static void drain(uint32_t now)
         record(want, code_tick, args, context, now);
     }
     S.unread_after_step = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_RELAXED) - (S.next_seq - 1u);
+    if (S.lost != lost)
+        one_press_user_key(now, 0u); /* a lost hook record may have been a user press: no automatic INFO (fail closed) */
 }
 
 CODE void combo_observe_step(void)
@@ -582,7 +591,7 @@ CODE void combo_observe_step(void)
     drain(now);
     display_tick(now);
     capture_feedback_step();
-    one_press_step(now); /* the one-press timeout */
+    one_press_step(now); /* the playback visit, the automatic INFO and the one-press timeout */
 }
 
 CODE void combo_observe_report(unsigned reports)

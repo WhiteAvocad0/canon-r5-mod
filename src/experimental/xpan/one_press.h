@@ -116,7 +116,9 @@
  *    OP_TIMEOUT_TICKS, about 30 s against a stock 1 s; not handled);
  *    Canon's develop state and both busy flags clear, before the source lookup and
  *    again after its FM calls. Busy or settling only waits for the next release (no
- *    bips).
+ *    bips). A GUI queue clear seen in this playback visit, or pending at this release,
+ *    also only waits (OP_DW_NOT_PLAYBACK, "the S4 guard" below), as does a release
+ *    whose automatic INFO post failed its re-check (OP_DW_SETTLING, below).
  *    Why only INFO: it stays in playback and confirms nothing. SET is the confirm key
  *    of every playback dialog (Erase, Protect, Q, Resize), and our hook runs before
  *    Canon handles the release. A key that leaves playback (the playback button, MENU)
@@ -152,6 +154,103 @@
 #define OP_XPAN_NO 1u      /* a known tuple that is not XPan */
 #define OP_XPAN_YES 2u     /* the XPan RAW+L or JPEG L tuple [7,8192,3024,0,x] */
 
+/* The S4 guard. Canon can begin leaving playback while the mode word [0x8F40] still
+ * reads 0x2002. [0x8F48] (SetGUIRequestMode's last request) is not used: a playback
+ * visit with no new request need not hold 0x2002 there. Instead the worker marks the
+ * playback visit in which the H2 hook recorded a GUI queue clear ([0x5474] != [0x547C]
+ * at the hook, COMBO_F_GEN_UNEQUAL; one_press_queue_clear from the combo drain);
+ * one_press_key then waits (OP_DW_NOT_PLAYBACK: no job, no bips, the deferral kept)
+ * for the rest of that visit, or while a clear is pending at the release, and the
+ * automatic INFO does not post (OP_AI_LEAVING). ROM 2.2.1: ++[0x5474] has one writer,
+ * E04A7974 (QueueClearFlg), called from the IDLEHandler's LOCAL_COMPLETE_TIMER and from
+ * GUILock_ProhibitLock E079416C (GUILock handleGuiState, GuiState 0). The guard narrows
+ * the exit race; it does not close it (a half-press exit just before the automatic
+ * post, without a queue clear, is not seen; docs/screenshot.md "Limits").
+ *
+ * Automatic INFO. While a screenshot taken outside playback is deferred, the worker
+ * (20 ms, one_press_step -> op_auto_info) posts ONE INFO press, then later its release,
+ * through Canon's GUI event post E04A787A(0, 14|15, 0, 1): exactly the call Canon's
+ * UiOpe key handler E08ABFF4 makes for a real INFO key (SwINFO_Button E01095FE ->
+ * E08ABFA0 -> [0x92D4]). The posted release reaches the H2 hook on GuiMainTask like the
+ * user's, and one_press_key starts the job with all of its own checks: the worker never
+ * starts a job or calls a GUI setter.
+ *  - The press is posted only when, in this order: the deferral is not handled yet
+ *    (auto_for != marked); it was taken outside playback (OP_AI_KEPT otherwise: a
+ *    playback RATE refused at its release is delivered by INFO by hand only); not
+ *    latched; idle; the mode word, re-read right before the post, is playback; no queue
+ *    clear in this visit (S4); the visit stable for OP_AUTO_SETTLE_TICKS; not refused
+ *    in this visit (held_since); this capture's Y22 still pending and within
+ *    OP_DEFER_MAX_AGE_TICKS; Canon's develop state and both busy getters 0; the UiOpe
+ *    key handler [0x92D4] is the direct poster E08ABFF5 (in UiOpe mode 0 Canon keeps keys
+ *    for a later replay: OP_AI_KEYS_HELD); the GUI queue quiet (clear generations equal,
+ *    depth [0x5478] <= OP_GUI_QUEUE_DEPTH_MAX, compared unsigned: a full queue makes
+ *    E04A787A assert, Err 70); and no class-0 event through the H2 hook for
+ *    OP_AUTO_QUIET_TICKS (the drain's latest record tick: Canon's playback-entry traffic
+ *    is over).
+ *  - One post per deferral: the deferral is handled (auto_for = marked) before the post,
+ *    or by a user key the drain records after playback entry before the post
+ *    (OP_AI_KEY: any COMBO_BUTTONS press, a joystick or direction-key code
+ *    OP_DIRECTION_FIRST..OP_MULTI_CONTROLLER_LAST, or a lost hook record). INFO by hand
+ *    then works as before.
+ *  - The release is posted on a later worker tick, at least OP_AUTO_RELEASE_TICKS after
+ *    the press, and always (a press never stays without its release). Its verdict, OK
+ *    only when: the visit began before the press; the hook saw our INFO press
+ *    (OP_AUTO_SEEN) and no user key since it (OP_AUTO_USER_KEY: another button press,
+ *    a second INFO press, a joystick or direction-key code, a lost record); [0x92D4] is
+ *    still E08ABFF5; the mode word is playback; no queue clear in the visit; the queue
+ *    quiet; idle and not latched. Otherwise OP_AI_RELEASE_HELD. The verdict travels in
+ *    one_press_auto; one_press_key takes a released mark with a compare-exchange (never
+ *    a pressed one, so a human INFO between our press and release leaves it alone) and
+ *    a failed mark younger than OP_AUTO_RELEASE_TTL makes that INFO release start
+ *    nothing (OP_DW_SETTLING: no job, no bips, the deferral kept for INFO by hand).
+ *  - Row R5CA A= (combo_observe.h CC_FMT_OP_AUTO). */
+#define OP_GUI_POST 0xe04a787bu            /* Thumb entry: GUI event post (class, code, arg2, arg3) */
+#define OP_UIOPE_KEY_HANDLER 0x000092d4u   /* [COMBO_UIOPE_MODE + 4]: E08ABFA0's key handler */
+#define OP_UIOPE_POST_DIRECT 0xe08abff5u   /* UiOpe mode 2 handler: E04A787A(0, code, 0, arg) */
+#define OP_GUI_QUEUE 0x00005474u           /* = COMBO_GUI_CONTEXT: +0 / +8 clear generations, +4 queue depth */
+#define OP_GUI_QUEUE_DEPTH_MAX 4u          /* posted only while at most this many GUI events are queued */
+#define OP_INFO_PRESS 14u                  /* COMBO_BUTTONS INFO; SwINFO_Button's press code */
+#define OP_INFO_RELEASE 15u                /* = COMBO_INFO_RELEASE */
+#define OP_AUTO_SETTLE_TICKS 100u          /* 2 s of a stable playback visit before the press (the human INFO: 0.5 s) */
+#define OP_AUTO_QUIET_TICKS 25u            /* 0.5 s without a class-0 event through the H2 hook */
+#define OP_AUTO_RELEASE_TICKS 5u           /* 100 ms from the press to the release */
+#define OP_AUTO_RELEASE_TTL 50u            /* 1 s: a mark older than this belongs to no dispatched release */
+/* ROM 2.2.1: SwDirectionKeyCBR E0108B02 posts 0x76..0x7F (state 0 -> 0x76 at E0108B3C) and
+ * SwSubDialMultiControlerCBR E0108AA2 0x80..0x88, both through E08ABFA0(code, 1): class-0
+ * events 118..136. Canon's own posts of these codes are class 2. */
+#define OP_DIRECTION_FIRST 118u
+#define OP_MULTI_CONTROLLER_LAST 136u
+/* one_press_auto: tick << OP_AUTO_TICK_SHIFT | flags | state. OP_AUTO_PRESSED: our press is
+ * posted and its release pending (worker-owned); OP_AUTO_RELEASED (+ OP_AUTO_OK when the
+ * re-check passed): the release is posted and the mark waits for GuiMainTask. Flags while
+ * pressed (worker, the combo drain): OP_AUTO_SEEN, OP_AUTO_USER_KEY. */
+#define OP_AUTO_PRESSED 1u
+#define OP_AUTO_RELEASED 2u
+#define OP_AUTO_OK 1u
+#define OP_AUTO_STATE 3u
+#define OP_AUTO_SEEN 4u
+#define OP_AUTO_USER_KEY 8u
+#define OP_AUTO_TICK_SHIFT 4u
+#define OP_AUTO_TICK_MASK 0x0fffffffu
+/* one_press_defer.auto_why: the latest worker decision while a deferral was not handled */
+#define OP_AI_NONE 0u
+#define OP_AI_POSTED 1u        /* INFO press posted (this deferral handled) */
+#define OP_AI_KEY 2u           /* a user key after playback entry came first (handled, no post) */
+#define OP_AI_LATCHED 3u       /* one-press latched off after a timeout */
+#define OP_AI_BUSY 4u          /* a one-press job is in progress */
+#define OP_AI_NOT_PLAYBACK 5u  /* the GUI mode word is not OP_GUI_PLAYBACK */
+#define OP_AI_SETTLING 6u      /* playback seen for less than OP_AUTO_SETTLE_TICKS */
+#define OP_AI_HELD 7u          /* refused (two bips) in this playback visit */
+#define OP_AI_LOST 8u          /* HWJPG.Y22 is no longer this capture's */
+#define OP_AI_EXPIRED 9u       /* older than OP_DEFER_MAX_AGE_TICKS */
+#define OP_AI_CANON_BUSY 10u   /* Canon's develop state or a busy flag */
+#define OP_AI_KEYS_HELD 11u    /* Canon's UiOpe key handler is not the direct poster */
+#define OP_AI_QUEUE_BUSY 12u   /* GUI queue clear pending or more than OP_GUI_QUEUE_DEPTH_MAX queued */
+#define OP_AI_KEPT 13u         /* a playback RATE refused at its release: INFO by hand only */
+#define OP_AI_LEAVING 14u      /* S4: the H2 hook saw a GUI queue clear in this playback visit */
+#define OP_AI_GUI_EVENTS 15u   /* a GUI event went through the H2 hook less than OP_AUTO_QUIET_TICKS ago */
+#define OP_AI_RELEASE_HELD 16u /* the release re-check failed: the release is posted marked not to start */
+
 #ifndef __ASSEMBLER__
 typedef void (*op_cb_fn)(uint32_t);
 struct one_press_api {
@@ -166,6 +265,7 @@ struct one_press_api {
     void (*start)(uint32_t handle, void *block, op_cb_fn start_cb, op_cb_fn done_cb, uint32_t remote);
     void (*end)(uint32_t save, void *block, op_cb_fn end_cb);
     uint32_t (*view_xpan)(void); /* OP_XPAN_*: the playback cache's AspectInfo tuple */
+    void (*gui_post)(uint32_t event_class, uint32_t code, uint32_t arg2, uint32_t arg3); /* OP_GUI_POST */
 };
 extern const struct one_press_api one_press_api;
 
@@ -191,7 +291,7 @@ struct one_press_state {
 _Static_assert(sizeof(struct one_press_state) == 188u, "one-press state ABI");
 extern struct one_press_state one_press_state;
 extern uint8_t one_press_block[OP_BLOCK_BYTES];
-/* Writers: GuiMainTask (arm, key), except play_since (worker) and last_good (done). */
+/* Writers: GuiMainTask (arm, key), except play_since and auto_* (worker) and last_good (done). */
 struct one_press_defer {
     uint32_t defer, why, xpan;           /* OP_DEFER_*, OP_DW_* (latest decision), OP_XPAN_* (latest view) */
     uint32_t marked, starts, fallbacks;  /* deferred captures; deferred jobs started; jobs started on the last-good source */
@@ -200,11 +300,25 @@ struct one_press_defer {
     uint32_t decisions;                  /* every arm and every INFO decision while deferred */
     uint32_t play_since;                 /* worker: tick playback was entered (0 = not in playback) */
     uint32_t held_since;                 /* play_since of the visit that refused (OP_DW_HELD) */
+    /* automatic INFO (worker: op_auto_info, one_press_user_key) */
+    uint32_t auto_for;                   /* the deferral (marked) handled by a post or a user key; 0 = none */
+    uint32_t auto_why;                   /* OP_AI_*: the latest decision (frozen once the deferral is handled) */
+    uint32_t auto_gui;                   /* the GUI mode word re-read right before the latest post */
+    uint32_t auto_posts;                 /* INFO presses posted this boot */
+    uint32_t auto_ticks;                 /* worker ticks from playback entry (play_since) to the latest post */
 };
-_Static_assert(sizeof(struct one_press_defer) == 44u, "one-press defer ABI");
+_Static_assert(sizeof(struct one_press_defer) == 64u, "one-press defer ABI");
 extern struct one_press_defer one_press_defer;
 /* GuiMainTask, H2 hook: an INFO release (COMBO_INFO_RELEASE); other codes are ignored. */
 void one_press_key(uint32_t code);
+/* worker, combo_observe.c drain: a button press, a joystick or direction-key code
+ * (OP_DIRECTION_FIRST..OP_MULTI_CONTROLLER_LAST) the H2 hook recorded at worker tick
+ * `tick`, or code 0 for lost hook records (at the drain tick). */
+void one_press_user_key(uint32_t tick, uint32_t code);
+/* worker, combo_observe.c drain: a hook record with COMBO_F_GEN_UNEQUAL marks this playback visit (S4). */
+void one_press_queue_clear(void);
+extern uint32_t one_press_clear_visit; /* the play_since of the visit with a queue clear; 0 = none (worker) */
+extern uint32_t one_press_auto;        /* OP_AUTO_*: the worker writes; GuiMainTask takes released marks */
 
 /* GuiMainTask, RATE admission (before any FIO): 1 while the state is not IDLE (refused). */
 uint32_t one_press_busy(void);
@@ -215,7 +329,7 @@ uint32_t one_press_dry_wanted(void);          /* H3: 1 while a job waits for its
 void one_press_dry(uint32_t ok, uint32_t width, uint32_t height);
 void one_press_done(uint32_t result);         /* Canon: doneCBR, InnerDevelopMgr */
 void one_press_end(uint32_t arg);             /* Canon: endCBR */
-void one_press_step(uint32_t tick);           /* worker: the playback visit and the timeout */
+void one_press_step(uint32_t tick);           /* worker: the playback visit, the automatic INFO and the timeout */
 void one_press_report(void);                  /* worker: R5CA rows */
 #endif
 #endif

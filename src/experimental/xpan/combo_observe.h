@@ -309,6 +309,7 @@ void combo_sample_display(struct combo_display *d);
 #define CC_FMT_OP_JOB "R5CA J=%u %u %u %08X %u %u %u %08X"
 #define CC_FMT_OP_VIEW "R5CA V=%u %08X %d %08X %08X"
 #define CC_FMT_OP_DEFER "R5CA D=%u %u %u %u %u %u %08X %d" /* one_press.h struct one_press_defer */
+#define CC_FMT_OP_AUTO "R5CA A=%u %u %08X %u %u"        /* its automatic INFO words */
 #define CC_FMT_PL_HEAD "R5C9 N=%u"
 #define CC_FMT_PL_ENTRY "R5C9 E=%u %u %u %08X %08X %08X"
 #define CC_FMT_PL_OUT "R5C9 O=%u %u %u %u %u %u"
@@ -411,6 +412,7 @@ void combo_sample_display(struct combo_display *d);
     X(op_job, CC_FMT_OP_JOB, "us_start us_done us_end done_result end_reason dry_seen dry_ok dry_wh") \
     X(op_view, CC_FMT_OP_VIEW, "source view_handle view_fm_rc view_i0 view_i2") \
     X(op_defer, CC_FMT_OP_DEFER, "defer why xpan marked starts fallbacks last_good last_good_rc") \
+    X(op_auto, CC_FMT_OP_AUTO, "auto_for auto_why auto_gui auto_posts auto_ticks") \
     X(hist, CC_FMT_HIST, "h0 h1 h2 h3 h4") \
     X(hist_tail, CC_FMT_HIST_TAIL, "overflow max_held") \
     X(seq_head, CC_FMT_SEQ_HEAD, "first count") \
