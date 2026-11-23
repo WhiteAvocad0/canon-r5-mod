@@ -479,6 +479,43 @@ CODE static void other_event(uint32_t code)
 
 /* ---- drain ---- */
 
+/* The one rule for "a user key" (one_press.h): a plain class-0 COMBO_BUTTONS press, or a
+ * joystick / direction-key code. Used by the drain and by combo_undrained. */
+CODE static uint32_t user_key(uint32_t code, uint32_t flags)
+{
+    if (flags & (COMBO_F_CODE_WIDE | COMBO_F_CLASS_NONZERO))
+        return 0u;
+    uint32_t release = 0u;
+    return (combo_button_index(code, &release) < COMBO_BUTTON_COUNT && !release) ||
+           (code >= OP_DIRECTION_FIRST && code <= OP_MULTI_CONTROLLER_LAST);
+}
+
+/* Read only: the records the hook has published and the drain not yet handled (the drain
+ * advances next_seq only after a record's effects). On GuiMainTask the hook is the same
+ * task, so the records are complete; on the worker a record is used only if its seq word
+ * still matches. More than the ring can hold: unknown, both flags. */
+CODE uint32_t combo_undrained(void)
+{
+    uint32_t next = __atomic_load_n(&S.next_seq, __ATOMIC_ACQUIRE), out = 0u;
+    uint32_t written = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_ACQUIRE);
+    if (!next)
+        next = 1u;
+    if ((int32_t)(written - next) >= (int32_t)COMBO_RING_MASK)
+        return COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR;
+    for (uint32_t seq = next; (int32_t)(written - seq) >= 0; ++seq) {
+        const struct combo_ring_entry *e = &combo_hook_ring.entries[(seq - 1u) & COMBO_RING_MASK];
+        if (__atomic_load_n(&e->seq, __ATOMIC_ACQUIRE) != seq)
+            return COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR;
+        uint32_t code = __atomic_load_n(&e->code_tick, __ATOMIC_RELAXED) & 0xffffu;
+        uint32_t flags = __atomic_load_n(&e->context, __ATOMIC_RELAXED) >> 24;
+        if (flags & COMBO_F_GEN_UNEQUAL)
+            out |= COMBO_UNDRAINED_CLEAR;
+        if (user_key(code, flags))
+            out |= COMBO_UNDRAINED_USER_KEY;
+    }
+    return out;
+}
+
 CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_t context, uint32_t now)
 {
     uint32_t code = code_tick & 0xffffu, flags = context >> 24;
@@ -510,10 +547,8 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     }
     (void)seq;
     (void)args;
-    if (index < COMBO_BUTTON_COUNT && !release)
-        one_press_user_key(tick, code); /* a user press cancels the automatic INFO post (one_press.h) */
-    else if (plain && code >= OP_DIRECTION_FIRST && code <= OP_MULTI_CONTROLLER_LAST)
-        one_press_user_key(tick, code); /* the joystick and direction keys send no COMBO_BUTTONS code */
+    if (user_key(code, flags))
+        one_press_user_key(tick, code); /* a user key cancels or holds the automatic INFO (one_press.h) */
     if (index < COMBO_BUTTON_COUNT) {
         S.key_events = sat_inc(S.key_events);
         key_event(index, release, tick);
@@ -523,9 +558,15 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     }
 }
 
+/* Records lost before the drain read them may have been user keys: fail closed, before
+ * next_seq moves past them (combo_undrained). */
+CODE static void lost_records(uint32_t now)
+{
+    one_press_user_key(now, 0u);
+}
+
 CODE static void drain(uint32_t now)
 {
-    uint32_t lost = S.lost;
     if (!S.next_seq)
         S.next_seq = 1u;
     for (uint32_t n = 0; n < COMBO_RING_ENTRIES; ++n) {
@@ -545,7 +586,8 @@ CODE static void drain(uint32_t now)
             if ((int32_t)(newest - COMBO_RING_MASK - resume) > 0)
                 resume = newest - COMBO_RING_MASK;
             S.lost += resume - want;
-            S.next_seq = resume;
+            lost_records(now);
+            __atomic_store_n(&S.next_seq, resume, __ATOMIC_RELEASE);
             continue;
         }
         uint32_t code_tick = __atomic_load_n(&e->code_tick, __ATOMIC_RELAXED);
@@ -564,16 +606,15 @@ CODE static void drain(uint32_t now)
              * record is lost, not guessed. */
             S.torn = sat_inc(S.torn);
             S.lost++;
-            S.next_seq = want + 1u;
+            lost_records(now);
+            __atomic_store_n(&S.next_seq, want + 1u, __ATOMIC_RELEASE);
             continue;
         }
-        S.next_seq = want + 1u;
         S.drained = sat_inc(S.drained);
         record(want, code_tick, args, context, now);
+        __atomic_store_n(&S.next_seq, want + 1u, __ATOMIC_RELEASE); /* after its effects (combo_undrained) */
     }
     S.unread_after_step = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_RELAXED) - (S.next_seq - 1u);
-    if (S.lost != lost)
-        one_press_user_key(now, 0u); /* a lost hook record may have been a user press: no automatic INFO (fail closed) */
 }
 
 CODE void combo_observe_step(void)

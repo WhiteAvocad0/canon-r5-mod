@@ -218,6 +218,12 @@ struct combo_observe_state {
     struct combo_display last_display;
 };
 extern struct combo_observe_state combo_observe_state;
+/* GuiMainTask or worker, read only: the hook records the worker has not drained yet.
+ * COMBO_UNDRAINED_USER_KEY: a user key (one_press_user_key's codes); COMBO_UNDRAINED_CLEAR:
+ * a record with COMBO_F_GEN_UNEQUAL; both when records may have been lost. */
+#define COMBO_UNDRAINED_USER_KEY 1u
+#define COMBO_UNDRAINED_CLEAR 2u
+uint32_t combo_undrained(void);
 
 /* Capture feedback cues (combo_capture.c) submit only in AudioCtrl state 1
  * (stock idle); reasons 1..11 are rec_tone_preflight's, 32.. combo_capture.h. */

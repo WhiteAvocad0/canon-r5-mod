@@ -66,7 +66,7 @@ SYMBOLS = (
     "pl_sample", "pl_select", "capture_pl",
     "one_press_arm", "one_press_release", "one_press_done", "one_press_end", "one_press_step", "one_press_report",
     "one_press_state", "one_press_block", "one_press_api", "one_press_key", "one_press_defer", "one_press_user_key", "one_press_queue_clear",
-    "one_press_clear_visit", "one_press_auto", "inject_pic_row", "y22_composite_row",
+    "one_press_clear_visit", "one_press_auto", "one_press_rel_mark", "one_press_visit_gen", "combo_undrained", "inject_pic_row", "y22_composite_row",
 )
 # The rec_tone / tone_gen symbols a screenshot-only build links (no record indicator engine).
 SHARED_SYMBOLS = (

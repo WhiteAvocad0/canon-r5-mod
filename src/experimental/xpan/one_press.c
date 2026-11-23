@@ -27,7 +27,17 @@ _Static_assert(OP_VIEW_XPAN != OP_NO_VIEW && OP_SOURCE_LAST_GOOD != OP_SOURCE_VI
 _Static_assert(OP_INFO_RELEASE == COMBO_INFO_RELEASE && OP_INFO_PRESS + 1u == OP_INFO_RELEASE, "INFO codes (COMBO_BUTTONS)");
 _Static_assert(OP_UIOPE_KEY_HANDLER == COMBO_UIOPE_MODE + 4u && OP_GUI_QUEUE == COMBO_GUI_CONTEXT, "Canon words");
 uint32_t one_press_clear_visit; /* S4 (one_press.h); writer: the worker */
-uint32_t one_press_auto;        /* the automatic INFO's press / release mark (one_press.h OP_AUTO_*) */
+uint32_t one_press_auto;        /* the automatic INFO's pending press (one_press.h OP_AUTO_*); writer: the worker */
+uint32_t one_press_rel_mark;     /* our posted release's slot range and verdict (one_press.h OP_REL_*) */
+uint32_t one_press_visit_gen;   /* [0x5474] when the worker first saw this playback visit (S4) */
+_Static_assert(OP_GUI_POST_INDEX == OP_GUI_QUEUE + 0x14u && OP_GUI_SLOT_COUNT - 1u <= OP_REL_INDEX_MASK, "Canon's post ring");
+#ifdef COMBO_OBSERVE_HOST
+uintptr_t one_press_host_slots;            /* the host's slot ring (Canon: OP_GUI_SLOTS) */
+void (*one_press_host_before_claim)(void); /* host seam: GuiMainTask may run between the worker's checks and its claim */
+#define OP_SLOTS one_press_host_slots
+#else
+#define OP_SLOTS ((uintptr_t)OP_GUI_SLOTS)
+#endif
 
 /* The block Canon's GUI passed to INDEV_DevelopStart for a stock S2 Resize of a
  * 3:2 JPEG (seen on camera: 20 nonzero words; every other word 0).
@@ -248,36 +258,72 @@ CODE void one_press_release(void)
     op_keep();
 }
 
-/* S4, GuiMainTask: 1 when the hook saw a GUI queue clear in this playback visit, or
- * one is pending now (this INFO's own hook record would carry COMBO_F_GEN_UNEQUAL). */
-CODE static uint32_t op_leaving(uint32_t since)
+/* The index of Canon's GUI event slot `slot` points into (the message GuiMainTask
+ * dispatches, E04A7782), or OP_GUI_SLOT_COUNT for any other pointer. */
+CODE static uint32_t op_slot_index(uintptr_t slot)
 {
+    uintptr_t d = slot - OP_SLOTS;
+    return slot >= OP_SLOTS && !(d & 15u) && d / 16u < OP_GUI_SLOT_COUNT ? (uint32_t)(d / 16u) : OP_GUI_SLOT_COUNT;
+}
+
+CODE static uint32_t op_slot_after(uint32_t a, uint32_t b) /* posts from slot b to slot a, around the ring (both < count) */
+{
+    return a >= b ? a - b : a + OP_GUI_SLOT_COUNT - b;
+}
+
+CODE static uint32_t op_post_index(void) /* Canon's next slot index (always < OP_GUI_SLOT_COUNT; no libgcc division) */
+{
+    uint32_t i = A.read(OP_GUI_POST_INDEX);
+    return i < OP_GUI_SLOT_COUNT ? i : 0u;
+}
+
+/* S4: 1 when Canon may be leaving playback: a queue clear the drain saw in this visit,
+ * one pending now, [0x5474] changed since the worker first saw the visit, or a hook
+ * record not drained yet that saw a clear. Read only. */
+CODE static uint32_t op_leaving(uint32_t since, uint32_t undrained)
+{
+    uint32_t gen = A.read(OP_GUI_QUEUE);
     return (since && __atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) == since) ||
-           A.read(OP_GUI_QUEUE) != A.read(OP_GUI_QUEUE + 8u);
+           gen != A.read(OP_GUI_QUEUE + 8u) || gen != __atomic_load_n(&one_press_visit_gen, __ATOMIC_RELAXED) ||
+           (undrained & COMBO_UNDRAINED_CLEAR);
+}
+
+/* GuiMainTask, an INFO release dispatched from slot `slot`: 1 when it is our posted
+ * release and must start nothing (a held verdict, or a user key recorded since our
+ * press that the drain has not handled yet). Our release is identified by its slot
+ * index, never by its content; a mark of one exact slot is consumed here. */
+CODE static uint32_t op_release_vetoed(uintptr_t slot, uint32_t undrained)
+{
+    uint32_t mark = __atomic_load_n(&one_press_rel_mark, __ATOMIC_ACQUIRE), idx = op_slot_index(slot);
+    if (!(mark & OP_REL_ARMED) || idx == OP_GUI_SLOT_COUNT)
+        return 0u;
+    uint32_t lo = mark & OP_REL_INDEX_MASK, n = (mark >> OP_REL_COUNT_SHIFT) & OP_REL_INDEX_MASK;
+    uint32_t span = n ? n : op_slot_after(op_post_index(), lo); /* not narrowed yet: every slot posted since */
+    if (op_slot_after(idx, lo) >= span)
+        return 0u; /* not ours: an INFO pressed by hand */
+    if (n == 1u)
+        __atomic_compare_exchange_n(&one_press_rel_mark, &mark, 0u, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    return !(mark & OP_REL_OK) || (undrained & COMBO_UNDRAINED_USER_KEY);
 }
 
 /* GuiMainTask, an INFO release (combo_capture_gui, from the H2 hook): the deferred
  * screenshot's start (one_press.h). Busy, settling or outside playback only wait; a
  * pending Y22 that is gone or too old drops the deferral. */
-CODE void one_press_key(uint32_t code)
+CODE void one_press_key(uint32_t code, uintptr_t slot)
 {
-    uint32_t held_auto = 0u;
-    if (code == COMBO_INFO_RELEASE) { /* our posted release carries the worker's re-check */
-        uint32_t mark = __atomic_load_n(&one_press_auto, __ATOMIC_ACQUIRE);
-        if ((mark & OP_AUTO_RELEASED) && __atomic_compare_exchange_n(&one_press_auto, &mark, 0u, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            uint32_t now = __atomic_load_n(&combo_worker_tick, __ATOMIC_ACQUIRE);
-            held_auto = !(mark & OP_AUTO_OK) && ((now - (mark >> OP_AUTO_TICK_SHIFT)) & OP_AUTO_TICK_MASK) <= OP_AUTO_RELEASE_TTL;
-        }
-    }
-    if (D.defer != OP_DEFER_WAIT || code != COMBO_INFO_RELEASE) /* INFO only: SET confirms ▶ dialogs */
+    if (code != COMBO_INFO_RELEASE) /* INFO only: SET confirms ▶ dialogs */
+        return;
+    uint32_t undrained = combo_undrained(); /* hook records this INFO release has seen and the worker has not */
+    uint32_t vetoed = op_release_vetoed(slot, undrained);
+    if (D.defer != OP_DEFER_WAIT)
         return;
     /* The visit stamp first, then the tick: a stamp the worker publishes in between is
      * ahead of the tick and counts as unsettled (signed difference), never as old. */
     uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_ACQUIRE);
     uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_ACQUIRE), why;
     ++D.decisions;
-    if (held_auto) {
-        why = OP_DW_SETTLING; /* the automatic release's re-check failed: wait, INFO by hand */
+    if (vetoed) {
+        why = OP_DW_SETTLING; /* our release, held: wait, INFO by hand */
     } else if (S.latched) {
         D.defer = OP_DEFER_NONE;
         why = OP_DW_LATCHED;
@@ -285,7 +331,7 @@ CODE void one_press_key(uint32_t code)
         why = OP_DW_BUSY;
     } else if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK || !since) { /* re-read at this release */
         why = OP_DW_NOT_PLAYBACK;
-    } else if (op_leaving(since)) {
+    } else if (op_leaving(since, undrained)) {
         why = OP_DW_NOT_PLAYBACK; /* S4: wait as outside playback (no job, no bips, the deferral kept) */
     } else if ((int32_t)(tick - since) < (int32_t)OP_DEFER_SETTLE_TICKS) {
         why = OP_DW_SETTLING;
@@ -301,20 +347,53 @@ CODE void one_press_key(uint32_t code)
     } else if (op_canon_busy()) {
         why = OP_DW_BUSY;
     } else {
-        uint32_t handle = op_source();
+        uint32_t handle = op_source(), expect = OP_DEFER_WAIT;
         if (!handle) {
             D.held_since = since; /* two bips once; the next playback visit retries */
             why = OP_DW_NO_SOURCE;
         } else if (op_canon_busy()) { /* again after the FM calls: only wait */
             why = OP_DW_BUSY;
+        } else if (!__atomic_compare_exchange_n(&D.defer, &expect, OP_DEFER_NONE, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            why = OP_DW_BUSY; /* the worker is posting its INFO press this instant: wait */
         } else {
-            D.defer = OP_DEFER_NONE;
             ++D.starts;
             why = OP_DW_STARTED;
             op_start(handle);
         }
     }
     D.why = why;
+}
+
+/* worker: our INFO release, once the GUI queue is quiet. The verdict and the slot range
+ * are armed before the post (GuiMainTask may dispatch it at once), the range narrowed to
+ * the slots actually posted meanwhile right after it. */
+CODE static void op_post_release(uint32_t tick, uint32_t state)
+{
+    uint32_t press = state >> OP_AUTO_TICK_SHIFT, waited = (tick - press) & OP_AUTO_TICK_MASK;
+    if (waited < OP_AUTO_RELEASE_TICKS)
+        return;
+    uint32_t depth = A.read(OP_GUI_QUEUE + 4u), quiet = A.read(OP_GUI_QUEUE) == A.read(OP_GUI_QUEUE + 8u) && depth <= OP_GUI_QUEUE_DEPTH_MAX;
+    if (!quiet && (waited < OP_AUTO_RELEASE_TICKS + OP_AUTO_RELEASE_WAIT_TICKS || depth > OP_GUI_QUEUE_DEPTH_MAX)) {
+        D.auto_why = OP_AI_RELEASE_WAIT; /* never post into a busy queue (a full one asserts: Err 70) */
+        return;
+    }
+    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED);
+    uint32_t ok = quiet && waited == OP_AUTO_RELEASE_TICKS &&                                   /* not delayed */
+                  since && ((press - since) & OP_AUTO_TICK_MASK) - 1u < (OP_AUTO_TICK_MASK >> 1) && /* the visit began before the press */
+                  (state & (OP_AUTO_SEEN | OP_AUTO_USER_KEY)) == OP_AUTO_SEEN &&                 /* ours dispatched, no user key */
+                  A.read(OP_UIOPE_KEY_HANDLER) == OP_UIOPE_POST_DIRECT && A.read(COMBO_GUI_MODE_WORD) == OP_GUI_PLAYBACK &&
+                  __atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) != since &&
+                  A.read(OP_GUI_QUEUE) == __atomic_load_n(&one_press_visit_gen, __ATOMIC_RELAXED) &&
+                  !combo_undrained() && !S.latched && __atomic_load_n(&S.state, __ATOMIC_ACQUIRE) == OP_IDLE;
+    if (!ok)
+        D.auto_why = OP_AI_RELEASE_HELD;
+    uint32_t lo = op_post_index(), base = OP_REL_ARMED | (ok ? OP_REL_OK : 0u) | lo;
+    __atomic_store_n(&one_press_rel_mark, base, __ATOMIC_RELEASE);
+    __atomic_store_n(&one_press_auto, 0u, __ATOMIC_RELEASE);
+    A.gui_post(0u, OP_INFO_RELEASE, 0u, 1u);
+    uint32_t n = op_slot_after(op_post_index(), lo);
+    if (n) /* ours is one of the n slots from lo (n = 1: exactly lo) */
+        __atomic_compare_exchange_n(&one_press_rel_mark, &base, base | n << OP_REL_COUNT_SHIFT, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
 /* worker (one_press_step, after the playback-visit update): at most one INFO press, and
@@ -324,28 +403,19 @@ CODE void one_press_key(uint32_t code)
  * posts nothing here calls or writes Canon. */
 CODE static void op_auto_info(uint32_t tick)
 {
+    uint32_t rel = __atomic_load_n(&one_press_rel_mark, __ATOMIC_ACQUIRE);
+    if ((rel & OP_REL_ARMED) && ((rel >> OP_REL_COUNT_SHIFT) & OP_REL_INDEX_MASK) &&
+        op_slot_after(op_post_index(), rel & OP_REL_INDEX_MASK) >= OP_REL_FORGET_POSTS)
+        __atomic_compare_exchange_n(&one_press_rel_mark, &rel, 0u, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); /* long dispatched (or dropped) */
     uint32_t state = __atomic_load_n(&one_press_auto, __ATOMIC_ACQUIRE);
     if ((state & OP_AUTO_STATE) == OP_AUTO_PRESSED) { /* the release: a later tick, re-checked, always posted */
-        uint32_t press = state >> OP_AUTO_TICK_SHIFT;
-        if (((tick - press) & OP_AUTO_TICK_MASK) < OP_AUTO_RELEASE_TICKS)
-            return;
-        uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED);
-        uint32_t ok = since && ((press - since) & OP_AUTO_TICK_MASK) - 1u < (OP_AUTO_TICK_MASK >> 1) && /* the visit began before the press */
-                      (state & (OP_AUTO_SEEN | OP_AUTO_USER_KEY)) == OP_AUTO_SEEN &&         /* ours dispatched, no user key */
-                      A.read(OP_UIOPE_KEY_HANDLER) == OP_UIOPE_POST_DIRECT && A.read(COMBO_GUI_MODE_WORD) == OP_GUI_PLAYBACK &&
-                      __atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) != since &&
-                      A.read(OP_GUI_QUEUE) == A.read(OP_GUI_QUEUE + 8u) && A.read(OP_GUI_QUEUE + 4u) <= OP_GUI_QUEUE_DEPTH_MAX &&
-                      !S.latched && __atomic_load_n(&S.state, __ATOMIC_ACQUIRE) == OP_IDLE;
-        if (!ok)
-            D.auto_why = OP_AI_RELEASE_HELD;
-        __atomic_store_n(&one_press_auto, (tick << OP_AUTO_TICK_SHIFT) | OP_AUTO_RELEASED | ok, __ATOMIC_RELEASE);
-        A.gui_post(0u, OP_INFO_RELEASE, 0u, 1u);
+        op_post_release(tick, state);
         return;
     }
     uint32_t marked = D.marked; /* GuiMainTask stores defer = WAIT before ++marked */
     if (D.defer != OP_DEFER_WAIT || D.auto_for == marked)
         return; /* nothing deferred, or this deferral already handled: decision frozen */
-    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED), why;
+    uint32_t since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED), why, undrained = combo_undrained();
     uint32_t gui = A.read(COMBO_GUI_MODE_WORD); /* re-read right before any post */
     if (S.gui_mode == OP_GUI_PLAYBACK) {
         why = OP_AI_KEPT; /* a playback RATE's kept deferral: INFO by hand only */
@@ -355,7 +425,8 @@ CODE static void op_auto_info(uint32_t tick)
         why = OP_AI_BUSY;
     } else if (gui != OP_GUI_PLAYBACK || !since) {
         why = OP_AI_NOT_PLAYBACK;
-    } else if (__atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) == since) {
+    } else if (__atomic_load_n(&one_press_clear_visit, __ATOMIC_RELAXED) == since || (undrained & COMBO_UNDRAINED_CLEAR) ||
+               A.read(OP_GUI_QUEUE) != __atomic_load_n(&one_press_visit_gen, __ATOMIC_RELAXED)) {
         why = OP_AI_LEAVING; /* S4 (a pending clear: QUEUE_BUSY below) */
     } else if ((int32_t)(tick - since) < (int32_t)OP_AUTO_SETTLE_TICKS) {
         why = OP_AI_SETTLING;
@@ -374,25 +445,49 @@ CODE static void op_auto_info(uint32_t tick)
         why = OP_AI_QUEUE_BUSY;
     } else if (combo_observe_state.seq_count && (int32_t)(tick - combo_observe_state.seq_last_tick) < (int32_t)OP_AUTO_QUIET_TICKS) {
         why = OP_AI_GUI_EVENTS; /* Canon's playback-entry events not finished (the drain's words, same task) */
+    } else if (undrained & COMBO_UNDRAINED_USER_KEY) {
+        why = OP_AI_GUI_EVENTS; /* a key the hook saw after this tick's drain: the next drain cancels the post */
     } else {
         why = OP_AI_POSTED;
     }
     D.auto_why = why;
     if (why != OP_AI_POSTED)
         return;
-    D.auto_for = marked; /* handled before the post: one post per deferral whatever follows */
-    D.auto_gui = gui;
-    D.auto_ticks = tick - since;
-    ++D.auto_posts;
-    __atomic_store_n(&one_press_auto, (tick << OP_AUTO_TICK_SHIFT) | OP_AUTO_PRESSED, __ATOMIC_RELEASE);
-    A.gui_post(0u, OP_INFO_PRESS, 0u, 1u); /* exactly Canon's mode-2 key post (E08ABFF4) */
+#ifdef COMBO_OBSERVE_HOST
+    if (one_press_host_before_claim)
+        one_press_host_before_claim();
+#endif
+    /* Claim the deferral: an INFO by hand that consumed it first wins (no post). */
+    uint32_t expect = OP_DEFER_WAIT;
+    if (!__atomic_compare_exchange_n(&D.defer, &expect, OP_DEFER_WAIT | OP_DEFER_CLAIM, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        D.auto_why = OP_AI_CONSUMED;
+        return;
+    }
+    if (D.marked == marked) {
+        D.auto_for = marked; /* handled before the post: one post per deferral whatever follows */
+        D.auto_gui = gui;
+        D.auto_ticks = tick - since;
+        ++D.auto_posts;
+        __atomic_store_n(&one_press_auto, (tick << OP_AUTO_TICK_SHIFT) | OP_AUTO_PRESSED, __ATOMIC_RELEASE);
+        A.gui_post(0u, OP_INFO_PRESS, 0u, 1u); /* exactly Canon's mode-2 key post (E08ABFF4) */
+    } else {
+        D.auto_why = OP_AI_CONSUMED; /* a newer capture: decide again next tick */
+    }
+    expect = OP_DEFER_WAIT | OP_DEFER_CLAIM;
+    __atomic_compare_exchange_n(&D.defer, &expect, OP_DEFER_WAIT, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
 
-/* worker, combo_observe.c drain: while our press waits for its release, the first INFO
- * press is ours (SEEN) and any other key marks the gap (USER_KEY); before the post, a
- * user key after playback entry handles the deferral without a post. */
+/* worker, combo_observe.c drain: a user key the hook recorded at `tick` (code 0: lost
+ * hook records). While our press waits for its release, the first INFO press is ours
+ * (SEEN) and any other key marks the gap (USER_KEY); after an OK release verdict it
+ * holds that release; before the post, a key after playback entry (other than the
+ * playback press itself) handles the deferral without a post. */
 CODE void one_press_user_key(uint32_t tick, uint32_t code)
 {
+    uint32_t rel = __atomic_load_n(&one_press_rel_mark, __ATOMIC_ACQUIRE);
+    while ((rel & (OP_REL_ARMED | OP_REL_OK)) == (OP_REL_ARMED | OP_REL_OK) &&
+           !__atomic_compare_exchange_n(&one_press_rel_mark, &rel, rel & ~OP_REL_OK, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    }
     uint32_t st = __atomic_load_n(&one_press_auto, __ATOMIC_RELAXED);
     if ((st & OP_AUTO_STATE) == OP_AUTO_PRESSED) {
         st |= (code == OP_INFO_PRESS && !(st & OP_AUTO_SEEN)) ? OP_AUTO_SEEN : OP_AUTO_USER_KEY;
@@ -400,8 +495,9 @@ CODE void one_press_user_key(uint32_t tick, uint32_t code)
         return; /* the deferral is already handled (auto_for) */
     }
     uint32_t marked = D.marked, since = __atomic_load_n(&D.play_since, __ATOMIC_RELAXED);
-    if (D.defer != OP_DEFER_WAIT || D.auto_for == marked || !since || (int32_t)(tick - since) <= 0)
-        return; /* the playback press itself carries a tick <= play_since */
+    int32_t age = (int32_t)(tick - since);
+    if (D.defer != OP_DEFER_WAIT || D.auto_for == marked || !since || age < 0 || (age == 0 && code == OP_PLAY_PRESS))
+        return; /* before the visit, or the playback press that opened it (stamped with its first tick) */
     D.auto_for = marked;
     D.auto_why = OP_AI_KEY;
 }
@@ -477,8 +573,10 @@ CODE void one_press_step(uint32_t tick)
     /* The playback visit (single writer): its first tick, 0 outside playback. */
     if (A.read(COMBO_GUI_MODE_WORD) != OP_GUI_PLAYBACK)
         __atomic_store_n(&D.play_since, 0u, __ATOMIC_RELEASE);
-    else if (!__atomic_load_n(&D.play_since, __ATOMIC_RELAXED))
+    else if (!__atomic_load_n(&D.play_since, __ATOMIC_RELAXED)) {
+        __atomic_store_n(&one_press_visit_gen, A.read(OP_GUI_QUEUE), __ATOMIC_RELAXED); /* S4: before the stamp is published */
         __atomic_store_n(&D.play_since, tick ? tick : 1u, __ATOMIC_RELEASE);
+    }
     op_auto_info(tick);
     uint32_t st = __atomic_load_n(&S.state, __ATOMIC_ACQUIRE);
     if (st == OP_IDLE || tick - S.start_tick < OP_TIMEOUT_TICKS)

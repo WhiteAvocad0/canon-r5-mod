@@ -261,7 +261,7 @@ CODE void combo_capture_gui(const uint32_t *slot)
         return;
     }
     if (code != CAPTURE_TRIGGER_CODE) {
-        one_press_key(code); /* an INFO release may start a deferred screenshot */
+        one_press_key(code, (uintptr_t)slot); /* an INFO release may start a deferred screenshot */
         return;
     }
     G.presses = sat_inc(G.presses);
