@@ -30,20 +30,10 @@ from messages import joined, message, phrase
 
 from cardprep import devices, workflow
 
-FORMAT_WARNING = ("Format this card IN THE CAMERA first. Formatting erases everything on the card — "
-                  "copy your photos and videos to your computer before formatting.")
+FORMAT_WARNING = ("Use a shooting card formatted in the camera")
 EXPLAIN = (
-    "Prepare card writes the two Canon boot markers (EOS_DEVELOP and BOOTDISK) into the card's boot sectors, so a "
-    "camera whose BootDisk setting is already enabled loads autoexec.bin from it. This tool never formats, "
-    "partitions or erases a card, and it refuses cards whose boot sectors do not look camera-formatted. "
-    "Formatting removes the markers, so prepare the card again after every format. It does not enable BootDisk "
-    "and never writes the camera.\n\n"
-    "Before anything is written, the card's partition table and boot sectors are backed up automatically to a "
-    "folder on this computer and checked; Undo puts them back. Only the planned sectors are written: one on "
-    "FAT32, four on exFAT. macOS asks for your administrator password in its own window (once to read, once to "
-    "write); this assistant never sees it.\n\n"
-    "Prototype: verified on one Mac with a camera-formatted exFAT card; FAT32 cards are untested. "
-    "Windows and Linux can only list cards."
+    "On macOS, use the built-in SD card slot to prepare the card. Undo can restore its original boot "
+    "sectors from the backup. On Windows or Linux, use a card already prepared on a Mac."
 )
 
 

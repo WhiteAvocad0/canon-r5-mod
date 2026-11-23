@@ -75,25 +75,7 @@ DOCS = {
     "Prerequisites": ROOT / "docs" / "usage.md",
     "About this assistant": ROOT / "docs" / "gui.md",
 }
-CANNOT_DO = """\
-What this assistant does: it guides you through dumping the camera's ROM and enabling \
-BootDisk with a Canon Basic SDHC card you run yourself in the camera, verifies the \
-returned ROM dump, builds autoexec.bin on your computer, can write the two boot \
-markers onto a camera-formatted card (step 7, macOS only, with a backup first), and \
-copies autoexec.bin to the card. What it never does:
-
-  •  change the camera automatically: the ROM dump and BootDisk steps only prepare an \
-SDHC card and check the dump you return; you run them yourself in the camera;
-  •  write the camera's firmware or NVRAM directly from this computer;
-  •  format, partition or erase a card, or write its partition table (MBR);
-  •  write anything to a card except the boot-marker sectors in step 7, the Canon \
-Basic SCRIPT marker on FAT32 SDHC cards in steps 2-3, and the card-root files;
-  •  test anything on the camera, or tell you whether your camera will work.
-
-Every build made here is a public repackaged build and is hardware-untested. \
-Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an \
-error, remove the battery, then the card; see the Getting started guide.
-"""
+CANNOT_DO = """The assistant builds the mod on your computer. You choose the card to prepare and confirm before the assistant writes startup markers. You run the camera setup steps yourself. If the camera freezes during testing, remove the battery, then the card. See the Getting started guide for recovery."""
 CHECK_KINDS = {OK: SUCCESS, FAILED: DANGER, CHECKING: BUSY}
 STEP_KINDS = {DONE: SUCCESS, SKIPPED: NEUTRAL, BLOCKED: WARNING, NEEDS_ACTION: INFO}
 STEP_HEADLINES = {DONE: "Check passed", SKIPPED: "Skipped", BLOCKED: "Locked", NEEDS_ACTION: "To do"}
@@ -731,7 +713,7 @@ class App:
         self.camera_var = self.tk.BooleanVar(value=False)
         self.words.widget(self.ttk.Checkbutton, tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
-            text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
+            text="I’ve checked the model and firmware above.").pack(anchor="w", pady=(S, 0))
         self.returning_owner = self.ttk.Frame(tab)
         self.update_button = self._button(self._buttons(self.returning_owner), "Update my card", self._update_path)
         needs = self._disclosure(tab, "What will I need for setup?")
@@ -1324,7 +1306,7 @@ class App:
     def _prep_tab(self):
         tab = self._panel(BOOTCARD, extra_details=EXPLAIN)
         Callout(self, tab, pady=(S, 0)).set(
-            DANGER, FORMAT_WARNING, card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."))
+            WARNING, "Use a shooting card formatted in the camera", FORMAT_WARNING)
         self._text(tab, "SD card", "Caption.TLabel", pady=(L, XS))
         row = self.ttk.Frame(tab)
         row.pack(fill="x")

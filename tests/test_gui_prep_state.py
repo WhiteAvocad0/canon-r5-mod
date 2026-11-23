@@ -80,8 +80,8 @@ class Choosing(Images):
             self.assertIn("macOS only", " ".join(s.blockers()))
 
     def test_warning_text(self):
-        self.assertIn("IN THE CAMERA", FORMAT_WARNING)
-        self.assertIn("copy your photos and videos", FORMAT_WARNING)
+        self.assertIn("Back up your photos and videos", FORMAT_WARNING)
+        self.assertIn("erases everything", FORMAT_WARNING)
 
 
 class Prepare(Images):

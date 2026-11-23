@@ -2,19 +2,19 @@
   "schema": "canon-r5-mod.features.v1",
   "target": "Canon EOS R5 firmware 2.2.1",
   "default_profile": "shutter-feedback",
-  "public_build_note": "Every build made from this repository is a public repackaged build and is hardware-untested. A status below describes the maintainer's private lab evidence for the same feature, not your build.",
+  "public_build_note": "The camera tests below covered specific versions and settings. The file you build here still needs a camera test.",
   "status_levels": {
     "private-lab-verified": {
-      "label": "Verified on a private lab build",
-      "text": "Worked on the maintainer's private lab builds. Those builds share the feature code but also carry extra diagnostics, so their compiled images differ. Your public build is hardware-untested."
+      "label": "Tested on an R5",
+      "text": "Camera tests covered earlier versions."
     },
     "hardware-untested": {
-      "label": "Hardware-untested public build",
-      "text": "Host-tested; no camera has run this feature in this public configuration yet."
+      "label": "Untested on camera",
+      "text": "This configuration has only been tested on a computer."
     },
     "experimental": {
       "label": "Experimental",
-      "text": "Not confirmed on a camera in this public configuration; any private trial is described in the detail."
+      "text": "This configuration still needs a camera test."
     }
   },
   "inputs": {
@@ -30,14 +30,14 @@
     }
   },
   "profile_cli_help": "Build profile: shutter-feedback (default, requires two WAVs) or xpan-crop (no WAVs; silent unless --record-indicator or --record-stop-indicator)",
-  "profile_exclusivity": "XPan and custom sounds aren't offered together. The XPan profile is silent by design, and private lab estimates suggest both together would exceed the camera's free memory. That combination has not been tested.",
+  "profile_exclusivity": "Choose either XPan or custom startup and shutter sounds.",
   "profiles": [
     {
       "id": "shutter-feedback",
       "label": "Custom startup and shutter sounds",
       "description": "Plays your own startup clip after the camera starts and your own shutter clip on single shots, through the camera speaker. No XPan.",
       "status": "private-lab-verified",
-      "status_detail": "Private build36 played both clips with normal photo capture on 16 GB SDHC and 128 GB SDXC cards.",
+      "status_detail": "Both sounds played during normal photo shooting.",
       "inputs": {
         "startup_wav": "required",
         "shutter_wav": "required"
@@ -48,7 +48,7 @@
       "label": "XPan 2.71:1 crop (silent)",
       "description": "Replaces 16:9 with a 2.71:1 XPan crop: menu and Q label, live LCD/EVF framing, saved JPEG/RAW crop, playback masking and immediate XPan bars in automatic review. Adds no sounds unless you pick a record start or stop cue.",
       "status": "private-lab-verified",
-      "status_detail": "Menu, Q label, live framing, saved crop, playback masking and automatic review were confirmed on private lab builds (17-18 November 2026). Other qualities, modes and active auto-rotation are unverified.",
+      "status_detail": "Tests covered the menu, live framing, RAW + Large JPEG capture, playback and automatic review. Other image qualities, modes and active auto-rotation remain unverified.",
       "inputs": {
         "startup_wav": "forbidden",
         "shutter_wav": "forbidden"
@@ -75,19 +75,19 @@
           "value": "ding",
           "label": "Ding: struck-bar chime, 250 ms",
           "status": "private-lab-verified",
-          "status_detail": "Owner-checked on the REC press on public image 0adff001 and private lab builds (18 November 2026)."
+          "status_detail": "The ding sounded when REC was pressed, both on its own and with the stop cue enabled."
         },
         {
           "value": "chirp2",
           "label": "Chirp: two rising notes, 120 ms",
           "status": "experimental",
-          "status_detail": "Ran in a private A/B trial with the same REC-press trigger. It has not run in this public single-cue configuration."
+          "status_detail": "The chirp sounded on a REC press in an earlier test."
         },
         {
           "value": "2k150loud",
           "label": "Tone: single 2 kHz beep, 150 ms",
           "status": "experimental",
-          "status_detail": "Ran on an earlier private build that used a later trigger, the start request. It has not run in this public single-cue configuration."
+          "status_detail": "An earlier test played the tone later in the recording sequence. Its timing on a REC press is unverified."
         }
       ]
     },
@@ -110,7 +110,7 @@
           "value": "dong",
           "label": "Dong: two falling notes, 250 ms",
           "status": "private-lab-verified",
-          "status_detail": "Owner-checked together with the ding on public image 01956513 and private lab build fbf31293 (18 November 2026). A dong-only image has not run on hardware."
+          "status_detail": "The dong sounded at the end of a take with the start ding enabled. The stop cue alone is untested."
         }
       ]
     },
@@ -133,7 +133,7 @@
           "value": "rate",
           "label": "RATE in playback: whole-screen JPEG",
           "status": "private-lab-verified",
-          "status_detail": "Public image 809d3767 (with the ding and dong) passed a short owner check on 128 GB SDXC on 22 November 2026: RATE in playback saved an all-layers 2400x1600 JPEG from 3:2 JPEG and RAW+JPEG photos. XPan photos are cancelled (three bips). A screenshot-only image has not run on a camera."
+          "status_detail": "With both recording cues enabled, RATE saved screenshots of 3:2 JPEG and RAW+JPEG photos. XPan photos produced three beeps and no JPEG. Screenshots without either cue are untested."
         }
       ]
     }

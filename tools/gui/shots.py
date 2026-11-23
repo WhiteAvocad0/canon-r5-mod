@@ -33,17 +33,16 @@ LAB_NOTE = ("A build with the One-press screenshot option (--screenshot rate) sa
 
 
 GUIDE = Guide(
-    "A lab build of the mod can save what the camera's screen shows as files in DCIM/R5SHOTS on the SD card. "
-    "The camera's own playback can't show them, so this converts them to ordinary PNG pictures on this computer.",
+    "The one-press screenshot option saves the camera's screen overlays in DCIM/R5SHOTS on the card. "
+    "Convert them to PNG to view them on this computer.",
     "Put the card in this computer (or copy its R5SHOTS folder here) and choose it below. Check where the PNG "
     "files go, then press Convert to PNG. Eject the card when you are done.",
-    "Each SS_nnnnn.YCA holds an R5SS header and the camera's display layer: 4:2:2 YCbCr with alpha (UYVA), "
-    "1024x682 for the rear LCD or 1600x1200 for the viewfinder. It is the on-screen display only; the live "
-    "picture underneath is not in it. The colours use the BT.601 matrix at full range, the same conversion as "
-    "the lab's converter; alpha is not used. Files with an unknown version, size or layout are refused and "
-    "listed. The card and the folder you choose are only read; a file converted before into the same output "
-    "folder (same name, size and contents) is skipped, and an existing PNG is never overwritten. Command line: "
-    "python3 tools/screenshots.py <R5SHOTS folder> <output folder>.")
+    "Each SS_nnnnn.YCA contains the screen overlays from the rear LCD (1024x682) or viewfinder (1600x1200). "
+    "The converter reads the R5SS header and converts the UYVA display layer to PNG using full-range BT.601 "
+    "colour, ignoring alpha. The photo underneath is stored separately. Files with an unknown version, size "
+    "or layout are listed and skipped. The converter leaves the source files untouched, skips matching files "
+    "it has already converted and never overwrites a PNG. "
+    "Command line: python3 tools/screenshots.py <R5SHOTS folder> <output folder>.")
 
 
 def default_output_dir(today: date | None = None, home: Path | None = None) -> Path:

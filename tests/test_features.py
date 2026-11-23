@@ -202,15 +202,16 @@ class ManifestLoadingTests(unittest.TestCase):
         self.assertEqual(stop.profiles, ("xpan-crop",))
         self.assertEqual(stop.choice("dong").status, "private-lab-verified")
         self.assertIsNone(stop.choice("off").status)
-        # Evidence wording follows docs/usage.md: the dong ran with the ding only.
-        self.assertIn("A dong-only image has not run on hardware", stop.choice("dong").status_detail)
-        # Evidence wording follows docs/usage.md's evidence boundary.
-        self.assertIn("private A/B trial", indicator.choice("chirp2").status_detail)
-        self.assertIn("start request", indicator.choice("2k150loud").status_detail)
-        for value in ("chirp2", "2k150loud"):
-            self.assertIn("public single-cue configuration", indicator.choice(value).status_detail)
-        self.assertIn("extra diagnostics", m.status_levels["private-lab-verified"].text)
-        self.assertIn("has not been tested", m.profile_exclusivity)
+        # Preserve the scope of each camera check when describing it in the assistant.
+        self.assertIn("stop cue alone is untested", stop.choice("dong").status_detail)
+        self.assertIn("REC press", indicator.choice("chirp2").status_detail)
+        self.assertIn("timing on a REC press is unverified", indicator.choice("2k150loud").status_detail)
+        screenshot = m.options["screenshot"].choice("rate")
+        self.assertIn("both recording cues enabled", screenshot.status_detail)
+        self.assertIn("XPan photos produced three beeps and no JPEG", screenshot.status_detail)
+        self.assertIn("without either cue are untested", screenshot.status_detail)
+        self.assertIn("earlier versions", m.status_levels["private-lab-verified"].text)
+        self.assertIn("still needs a camera test", m.public_build_note)
         self.assertEqual(m.profiles["xpan-crop"].inputs_with("forbidden"), ("startup_wav", "shutter_wav"))
         self.assertEqual(m.profiles["shutter-feedback"].inputs_with("required"), ("startup_wav", "shutter_wav"))
         for profile in m.profiles.values():

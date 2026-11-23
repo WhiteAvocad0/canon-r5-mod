@@ -38,13 +38,6 @@ PART_ID_RE = re.compile(r"disk([0-9]{1,3})s([0-9]{1,2})")
 MAC_FAT32_CONTENT = frozenset({"Windows_FAT_32", "DOS_FAT_32"})
 DISKUTIL = "/usr/sbin/diskutil"
 
-UNTESTED_NOTE = {
-    "darwin": "macOS: verified with a camera-formatted 128 GB exFAT card on the owner's Mac; FAT32 cards are untested.",
-    "linux": "Linux: detection only, untested. Preparing a card is offered on macOS only.",
-    "win32": "Windows: detection only, untested. Preparing a card is offered on macOS only.",
-}
-
-
 @dataclass(frozen=True)
 class Candidate:
     platform: str

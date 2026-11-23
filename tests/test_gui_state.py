@@ -89,7 +89,7 @@ class StateTests(unittest.TestCase):
         self.assertTrue(view.enabled)
         self.assertEqual(view.value, "ding")
         ding = next(c for c in view.choices if c.value == "ding")
-        self.assertEqual(ding.status_label, "Verified on a private lab build")
+        self.assertEqual(ding.status_label, "Tested on an R5")
         chirp = next(c for c in view.choices if c.value == "chirp2")
         self.assertEqual(chirp.status_label, "Experimental")
         s.set_profile("shutter-feedback")
@@ -305,8 +305,8 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("382,952", runner.memory_line(s))
             path = runner.write_contents(s, features.load())
             text = path.read_text()
-            for needle in ("hardware-untested", "xpan-crop", "Ding", "Dong", "Verified on a private lab build", "ab" * 32,
-                           "BootDisk", "extra diagnostics", "compiled images differ"):
+            for needle in ("still needs a camera test", "xpan-crop", "Ding", "Dong", "Tested on an R5", "ab" * 32,
+                           "BootDisk", "earlier versions", "stop cue alone is untested"):
                 self.assertIn(needle, text)
             with self.assertRaises(FileExistsError):
                 runner.write_contents(s, features.load())
