@@ -77,9 +77,11 @@ CODE static void take(struct snapshot *s)
     s->events = n.events;
     s->stable = xpan_authority_latest(&s->latest);
 }
+/* XPan = aspect 7 and a Large JPEG or any RAW bit (Canon's own E0840D88 RAW test). */
 CODE static uint32_t is_xpan(const struct xpan_authority_latest *l)
 {
-    return l->aspect == XPAN_GATE_ASPECT_XPAN && (l->flags & XPAN_GATE_LARGE_JPEG) != 0u;
+    return l->aspect == XPAN_GATE_ASPECT_XPAN &&
+           ((l->flags & XPAN_GATE_LARGE_JPEG) != 0u || (l->flags & XPAN_GATE_RAW_MASK) != 0u);
 }
 /* Review start: claim the newest event only if it is the single new event
  * since the previous review start and the record describes it. */
@@ -177,7 +179,9 @@ CODE uint32_t xpan_review_gate_event_current(uint32_t ordinal)
         return XPAN_GATE_R_STALE;
     if (s.latest.reason != XPAN_AUTH_R_JOB)
         return XPAN_GATE_R_INVALID;
-    if (!is_xpan(&s.latest) || (s.latest.flags & XPAN_GATE_RAW_MASK))
+    /* JPEG only: its own test, stricter than is_xpan (which also admits RAW). */
+    if (s.latest.aspect != XPAN_GATE_ASPECT_XPAN || !(s.latest.flags & XPAN_GATE_LARGE_JPEG) ||
+        (s.latest.flags & XPAN_GATE_RAW_MASK))
         return XPAN_GATE_R_NOT_XPAN;
     return XPAN_GATE_R_NONE;
 }

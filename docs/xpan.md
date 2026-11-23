@@ -7,6 +7,7 @@
 > - **Private `4838eb81` (`source_id=427bb28d5d188f6b`) normal ▶ playback was reported working in the owner's four-case session on 17 November 2026** (`device in {0, 1}`, `orientation in {0, 2}`, effective `rotation r7 == 0`). Returned diagnostics support projection and guide suppression.
 > - **Automatic post-shot review:** the profile now carries the review fix (§3). On private lab build `a7e92a3d` the owner reported, on 18 November 2026, immediate XPan bars with the 16:9 outline hidden for XPan shots only, a stock review for Full-frame shots and bursts, and normal EVF bars. Older builds without the fix (including public `18f2c774`) show the 16:9 outline first. The public `xpan-crop` + `ding` build (`05e9612`) passed a short owner check of this review behaviour on 18 November 2026.
 > - **JPEG-only (RAW off) automatic review ([#31](https://github.com/WhiteAvocad0/canon-r5-mod/issues/31)): fixed.** The profile steers this review onto Canon's aspect-correct route (§3.1). On 23 November 2026 the owner checked the public release-candidate image `e2e7048d`, which has the same code as this version, on a 128 GB card. A fresh-boot check gave two correct JPEG-only XPan reviews, and a full repeat of a long session ended with three correct ones. One JPEG-only review late in the first long session was stretched; that has not been reproduced and remains an open observation (§3.1). M/S JPEG, bursts and the EVF review keep the stretched stock review.
+> - **RAW-only XPan automatic review: bars from the first frame.** A RAW-only XPan shot used to show an unbarred 3:2 frame and get its bars about 0.3 s later at Quick Review; the gate now also counts any RAW bit as XPan (§3.2). Camera evidence is from private lab build-40 on 23 November 2026; the public image with this change has not been checked on a camera, and RAW + M/S JPEG, cRAW and the EVF review were not exercised.
 
 ---
 
@@ -70,7 +71,7 @@ All four complete playback reports show crop projection and guide suppression. T
 ```mermaid
 flowchart LR
     Job["scsVramDevelopComplete handler<br/>0xE054C530 (xpan_authority)"] -->|"per shot: JobID, aspect, flags"| Latest["latest-authority seqlock"]
-    Start["_DrawAspectLine 0xE0A956FE<br/>SR Undisp redraw (review start)"] -->|"exactly one new event?"| Claim["per-review claim<br/>XPan = aspect 7 and flags & 0x101"]
+    Start["_DrawAspectLine 0xE0A956FE<br/>SR Undisp redraw (review start)"] -->|"exactly one new event?"| Claim["per-review claim<br/>XPan = aspect 7 and<br/>(flags & 0x101 or flags & 0xF00000)"]
     Latest --> Claim
     Claim -->|"fresh XPan claim"| Hide["outline H/V words zeroed<br/>(this call only)"]
     Claim -->|"fresh XPan claim"| Crop["review descriptor 0xE063FBEE<br/>{0,0,0,0,1024,682} or {0,53,0,53,1024,576}<br/>-> {0,152,0,152,1024,378}"]
@@ -78,9 +79,9 @@ flowchart LR
 ```
 
 - **Authority (passive).** `xpan_authority` observes the handler that logs `scsVramDevelopComplete(JobID)` and then permits the simple review. It validates the Job handle signature `0xE2083738`, then reads JobID `[obj+0x3C0]`, aspect `[obj+0x14C0]` and image-type flags `[obj+0x19F0]` inside admitted RAM spans, and publishes them as the single latest record.
-- **Gate.** The review starts at the SR Undisp redraw (`Background_Draw` caller `0xE0A957CB` from `0xE05FDF6D`, SR flag `[0x17268] == 1`, display `0`, force `1`). That review claims the newest event only if exactly one event arrived since the previous review. A burst gives `MULTIPLE` and the stock review. The claim is XPan only for aspect `7` with a Large JPEG (`flags & 0x101`). A newer event during the review revokes it; leaving SR closes it.
+- **Gate.** The review starts at the SR Undisp redraw (`Background_Draw` caller `0xE0A957CB` from `0xE05FDF6D`, SR flag `[0x17268] == 1`, display `0`, force `1`). That review claims the newest event only if exactly one event arrived since the previous review. A burst gives `MULTIPLE` and the stock review. The claim is XPan only for aspect `7` with a Large JPEG (`flags & 0x101`) or any RAW bit (`flags & 0xF00000`, §3.2). A newer event during the review revokes it; leaving SR closes it.
 - **Outline.** For an admitted XPan claim, a matching rear-LCD call (GUI aspect `[[0x171DC]+0x18C0] == 7`, Canon's own decision H=1/V=0) gets its two caller-local decision words zeroed, so Canon takes its own no-line path. The 10-byte prologue is replayed exactly.
-- **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple (RAW + JPEG) or exactly Canon's stock 16:9 letterbox tuple `{0,53,0,53,1024,576}` (JPEG only) gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
+- **Descriptor crop.** At the completed `0xE063FBEE` copy for caller `0xE063BECF`, an active, kind-0, 1024x682 descriptor with exactly the full-source tuple (any RAW shot) or exactly Canon's stock 16:9 letterbox tuple `{0,53,0,53,1024,576}` (JPEG only) gets three words changed, giving the centred `512:189` band (378 of 682 rows). Any other descriptor, and every refused gate decision, leaves it untouched.
 - **Diagnostics.** Decisions are kept as `.bss` counters only. No report rows are emitted and the lab's per-decision diagnostic records are not ported.
 - **Scope and limits.** Verified on the private lab build only (see the evidence note above). Bursts deliberately keep the stock review (no bars), and an in-review redraw after a newer shot falls back to stock. Other qualities and modes follow the same unverified/declined list as playback. The public `xpan-crop` + `ding` build passed a short owner check on 18 November 2026.
 
@@ -107,10 +108,23 @@ Private lab builds 37 (`6b8da720`) and 39 carry the same fix plus logging. Their
 
 **Expected to stay stretched (stock review):**
 
-- **M and S JPEG** XPan: the gate needs a Large JPEG, so there is no claim, no letterbox and no token.
+- **M and S JPEG** XPan without RAW: the gate needs a Large JPEG or a RAW bit, so there is no claim, no letterbox and no token.
 - **Bursts:** more than one new shot per review gives `MULTIPLE` and the stock review.
 - **EVF review:** the EVF review descriptor is not the cropped kind, so it never arms the token (untested on a camera).
 - Any review the gate refuses, and a QR redraw after a newer shot.
+
+### 3.2 RAW-only review
+
+**Before.** The gate counted only a Large JPEG (`flags & 0x101`) as XPan. A RAW-only XPan Job carries only RAW bits (Canon's RAW decoder `0xE058B386` emits `0x100000`, `0x200000`, `0x400000` or `0x800000`; the JPEG decoder `0xE058B562` emits values below `0x10000`), so its review opened `NOT_XPAN`. Canon's simple review then showed the full sensor at 3:2 with no bars and possibly its 16:9 outline. The bars arrived only at Quick Review, about 0.3 s later, from the playback fit's existing RAW_L region (`[7,8192,3024,0,1220]`, the CR3 display image, admitted without the gate). That was a late letterbox, not a stretch.
+
+**Fix (always on in `xpan-crop`, no option, no new hook, page or witness).** The gate's XPan test is now aspect `7` and (`flags & 0x101` or `flags & 0xF00000`). The RAW test is Canon's own: at `0xE0840D84` the SR descriptor code loads `[CF0+0xD00]` and `0xE0840D88 tst.w r0,#0xF00000` forces selector `0`, the full 3:2 tuple `{0,0,0,0,1024,682}`, for any RAW bit. The review crop already accepts that tuple and stores the band `{0,152,0,152,1024,378}`, which matches the Quick Review region (`1220/5464 x 682 = 152`). So the outline is hidden and the band shows from the first SR frame, then Quick Review keeps it through the unchanged RAW_L fit.
+
+- **Unchanged:** aspect `7` is still required, the single-shot claim, `MULTIPLE`, `STALE` and close rules, the crop, the fit and the 60-byte profile.
+- **JPEG review token unchanged.** `xpan_review_gate_event_current` keeps its own test (aspect `7`, a Large JPEG bit, no RAW bit), so a RAW claim never arms the JPEG-only route of §3.1. A full-tuple crop also clears the token. These are two independent locks.
+- **Also newly banded at SR (by design):** cRAW and RAW + M/S JPEG XPan shots, since any RAW bit counts and their reviews show the RAW display image. An aspect-7 shot with only an M/S JPEG bit stays `NOT_XPAN`.
+- **Host tests:** `tests/test_xpan_raw_review.py` runs the real gate, authority and crop against fake memory: each RAW bit and RAW + other JPEG bits are claimed and banded; RAW-only at other aspects and aspect 7 without a Large JPEG or RAW bit stay stock; the token refuses every RAW bit; bursts and newer events behave as before. `python3 -B tests/test_xpan_raw_review.py --mutations` counts a mutation as caught only when a test assertion fails.
+
+**Evidence boundary.** On 23 November 2026 the owner ran private lab build-40, which carries the same gate change plus lab diagnostics. RAW + L XPan and JPEG-only XPan reviews stayed correct, two RAW-only XPan shots showed the bars from the first frame with no delay, and a RAW-only 3:2 shot kept the stock review. The public image with this change has not been checked on a camera. RAW + M/S JPEG, cRAW and the EVF review were not exercised on a camera. The on-camera flags value of a RAW-only Job was not recorded; the RAW bit values come from the ROM decoder. If an aspect-7 RAW Job's CR3 tuple were ever not `[7,8192,3024,0,1220]`, Quick Review would stay 3:2 after a banded SR frame: a brief mismatch, not a fault (not observed).
 
 ## 4. Opt-In Movie Record Indicator (`--record-indicator`)
 

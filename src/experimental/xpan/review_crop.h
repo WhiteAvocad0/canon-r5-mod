@@ -7,7 +7,8 @@
  *
  * Exact match only: the descriptor must be active (word 0 == 1), kind 0, carry
  * a non-zero id, a 1024x682 source, and at +0x1C..+0x30 either the full-source
- * tuple {0,0,0,0,1024,682} (RAW + JPEG review) or Canon's stock 16:9 letterbox
+ * tuple {0,0,0,0,1024,682} (any RAW review: Canon forces it for every RAW bit at
+ * E0840D88) or Canon's stock 16:9 letterbox
  * tuple {0,53,0,53,1024,576} (JPEG-only review, issue #31). Then, and only if
  * the review gate (xpan_review_gate_crop) admits this review's fresh XPan
  * claim, the three words that differ are stored so the tuple becomes

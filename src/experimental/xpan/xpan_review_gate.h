@@ -18,7 +18,12 @@
  *     authority event arrived since the previous review start and the latest
  *     record describes it; otherwise the review has no claim (stock review;
  *     a burst gives MULTIPLE).
- *   - A claim is XPan only for aspect 7 with a Large JPEG ((flags & 0x101) != 0).
+ *   - A claim is XPan only for aspect 7 with a Large JPEG or any RAW bit
+ *     ((flags & 0x101) != 0 || (flags & 0xF00000) != 0). The RAW test is
+ *     Canon's own SR test (E0840D84 ldr [CF0+0xD00]; E0840D88 tst #0xF00000),
+ *     which forces the full 3:2 tuple for any RAW shot, so RAW-only, cRAW and
+ *     RAW + M/S JPEG XPan shots get the band from the first SR frame. An
+ *     aspect-7 shot with only an M/S JPEG stays NOT_XPAN.
  *   - Each consumer admits only an open, unrevoked XPan claim whose event is
  *     still the latest event (stable snapshot). A newer event revokes the claim
  *     for the rest of that review.
@@ -40,6 +45,7 @@
 #define XPAN_GATE_ASPECT_OFFSET 0x18c0u               /* +0x1000 then ldrb +0x8C0 */
 #define XPAN_GATE_ASPECT_XPAN 7u
 #define XPAN_GATE_LARGE_JPEG 0x101u                   /* image-type flags & 0x101: Large JPEG present */
+#define XPAN_GATE_RAW_MASK UINT32_C(0x00f00000)       /* image-type flags: any RAW bit (E0840D88 tst.w r0,#0xF00000) */
 /* Claim word: 0 = no claim; else ordinal<<2 | REVOKED | XPAN. */
 #define XPAN_CLAIM_XPAN 1u
 #define XPAN_CLAIM_REVOKED 2u
@@ -98,8 +104,8 @@ void xpan_review_outline_entry(void);
  *   - event_current: XPAN_GATE_R_NONE when ordinal != 0 is still the latest
  *     stable authority record and the newest event count, and that record is a
  *     Job of aspect 7 with a Large JPEG and no RAW bit (JPEG only); else the
- *     reason (NO_CLAIM, UNSTABLE, STALE, INVALID or NOT_XPAN). */
-#define XPAN_GATE_RAW_MASK UINT32_C(0x00f00000) /* image-type flags: any RAW bit (E0840D88 tst.w r0,#0xF00000) */
+ *     reason (NO_CLAIM, UNSTABLE, STALE, INVALID or NOT_XPAN). It keeps its own
+ *     RAW refusal, so the claim's RAW admission never arms the token. */
 uint32_t xpan_review_gate_claim_ordinal(void);
 uint32_t xpan_review_gate_event_current(uint32_t ordinal);
 #endif

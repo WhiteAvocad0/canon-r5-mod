@@ -198,8 +198,9 @@ class ReviewFixTests(unittest.TestCase):
         c = cam.counts()
         self.assertEqual((c.reviews, c.open[GATE["CLAIMED"]], c.crop_applied, c.outline_hidden), (1, 1, 1, 2))
 
-    def test_full_frame_and_raw_only_shots_keep_the_stock_review(self):
-        for aspect, flags in ((0, 0x101), (7, 0x0), (2, 0x101)):
+    def test_full_frame_and_non_xpan_shots_keep_the_stock_review(self):
+        # RAW-only XPan shots get the band (test_xpan_raw_review.py); RAW-only full frame does not.
+        for aspect, flags in ((0, 0x101), (7, 0x0), (2, 0x101), (0, 0x100000)):
             self.setUp()
             cam = self.cam
             cam.shot(aspect=aspect, flags=flags)
