@@ -1496,19 +1496,33 @@ class App:
             ):
                 return
 
+        self._read_cbasic_card(cand, task, status_callout)
+
+    def _ask_retry_verification(self, report):
+        prompt = joined("\n", [
+            report.title, *report.lines, "",
+            "Retry verification on this card? The assistant will read the boot sectors again without writing them.",
+        ])
+        return self.messagebox.askretrycancel(self.words.render("Retry verification"), self.words.render(prompt),
+                                              icon="warning")
+
+    def _read_cbasic_card(self, cand, task, status_callout, *, verify_only=False):
+        if self._card_busy() or self.prep.selected != cand or (task != "dump" and not self.bootdisk_ack.get()):
+            return
         ops = card_devices.MacOps()
         self.cbasic_busy = "Reading card and checking FAT32 SDHC layout (macOS asks for your password)..."
         self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
         self.refresh()
 
+        def failed(error):
+            self.cbasic_busy = None
+            self._set_cbasic_status(status_callout, message("Card preparation stopped\n{session}", session=error), DANGER)
+            self.refresh()
+            self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(error)))
+
         def read_done(session):
             if isinstance(session, Exception):
-                self.cbasic_busy = None
-                self._set_cbasic_status(status_callout, message(
-                    "Card preparation stopped\n{session}",
-                    session=session), DANGER)
-                self.refresh()
-                self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(session)))
+                failed(session)
                 return
             if session.needs_write:
                 c = session.snapshot.candidate
@@ -1533,28 +1547,47 @@ class App:
                 self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
                 self.refresh()
 
-                def write_and_refresh():
-                    report = card_flow.write(session, ops)
-                    refreshed = None
-                    if report.ok:
-                        try:
-                            refreshed = ops.refresh(session.snapshot.candidate)
-                        except Exception:
-                            refreshed = session.snapshot.candidate
-                    return report, refreshed, session.backup.folder
-
-                self._background(write_and_refresh, lambda r: self._cbasic_script_written(r, task, status_callout))
+                self._background(lambda: card_flow.write(session, ops), lambda r: checked(r, session))
             else:
-                def refresh_mounted():
-                    try:
-                        refreshed = ops.refresh(session.snapshot.candidate)
-                    except Exception:
-                        refreshed = session.snapshot.candidate
-                    return None, refreshed, session.backup.folder
+                checked(session.report, session)
 
-                self._background(refresh_mounted, lambda r: self._cbasic_script_written(r, task, status_callout))
+        def checked(report, session):
+            if isinstance(report, Exception):
+                failed(report)
+                return
+            lines = [report.title, *report.lines]
+            if not report.ok:
+                self.cbasic_busy = None
+                msg = joined("\n", lines)
+                self._set_cbasic_status(status_callout, msg, DANGER)
+                self.refresh()
+                if report.retryable:
+                    if self._ask_retry_verification(report):
+                        self._read_cbasic_card(cand, task, status_callout, verify_only=True)
+                else:
+                    self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(msg))
+                return
 
-        self._background(lambda: card_flow.start(cand, ops, self.prep.backup_root, kind="script"), read_done)
+            def mounted(refreshed):
+                if (isinstance(refreshed, Exception) or not refreshed.mounted
+                        or not card_devices.same_card(session.snapshot.candidate, refreshed)):
+                    self.cbasic_busy = None
+                    lines.append("Could not confirm the selected card’s mount folder. No script files were staged.")
+                    if isinstance(refreshed, Exception):
+                        lines.append(error_text(refreshed))
+                    msg = joined("\n", lines)
+                    self._set_cbasic_status(status_callout, msg, DANGER)
+                    self.refresh()
+                    self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(msg))
+                    return
+                self._stage_cbasic_folder_impl(Path(refreshed.mount_point), task, status_callout,
+                                               backup_dir=session.backup.folder, prefix_lines=lines)
+
+            # Either the original selection or the raw read may have lacked mounted volume details.
+            self._background(lambda: ops.refresh(cand), mounted)
+
+        self._background(lambda: card_flow.start(cand, ops, self.prep.backup_root, kind="script",
+                                                verify_only=verify_only), read_done)
 
     def _cbasic_cancelled(self, report, status_callout: Callout):
         self.cbasic_busy = None
@@ -1563,36 +1596,6 @@ class App:
             lines = [report.title] + report.lines
         self._set_cbasic_status(status_callout, joined("\n", lines), WARNING)
         self.refresh()
-
-    def _cbasic_script_written(self, outcome, task: str, status_callout: Callout):
-        if isinstance(outcome, Exception):
-            self.cbasic_busy = None
-            self._set_cbasic_status(status_callout, message('Failed\n{outcome}', outcome=outcome), DANGER)
-            self.refresh()
-            self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(outcome)))
-            return
-        report, refreshed, backup_folder = outcome
-        if report is not None and not report.ok:
-            self.cbasic_busy = None
-            msg = joined("\n", [report.title] + report.lines)
-            self._set_cbasic_status(status_callout, msg, DANGER)
-            self.refresh()
-            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
-            return
-        mount_point = refreshed.mount_point if refreshed else ""
-        if not mount_point:
-            self.cbasic_busy = None
-            msg = ("SCRIPT marker is on the card, but the card did not report a mount folder.\n"
-                   "Mount the card and stage the files on its folder.")
-            if task == "dump":
-                msg = joined(" ", [msg, "Open ‘Which SD card can I use?’ and choose ‘Use a card already marked for scripts’."])
-            self._set_cbasic_status(status_callout, msg, WARNING)
-            self.refresh()
-            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
-            return
-        prefix = [report.title] + report.lines if report is not None else ["Canon Basic SCRIPT marker already present."]
-        self._stage_cbasic_folder_impl(Path(mount_point), task, status_callout, backup_dir=backup_folder,
-                                       prefix_lines=prefix)
 
     def _stage_cbasic_folder(self, task: str, status_callout: Callout):
         if self._card_busy():
@@ -1914,7 +1917,13 @@ class App:
                 p.failed(error_text(exc))
                 self.refresh()
                 return
-        p.restore_from = source if isinstance(source, card_flow.Backup) else None
+        self._read_prep_card(kind, cand, source)
+
+    def _read_prep_card(self, kind, cand, source, *, verify_only=False):
+        p = self.prep
+        if p.blockers() or self.cbasic_busy or p.selected != cand:
+            return
+        self.wizard.set_card_prepared(None)
         token = p.begin("Reading the card and saving a backup (macOS asks for your password)...")
         ops = card_devices.MacOps()
         self.refresh()
@@ -1931,12 +1940,16 @@ class App:
                 self._background(lambda: card_flow.cancel(result, ops) if result.needs_write else None,
                                  lambda _r: (setattr(p, "busy", None), self.refresh()))
                 return
-            self.refresh()
+
+            def finished(report, show):
+                self._prep_finished(report, None, show=show, kind=kind)
+                if isinstance(report, card_flow.Report) and report.retryable and self._ask_retry_verification(report):
+                    self._read_prep_card(kind, cand, result.source, verify_only=True)
+
             if verdict == "done":
-                if kind == "mark" and result.report.ok:
-                    self.wizard.set_card_prepared("prepared")
-                    self.refresh()
+                finished(result.report, False)
                 return
+            self.refresh()
             title, text = p.confirmation()
             ok = self.messagebox.askokcancel(self.words.render(title), self.words.render(text), icon="warning")
             if not ok or not p.may_write(token, result):
@@ -1950,8 +1963,9 @@ class App:
             p.begin_write(result)
             self.refresh()
             self._background(lambda: card_flow.write(result, ops),
-                             lambda r: self._prep_finished(r, None, show=True, kind=kind))
-        self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source), read_done)
+                             lambda r: finished(r, True))
+        self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source,
+                                                verify_only=verify_only), read_done)
 
     def _prep_finished(self, report, note, show=False, kind=None):
         if isinstance(report, Exception):  # write() and cancel() report instead of raising; be safe anyway
@@ -1965,7 +1979,7 @@ class App:
             report.lines.insert(0, note)
         self.prep.finished(report)
         self.refresh()
-        if show:
+        if show and not report.retryable:
             self.messagebox.showinfo(self.words.render("Card preparation"), self.words.render(joined("\n", [report.title] + report.lines)))
 
     def _on_close(self):

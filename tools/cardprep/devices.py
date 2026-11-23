@@ -388,6 +388,16 @@ def _completed(run, argv: list[str], timeout: int, **kwargs) -> subprocess.Compl
                                            str(exc) if kwargs.get("text") else str(exc).encode())
 
 
+def verification_start_error(output: str) -> bool:
+    """Recognize diskutil's unrecognized-filesystem status in a verification diagnostic."""
+    for line in output.splitlines():
+        line = line.strip()
+        if (line.startswith("Error starting file system verification for ")
+                and line.endswith("(-69846)")) or line.startswith("Error: -69846:"):
+            return True
+    return False
+
+
 class MacOps:
     """diskutil as the person; raw sector access through authopen (no code runs as root)."""
 

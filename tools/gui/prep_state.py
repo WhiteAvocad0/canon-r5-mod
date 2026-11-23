@@ -58,7 +58,6 @@ class PrepState:
         self.busy: str | None = None
         self.copying = False  # step 8 is copying to a card
         self.session: workflow.Session | None = None  # read and backed up, waiting for confirmation
-        self.restore_from: workflow.Backup | None = None  # a chosen backup; None means the latest one
         self.report: workflow.Report | None = None
         self.error: str | None = None
 
@@ -86,7 +85,6 @@ class PrepState:
         self.candidates = list(candidates)
         self.searched = True
         self.selected = None
-        self.restore_from = None
         self._discard()
 
     def select(self, whole_id: str | None) -> None:
@@ -100,17 +98,12 @@ class PrepState:
             chosen = matches[0]
         if chosen != self.selected:
             self.selected = chosen
-            self.restore_from = None
             self._discard()
 
     def card_gone(self, message: str) -> None:
         self.selected = None
         self._discard()
         self.error = message
-
-    def set_restore_from(self, backup: workflow.Backup | None) -> None:
-        self.restore_from = backup
-        self._discard()
 
     # -- what is allowed --------------------------------------------------------------
 

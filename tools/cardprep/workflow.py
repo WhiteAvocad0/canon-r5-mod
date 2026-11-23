@@ -4,14 +4,15 @@
 ejects), reads the MBR and the 24-sector boot area through authopen (one password
 window, read-only), checks that the partition start agrees three ways, makes the plan and saves
 a backup that is verified by re-reading. When nothing needs writing it mounts the
-card again and the session carries the finished report. Otherwise the card stays
+card again after verifying the volume, and the session carries the finished report. Otherwise the card stays
 unmounted until ``write`` or ``cancel``, so nothing on the Mac can change the boot
 sectors between the read and the write.
 
 ``write`` re-checks the card again, then (one more password window, read/write)
 writes only the planned sectors, and only if the MBR, the whole boot area and the target sectors still hash to the
 read's values. It reads everything back, runs the volume check and mounts the card
-again. ``write`` and ``cancel`` never raise: every outcome is a Report that names
+again. If macOS cannot start verification (-69846), it retries once on the same
+remounted partition. ``write`` and ``cancel`` never raise: every outcome is a Report that names
 the backup folder and is saved next to it as result-*.json.
 
 The card is identified by its whole-disk and partition identity, not by a mount,
@@ -32,7 +33,7 @@ import stat
 from messages import message, phrase
 
 from . import layout
-from .devices import Cancelled, Candidate
+from .devices import Cancelled, Candidate, verification_start_error
 from .layout import AREA_BYTES, MBR_BYTES, CardPrepError, Plan, sha256
 
 BACKUP_FORMAT = "r5-cardprep-backup"
@@ -73,6 +74,7 @@ class Report:
     written_sectors: list[int] = field(default_factory=list)
     record: Path | None = None
     nothing_written: bool = False
+    retryable: bool = False
 
 
 @dataclass
@@ -111,6 +113,49 @@ def _mount_line(mounted: bool, out: str) -> str:
     return "The card is mounted again." if mounted else \
         message("The card could not be mounted again ({detail}). Remove and reinsert it.",
             detail=out or phrase("no details"))
+
+
+def _check_volume(ops, cand: Candidate, report: Report) -> tuple[bool, bool]:
+    """Append this attempt's diagnostic and return (verified, checker could not start)."""
+    try:
+        ok, output = ops.verify(cand)
+    except Exception as exc:
+        report.lines.append(message("diskutil verifyVolume did not complete: {error}", error=exc))
+        return False, False
+    not_started = not ok and verification_start_error(output)
+    if not_started:
+        template = "macOS could not start the filesystem check: {output}"
+    else:
+        template = "Volume check passed: {output}" if ok else "Volume check FAILED: {output}"
+    report.lines.append(message(template, output=output.strip() or phrase("(no output)")))
+    return ok, not_started
+
+
+def _finish_volume_check(ops, cand: Candidate, report: Report, success_title: str) -> None:
+    """Finalize an unchanged or read-back-verified plan. Never write sectors here."""
+    verified, not_started = _check_volume(ops, cand, report)
+    mounted, detail = _mount(ops, cand)
+    report.lines.append(_mount_line(mounted, detail))
+    report.title = "Card verification incomplete."
+    if not mounted:
+        report.retryable = verified or not_started
+        return
+    if not_started:
+        try:
+            mounted_card = ops.refresh(cand)
+        except Exception as exc:
+            report.lines.append(message("Could not confirm the selected card: {error}. Find SD cards again.", error=exc))
+            return
+        if not mounted_card.mounted:
+            report.retryable = True
+            report.lines.append("The selected partition has no mount point. Find SD cards again.")
+            return
+        report.lines.append("Retrying the filesystem check on the remounted card.")
+        verified, not_started = _check_volume(ops, mounted_card, report)
+    report.ok = verified
+    report.retryable = not_started
+    if verified:
+        report.title = success_title
 
 
 # -- backups ------------------------------------------------------------------------
@@ -242,7 +287,7 @@ def _record(backup: Backup, report: Report, extra: dict) -> Path | None:
     try:
         _write_new(path, (json.dumps({"ok": report.ok, "title": report.title, "lines": report.lines,
                                       "written_sectors": report.written_sectors,
-                                      "nothing_written": report.nothing_written, **extra}, indent=2) + "\n").encode())
+                                      "nothing_written": report.nothing_written, "retryable": report.retryable, **extra}, indent=2) + "\n").encode())
     except OSError:
         return None
     return path
@@ -266,7 +311,8 @@ def restore_plan(cand: Candidate, mbr: bytes, area: bytes, backup: Backup) -> Pl
 
 
 def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
-          restore_from: Backup | str | None = None, kind: str = "mark", now: datetime | None = None) -> Session:
+          restore_from: Backup | str | None = None, kind: str = "mark", now: datetime | None = None,
+          verify_only: bool = False) -> Session:
     """Read the card, save a verified backup and plan the writes.
 
     restore_from is None (prepare: kind="mark" for native markers, or kind="script" for
@@ -275,7 +321,8 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
 
     Nothing is ever written to the card here. On any failure the card is mounted
     again and the exception says why; a plan that needs writing leaves the card
-    unmounted for write() or cancel()."""
+    unmounted for write() or cancel(). A verification-only retry always returns a
+    completed report, including when the expected markers are missing."""
     if kind not in ("mark", "script"):
         raise ValueError(f"unknown plan kind {kind!r}")
     cand = ops.refresh(cand)
@@ -320,11 +367,18 @@ def start(cand: Candidate, ops, backup_root: Path = DEFAULT_BACKUP_ROOT, *,
             raise Cancelled(str(exc) + note) from exc
         raise PrepFailure(str(exc) + note) from exc
     session = Session(snapshot, plan, backup, source=restore_from)
-    if not plan.writes_needed:
-        mounted, out = _mount(ops, cand)
-        title = "Already prepared: nothing to write." if plan.kind in ("mark", "script") else "Nothing to restore."
-        lines = layout.describe_plan(plan) + [_mount_line(mounted, out), message("Backup: {backup}", backup=backup.folder)]
-        report = Report(True, title, lines, nothing_written=True)
+    if not plan.writes_needed or verify_only:
+        report = Report(False, "Card verification incomplete.", nothing_written=True)
+        if plan.writes_needed:
+            report.lines.append("The card does not match the expected boot sectors. Verification stopped without writing.")
+            report.lines.append(_mount_line(*_mount(ops, cand)))
+        else:
+            report.lines.extend(layout.describe_plan(plan))
+            title = "Nothing to restore." if plan.kind == "restore" else "Already prepared: nothing to write."
+            _finish_volume_check(ops, cand, report, title)
+        if not report.ok and plan.kind == "script":
+            report.lines.append("Setup files have not been copied.")
+        report.lines.append(message("Backup: {backup}", backup=backup.folder))
         report.record = _record(backup, report, {"plan": plan.to_dict()})
         session.report = report
     return session
@@ -346,6 +400,7 @@ def write(session: Session, ops) -> Report:
                   "Canon Basic SCRIPT marker" if plan.kind == "script" else "Restore")
     report = Report(False, message("{action}: FAILED.", action=what))
     result: dict = {}
+    readback_passed = False
     cand = snapshot.candidate
     if not session.needs_write or backup.mbr != snapshot.mbr or backup.area != snapshot.area \
             or plan.before_area != snapshot.area:
@@ -401,38 +456,30 @@ def write(session: Session, ops) -> Report:
             problems = [message("The read-back could not be decoded ({error}).", error=exc)]
         if not result.get("ok"):
             problems.insert(0, message("The write reported {code}.", code=result.get("code") or phrase("a failure")))
-        try:
-            verified, output = ops.verify(cand)
-        except Exception as exc:  # a timeout or crash here must not hide what was written
-            verified = False
-            last = message("diskutil verifyVolume did not complete: {error}", error=exc)
-        else:
-            last = output.strip().splitlines()[-1] if output.strip() else phrase("(no output)")
-        report.lines.append(message("Sectors written: {sectors} ({size:,} bytes).",
-            sectors=", ".join(map(str, possibly)) or phrase("none"), size=len(possibly) * layout.SECTOR))
+        if len(written) == 1:
+            report.lines.append(message("Wrote {size} bytes to sector {sector}.", size=layout.SECTOR, sector=written[0]))
+        elif written:
+            report.lines.append(message("Wrote {size:,} bytes to sectors {sectors}.",
+                                        size=len(written) * layout.SECTOR, sectors=", ".join(map(str, written))))
         if problems:
             report.lines += ["Read-back check FAILED:"] + [message("- {detail}", detail=phrase(p)) for p in problems]
             report.lines.append("Do not use the card yet. Undo restores it from the backup below.")
         else:
             report.lines.append("Read-back check passed: every written byte matches the plan, the MBR is unchanged "
                                 "and the boot area validates.")
-        volume_result = "Volume check passed: {output}" if verified else "Volume check FAILED: {output}"
-        report.lines.append(message(volume_result, output=last))
-        report.ok = not problems and verified
-        if report.ok:
-            report.title = message("{action}: done and verified.", action=what)
-        elif not problems:
-            report.lines.append("The written bytes are correct but the volume check did not pass. On FAT32 this can "
-                                "be the backup boot sector, which is left unmarked by design. Check the card with "
-                                "Disk Utility First Aid, or use Undo.")
+            readback_passed = True
         return report
     except Exception as exc:  # never lose the report
         report.title = message("{action}: card state unknown.", action=what)
         report.lines.append(message("Unexpected error: {error}", error=exc))
         return report
     finally:
-        mounted, out = _mount(ops, cand)
-        report.lines.append(_mount_line(mounted, out))
+        if readback_passed:
+            _finish_volume_check(ops, snapshot.candidate, report, message("{action}: done and verified.", action=what))
+        else:
+            report.lines.append(_mount_line(*_mount(ops, cand)))
+        if not report.ok and plan.kind == "script":
+            report.lines.append("Setup files have not been copied.")
         report.lines.append(message("Backup: {backup}", backup=backup.folder))
         report.record = _record(backup, report, {"plan": plan.to_dict(), "raw_write": {
             k: v for k, v in result.items() if k not in ("area_hex", "mbr_hex")}})
