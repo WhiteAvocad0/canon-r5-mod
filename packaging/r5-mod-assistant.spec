@@ -1,7 +1,7 @@
 # PyInstaller spec for R5 Mod Assistant: onedir and windowed, unsigned (on macOS only
-# PyInstaller's ad-hoc signature). macOS gets "R5 Mod Assistant.app", Windows the folder
+# an ad-hoc signature). macOS gets "R5 Mod Assistant.app", Windows the folder
 # "R5 Mod Assistant" with "R5 Mod Assistant.exe". Run it through packaging/build_app.py,
-# which stages the tracked tree with `git archive` and passes these settings in the environment.
+# which stages the tracked tree, adds the pinned toolchain and re-signs the macOS app.
 import os
 from pathlib import Path
 import sys
@@ -70,8 +70,7 @@ if sys.platform == "darwin":
             "LSApplicationCategoryType": "public.app-category.photography",
             "NSHighResolutionCapable": True,
             "NSDownloadsFolderUsageDescription": (
-                "R5 Mod Assistant looks for the GNU Arm toolchain you unpacked in Downloads. "
-                "You can decline and choose its folder yourself."),
+                "R5 Mod Assistant reads the ROM dump, WAV files or compiler you select in Downloads."),
             "NSRemovableVolumesUsageDescription": (
                 "R5 Mod Assistant reads and writes only the SD card you choose."),
             "R5SourceCommit": COMMIT,

@@ -29,6 +29,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from gui import bundle
 from gui.i18n import LANGUAGES
 from messages import joined, message, phrase
 
@@ -161,7 +162,9 @@ class Wizard:
         self.saved.profile, self.saved.options = self.a.profile, dict(self.a.options)
         self.saved.rom_path = str(self.a.rom_path) if self.a.rom_path else None
         self.saved.inputs = {k: str(v) for k, v in self.a.input_paths.items() if v}
-        self.saved.toolchain_path = str(self.a.toolchain_path) if self.a.toolchain_path else None
+        # The included compiler moves with the app. Persist only a separate installation.
+        compiler = self.a.toolchain_path
+        self.saved.toolchain_path = str(compiler) if compiler and compiler != bundle.included_toolchain() else None
         self.saved.saved_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -521,7 +524,8 @@ GUIDE = {
          Need("SD card", "Steps 7 to 9 (the mod itself): any size, formatted in the camera.", ANY_CARD),
          Need("Computer", "A Mac with a built-in SD card slot for the card steps (2, 3 and 7). On Windows or "
               "Linux the app can build and copy, but not prepare cards."),
-         Need("Compiler", "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish "
+         Need("Compiler", "GNU Arm 15.2.1 is included in this app." if bundle.is_frozen() else
+              "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish "
               "while you do the camera steps."),
          Need("Camera visits", "Up to three: the ROM dump (step 2), BootDisk (step 3) and the first test "
               "(step 9)."))),
@@ -562,6 +566,10 @@ GUIDE = {
         "the status lines say what was tested on private lab builds.",
         (Need("Files", "Custom sounds only: two WAV files, 48 kHz, mono, 16-bit PCM."),)),
     TOOLCHAIN: Guide(
+        "GNU Arm 15.2.1 is included in this app.",
+        "When the compiler check passes, press Next.",
+        "To use another installation of GNU Arm 15.2.1, choose its bin folder. "
+        "Choose ‘Use included compiler’ to switch back.") if bundle.is_frozen() else Guide(
         "A free compiler (GNU Arm 15.2.1) turns the source code into autoexec.bin on your computer.",
         ("Look at the status line below: the app searches for the compiler when it starts. If it was found, "
          "press Next.",

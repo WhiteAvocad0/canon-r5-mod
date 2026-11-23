@@ -1,17 +1,19 @@
 """Build the R5 Mod Assistant desktop app: a .dmg on macOS, a .zip on Windows.
 
-    python packaging/build_app.py [--output DIR] [--self-test] [--no-package]
+    python packaging/build_app.py [--output DIR] [--self-test] [--no-package] [--toolchain-archive FILE]
 
 Needs a Python 3.11+ with Tkinter (the python.org or actions/setup-python builds) and
 PyInstaller (packaging/requirements.txt). It reads HEAD of this repository, refuses
 uncommitted changes to tracked files, and writes only below --output (default
-build/desktop-app/, which git ignores):
+build/desktop-app/, which git ignores). It downloads the host xPack archive at build
+time unless --toolchain-archive supplies it locally. Both use the same SHA-256 pin.
+Outputs:
 
     stage/r5-mod/                     HEAD's tracked files, checked against git's blob ids
     dist/R5 Mod Assistant.app         macOS: the app; it carries stage/r5-mod byte for byte
     dist/R5 Mod Assistant/            Windows: the app folder with "R5 Mod Assistant.exe"
     R5-Mod-Assistant-<version>-macos-<arm64|x86_64>.dmg
-    R5-Mod-Assistant-<version>-windows-<x64|arm64>.zip
+    R5-Mod-Assistant-<version>-windows-x64.zip
     unzipped/                         Windows: the .zip unpacked again, where --self-test runs
 
 The app is not signed with an Apple Developer ID or a Windows code-signing certificate
@@ -32,7 +34,9 @@ import subprocess
 import sys
 import sysconfig
 import tarfile
+import tempfile
 import time
+import urllib.request
 import zipfile
 
 HERE = Path(__file__).resolve().parent
@@ -40,13 +44,25 @@ ROOT = HERE.parent
 SPEC = HERE / "r5-mod-assistant.spec"
 GUIDE_URL = "https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md"
 WINDOWS_ARCH = {"AMD64": "x64", "ARM64": "arm64"}
+TOOLCHAIN_VERSION = "15.2.1-1.1"
+TOOLCHAIN_ROOT = f"xpack-arm-none-eabi-gcc-{TOOLCHAIN_VERSION}"
+TOOLCHAIN_RELEASE = ("https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/download/"
+                     f"v{TOOLCHAIN_VERSION}")
+# Official release archive suffix and SHA-256, indexed by the desktop package target.
+TOOLCHAIN_ARCHIVES = {
+    ("macos", "arm64"): ("darwin-arm64.tar.gz", "574082d35e49a2bcbdc355836b2a3ae5e5bb3b9456c9f5e37177db2ab4aad870"),
+    ("macos", "x86_64"): ("darwin-x64.tar.gz", "5be906a5194c3173e145a58048e5607ffff947773237802b93e55e23c415f1b6"),
+    ("windows", "x64"): ("win32-x64.zip", "bae6a3d1667697ce750c3b13d6d26d80973ecedc2cc87bf04869e83447fd93ea"),
+}
 README_COMMON = """\
-You still need the GNU Arm toolchain (GCC 15.2.1: xPack arm-none-eabi-gcc 15.2.1-1.1 or
-Arm GNU Toolchain 15.2.Rel1) and your own ROM dump; the app explains both. This is an
-untested prototype: every build it makes is hardware-untested. Read the guides first:
+The app includes the GNU Arm toolchain (xPack arm-none-eabi-gcc {toolchain_version})
+and builds offline. Supply your own ROM dump as shown in the guide. This is an
+untested prototype. Every build it makes is hardware-untested. Read the guides first:
 {url}
 
-Built from commit {commit}. Licences: the Licenses folder.
+Built from commit {commit}. App licenses are in the Licenses folder. The toolchain
+licenses and supplementary notices are in {toolchain_path}/distro-info, under
+licenses and R5-notices respectively.
 """
 README = {
     "macos": """\
@@ -117,6 +133,45 @@ def target_for(dist: Path, name: str, system: str = sys.platform, machine: str |
         return Target("windows", WINDOWS_ARCH.get(machine.upper(), machine.lower()), app, app / f"{name}.exe",
                       app / "_internal" / "r5-mod")
     raise SystemExit(f"the desktop app is built on macOS or Windows, not {system}")
+
+
+def install_toolchain(target: Target, local_archive: Path | None) -> None:
+    """Verify the host archive before extracting it. Install the complete vendor tree beside r5-mod."""
+    artifact = TOOLCHAIN_ARCHIVES.get((target.os, target.arch))
+    if artifact is None:
+        raise SystemExit(f"No bundled xPack toolchain for {target.os} {target.arch}")
+    suffix, expected = artifact
+    filename = f"{TOOLCHAIN_ROOT}-{suffix}"
+    dest = target.tree.resolve().parent / "arm-toolchain"
+    with tempfile.TemporaryDirectory(dir=dest.parent) as scratch:
+        tmp = Path(scratch)
+        archive = local_archive
+        if archive is None:
+            archive = tmp / filename
+            url = f"{TOOLCHAIN_RELEASE}/{filename}"
+            print(f"Downloading {url}", flush=True)
+            try:
+                urllib.request.urlretrieve(url, archive)
+            except OSError as exc:
+                raise SystemExit(f"Could not download {url}: {exc}. Supply it with --toolchain-archive.") from exc
+        with archive.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            if digest != expected:
+                raise SystemExit(f"{archive}: SHA-256 {digest}, expected {expected} for {filename}")
+            stream.seek(0)
+            if suffix.endswith(".zip"):
+                with zipfile.ZipFile(stream) as zf:
+                    zf.extractall(tmp)
+            else:
+                with tarfile.open(fileobj=stream, mode="r|gz") as tar:
+                    tar.extractall(tmp, filter="data")
+        vendor = tmp / TOOLCHAIN_ROOT
+        notices = target.tree / "packaging" / "xpack-notices"
+        included = vendor / "distro-info" / "R5-notices"
+        shutil.copytree(notices / "common", included)
+        shutil.copytree(notices / target.os, included, dirs_exist_ok=True)
+        vendor.rename(dest)
+    print(f"Installed {filename} (SHA-256 {digest})")
 
 
 def git_blob_id(data: bytes, algorithm: str) -> str:
@@ -198,7 +253,9 @@ def write_extras(folder: Path, target: Target, facts: dict[str, str], commit: st
     """Read me first.txt and the Licenses folder, next to the app in the .dmg or .zip."""
     text = README[target.os] + README_COMMON
     (folder / "Read me first.txt").write_text(
-        text.format(version=facts["version"], arch=target.arch, url=GUIDE_URL, commit=commit),
+        text.format(version=facts["version"], arch=target.arch, url=GUIDE_URL, commit=commit,
+                    toolchain_version=TOOLCHAIN_VERSION,
+                    toolchain_path=(target.tree.parent / "arm-toolchain").relative_to(target.app).as_posix()),
         encoding="utf-8", newline="\r\n" if target.os == "windows" else "\n")
     licenses = folder / "Licenses"
     licenses.mkdir()
@@ -247,7 +304,7 @@ def make_zip(target: Target, archive: Path, facts: dict[str, str], commit: str, 
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for base, prefix in ((target.app, target.app.name), (extras, "")):
             for path in sorted(base.rglob("*")):
-                if path.is_file():
+                if path.is_file() or path.is_dir():
                     zf.write(path, "/".join(p for p in (prefix, path.relative_to(base).as_posix()) if p))
     shutil.rmtree(extras)
     with zipfile.ZipFile(archive) as zf:
@@ -259,6 +316,8 @@ def make_zip(target: Target, archive: Path, facts: dict[str, str], commit: str, 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--output", type=Path, default=ROOT / "build" / "desktop-app")
+    ap.add_argument("--toolchain-archive", type=Path, metavar="FILE",
+                    help="use a local copy of the pinned host xPack archive for an offline build")
     ap.add_argument("--self-test", action="store_true", help="run the built app's --self-test")
     ap.add_argument("--no-package", action="store_true", help="build the app only, no .dmg or .zip")
     ap.add_argument("--print-version", action="store_true", help="print the app version and exit")
@@ -285,6 +344,10 @@ def main(argv: list[str] | None = None) -> int:
            "R5_APP_BUNDLE_ID": facts["bundle_id"], "R5_APP_VERSION": facts["version"], "R5_APP_COMMIT": commit}
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--log-level", "WARN",
          "--distpath", str(out / "dist"), "--workpath", str(out / "work"), str(SPEC)], env=env)
+    install_toolchain(target, args.toolchain_archive)
+    if target.os == "macos":
+        # Reseal the outer bundle after adding resources, preserving all nested signatures.
+        run(["codesign", "--force", "--sign", "-", str(target.app)])
     files = verify_tree(target.tree, stage)
     print(f"{target.app}: {facts['version']} ({target.os} {target.arch}) from {commit[:12]}, "
           f"carries {files} tracked files unchanged")

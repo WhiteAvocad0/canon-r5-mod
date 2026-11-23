@@ -88,7 +88,6 @@ SDHC card and check the dump you return; you run them yourself in the camera;
   •  format, partition or erase a card, or write its partition table (MBR);
   •  write anything to a card except the boot-marker sectors in step 7, the Canon \
 Basic SCRIPT marker on FAT32 SDHC cards in steps 2-3, and the card-root files;
-  •  download the toolchain (you install it yourself; see step 5);
   •  test anything on the camera, or tell you whether your camera will work.
 
 Every build made here is a public repackaged build and is hardware-untested. \
@@ -1252,16 +1251,21 @@ class App:
         tab = self._panel(TOOLCHAIN)
         self.tc_status = StatusLine(self, tab)
         self.tc_install = self.ttk.Frame(tab)
-        self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
-                   "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
-        self.words.widget(self.ttk.Button, self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
-                        command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
+        included = bundle.included_toolchain()
+        if included:
+            self._text(self.tc_install, "If the included compiler fails its check, reinstall the complete app "
+                       "or choose the bin folder of another GNU Arm 15.2.1 installation.")
+        else:
+            self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
+                       "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
+            self.words.widget(self.ttk.Button, self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
+                            command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()
         self.tc_fields = self.ttk.Frame(tab)
         self.tc_fields.pack(fill="x")
         self._field(self.tc_fields, "Compiler’s bin folder", self.tc_var, [
             ("Choose bin folder…", self._pick_toolchain),
-            ("Detect again", lambda: self._detect_toolchain(explicit=True))])
+            ("Use included compiler" if included else "Detect again", lambda: self._detect_toolchain(explicit=True))])
 
     def _build_tab(self):
         tab = self._panel(BUILD)
@@ -2037,7 +2041,7 @@ class App:
                 status.set(NEUTRAL, view.reason)
         (self.wav_note_slot.show if any_wav else self.wav_note_slot.hide)(self.wav_note)
         self.tc_var.set(str(s.toolchain_path or ""))
-        if s.toolchain_check().status == OK or self._detecting:
+        if s.toolchain_check().status in (OK, CHECKING) or self._detecting:
             self.tc_install.pack_forget()
         else:
             self.tc_install.pack(fill="x", before=self.tc_fields)
@@ -2070,7 +2074,7 @@ class App:
             self._start_check(what, input_id)
         self._offer_prepared_card()
 
-    def _start_check(self, what, input_id=None):
+    def _start_check(self, what, input_id=None, *, fallback_toolchain=None):
         s = self.state
         key = s.begin(what, input_id)
         if what == "rom":
@@ -2084,7 +2088,11 @@ class App:
         def done(result):
             if isinstance(result, Exception):
                 result = checks.CheckResult(False, message('Check failed: {result}', result=result))
-            s.finish(what, key, result.ok, result.message, result.facts, input_id=input_id)
+            applied = s.finish(what, key, result.ok, result.message, result.facts, input_id=input_id)
+            if applied and not result.ok and fallback_toolchain is not None:
+                # A saved override is no longer usable. The normal refresh checks the included compiler.
+                s.set_toolchain(fallback_toolchain)
+                self.wizard.save()
             self.refresh()
         self._background(work, done)
 
@@ -2135,9 +2143,20 @@ class App:
         path = self.filedialog.askdirectory(title=self.words.render("Choose the toolchain's bin folder (contains arm-none-eabi-gcc)"))
         if path:
             self.state.set_toolchain(Path(path))
+            self.wizard.save()
             self.refresh()
 
     def _detect_toolchain(self, explicit=False):
+        included = bundle.included_toolchain()
+        if included:
+            saved = self.state.toolchain_path
+            selected = included if explicit or saved is None else saved
+            self.state.set_toolchain(selected)
+            if explicit:
+                self.wizard.save()
+            self._start_check("toolchain", fallback_toolchain=included if selected != included else None)
+            self.refresh()
+            return
         self._detecting = True
         self.tc_status.set(BUSY, "Looking for an installed GNU Arm 15.2.1 toolchain...")
 
@@ -2429,12 +2448,35 @@ def main() -> int:
     return 0
 
 
+def _compiler_smoke(bin_dir: Path, work: Path) -> None:
+    """Check the included GCC front end, assembler, linker and objcopy without camera inputs."""
+    from toolchain import controlled_environment
+
+    env = controlled_environment()
+    # No globally installed Arm tools may satisfy a missing compiler component.
+    env["PATH"] = str(bin_dir)
+    source = work / "sum.c"
+    source.write_text("unsigned sum(unsigned a, unsigned b) { return a + b; }\n", encoding="ascii")
+    for tool, args in (
+        ("gcc", ["-mcpu=cortex-a9", "-mthumb", "-ffreestanding", "-c", "sum.c", "-o", "sum.o"]),
+        ("ld", ["-e", "sum", "sum.o", "-o", "sum.elf"]),
+        ("objcopy", ["-O", "binary", "sum.elf", "sum.bin"]),
+    ):
+        exe = bin_dir / ("arm-none-eabi-" + tool + (".exe" if sys.platform == "win32" else ""))
+        proc = subprocess.run([str(exe), *args], cwd=work, env=env, capture_output=True, text=True, timeout=60)
+        if proc.returncode:
+            raise ValueError(f"{exe.name} exited with {proc.returncode}: {proc.stderr.strip()}")
+    if (work / "sum.bin").stat().st_size == 0:
+        raise ValueError("objcopy produced an empty binary")
+
+
 def self_test() -> int:
     """`--self-test`: build the window hidden, show every step in both appearances, then exit.
 
     Saved progress goes to a temporary folder (the person's own wizard.json is never
-    read or written) and the toolchain search is skipped. It also starts the builder the
-    way a build does, with arguments the builder refuses, so nothing is built or written.
+    read or written). The packaged window checks its included compiler and builds a
+    standalone test program there. A checkout skips the external compiler search.
+    Both modes also start the builder with arguments it must refuse.
     For CI and for checking a packaged app; prints one line per check."""
     import tempfile
     import tkinter as tk
@@ -2458,13 +2500,26 @@ def self_test() -> int:
     saved_state, saved_detect = wizard_mod.DEFAULT_STATE_FILE, checks.detect_toolchain
     with tempfile.TemporaryDirectory() as tmp:
         wizard_mod.DEFAULT_STATE_FILE = Path(tmp) / "wizard.json"
-        checks.detect_toolchain = lambda: (None, None, [])
+        included = bundle.included_toolchain()
+        if included is None:
+            checks.detect_toolchain = lambda: (None, None, [])
         try:
             for appearance in ("light", "dark"):
                 root = tk.Tk()
                 root.withdraw()
                 try:
                     app = App(tk, ttk, filedialog, messagebox, tkfont, root=root, appearance=appearance)
+                    if included:
+                        # Complete the startup check through the same callback as the event loop.
+                        while app.state.toolchain_check().status == CHECKING:
+                            done, result = app.events.get(timeout=120)
+                            done(result)
+                        verified = app.state.toolchain_check()
+                        check(app.state.toolchain_path == included and verified.status == OK,
+                              f"Step 5 accepts the included compiler ({verified.message})")
+                        if appearance == "light":
+                            _compiler_smoke(app.state.toolchain_path, Path(tmp))
+                            check(True, "included compiler compiles, assembles, links and converts a standalone program")
                     for step in STEPS:
                         app.wizard.saved.current = step.id
                         app.refresh()

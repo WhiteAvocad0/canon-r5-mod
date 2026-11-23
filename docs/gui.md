@@ -19,7 +19,7 @@ There is a ready-made, **unsigned** app for macOS and Windows on the repository'
 
 `SHA256SUMS.txt` on the same page lists each file's SHA-256.
 
-Either way you still need the **GNU Arm toolchain** with GCC `15.2.1` ([step 5](#step-5-build-tools): xPack `arm-none-eabi-gcc` `15.2.1-1.1`, or Arm GNU Toolchain `15.2.Rel1`) and your own ROM dump. The app contains neither, and it never downloads anything.
+Packages built from version 0.2.0 include xPack GNU Arm Embedded GCC 15.2.1-1.1. Step 5 checks it automatically and works offline. Version 0.1.0 and [source checkouts](#launch) require a separately installed compiler. Supply your own camera’s ROM dump for every version.
 
 ### macOS
 
@@ -29,13 +29,13 @@ Either way you still need the **GNU Arm toolchain** with GCC `15.2.1` ([step 5](
    - **macOS 14 or earlier:** Control-click (or right-click) the app, choose **Open**, then **Open** again.
 
    You only do this once per version. Advanced: `xattr -dr com.apple.quarantine "/Applications/R5 Mod Assistant.app"` removes the download mark instead; only do that for a `.dmg` you downloaded from this repository.
-3. macOS may ask whether the app may use your **Downloads** folder (the toolchain search looks there; you can decline and choose the toolchain's `bin` folder yourself) and **removable volumes** (the card you choose).
+3. macOS may ask for access to the removable volume when you choose your SD card.
 
 ### Windows
 
 1. Right-click the `.zip` and choose **Extract All...**, for example into your Documents folder. Run the app from the extracted **R5 Mod Assistant** folder, not from inside the zip, and keep its `_internal` folder next to `R5 Mod Assistant.exe`.
 2. Open **R5 Mod Assistant.exe**. Because the app isn't signed with a code-signing certificate, Microsoft Defender SmartScreen may say *Windows protected your PC*: click **More info**, then **Run anyway**. Windows remembers this for that copy of the app.
-3. Install the toolchain from Arm's Windows installer or unpack the xPack or Arm `.zip`; the app looks in `%USERPROFILE%`, its `tools` and `Downloads` folders, `%APPDATA%\xPacks`, `C:\xpack-arm-none-eabi-gcc-15.2.1-*` and `Program Files (x86)\Arm GNU Toolchain arm-none-eabi\15.2*`, or choose its `bin` folder (the one with `arm-none-eabi-gcc.exe`) yourself.
+3. Leave the extracted app folder together. It contains the compiler and the files GCC uses to build your mod.
 4. **Card preparation is macOS only.** Writing a card's boot markers ([step 7](#step-7-prepare-the-boot-card)) and the one-click Canon Basic cards in steps 2 and 3 are offered on a Mac only. On Windows, prepare the card on a Mac first, tick *My card is already prepared* in step 7, then copy `autoexec.bin` to that card in [step 8](#step-8-copy-autoexecbin).
 
 The Windows app has only been checked by its CI self-test on GitHub's `windows-latest` runner. A real build (toolchain, ROM) and the copy to a card haven't been tried on Windows.
@@ -43,17 +43,19 @@ The Windows app has only been checked by its CI self-test on GitHub's `windows-l
 ### What is different from running it from source
 
 - New build folders go to `R5-builds` in your home folder (`~/R5-builds` on macOS, `%USERPROFILE%\R5-builds` on Windows), because the app's own folder isn't meant to change. Saved progress is the same `~/.r5-build-assistant/wizard.json`, so the app and a checkout share it.
-- The app carries this repository's tracked files from the tagged commit byte for byte (`Read me first.txt` and, on macOS, `R5SourceCommit` in `Contents/Info.plist` name the commit), plus Python `3.13` and Tcl/Tk. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
+- The app carries this repository's tracked files from the tagged commit byte for byte (`Read me first.txt` and, on macOS, `R5SourceCommit` in `Contents/Info.plist` name the commit), plus Python, Tcl/Tk and the host-specific compiler. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
 - On Windows, the programs the app starts (GCC, PowerShell, the builder) run without a console window.
 
 ### Building the app yourself
 
-Each package is built by the `desktop-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it builds the window hidden, shows every step, starts the builder with arguments it refuses, and exits; on Windows it runs from the unzipped folder). To build it yourself on a Mac or a Windows PC, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
+Each package is built by the `desktop-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it opens the wizard, checks the bundled compiler, compiles and links a small test program without camera firmware, and checks the builder entry point; on Windows it runs from the unzipped folder). To build it yourself on a Mac or a Windows PC, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
 
 ```sh
 python3 -m pip install -r packaging/requirements.txt
 python3 packaging/build_app.py --self-test
 ```
+
+The packager fetches the pinned xPack archive for the target machine and checks its SHA-256. To build with an existing archive, pass `--toolchain-archive FILE`. Users of the packaged app can build their mod offline.
 
 It writes the app under `build/desktop-app/dist/` and `build/desktop-app/R5-Mod-Assistant-<version>-<macos|windows>-<arch>.<dmg|zip>`. The version is `VERSION` in [`tools/gui/bundle.py`](../tools/gui/bundle.py).
 
@@ -121,9 +123,9 @@ XPan and custom sounds aren't offered together. The XPan profile is silent by de
 
 ### Step 5. Build tools
 
-The compiler check appears first. If the compiler is missing, the page offers the xPack download and instructions for choosing its bin folder. You can also choose a different folder or search again.
+In the packaged app, wait for the included compiler to pass the check, then continue to **Build your mod**. Experienced users can choose a compatible compiler explicitly.
 
-At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It looks on your `PATH`, under `~/tools/`, your home folder and `~/Downloads/`, in xPack's own install folders and in the usual system folders. Each candidate goes through the builder's toolchain admission (target `arm-none-eabi`, GCC `15.2.1`). If nothing is found, download **xPack GNU Arm Embedded GCC 15.2.1-1.1** yourself, unpack it, and choose its `bin` folder. **This prototype never downloads anything.**
+When running from a source checkout or using the older 0.1.0 app, the assistant searches for an existing GNU Arm 15.2.1 toolchain. If you need one, unpack [xPack GNU Arm Embedded GCC 15.2.1-1.1](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/tag/v15.2.1-1.1) and choose its `bin` folder. Step 5 checks the compiler version and the `arm-none-eabi` target.
 
 ### Step 6. Build and verify
 
@@ -261,7 +263,6 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - No memory estimate *before* building: the margin is reported from `build.json` after a build.
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
-- No consented toolchain download yet. You install the toolchain yourself.
 - **Desktop app: unsigned.** The macOS app has only PyInstaller's ad-hoc signature, so Gatekeeper asks once per version, and Windows SmartScreen may warn about the Windows app (see [Download the app](#download-the-app)). Their CI self-tests run on GitHub's macOS 15 (Intel), latest macOS (Apple Silicon) and latest Windows runners; neither app has been tried on other systems, and GitHub's last Intel macOS runner image is announced to be retired in 2027. The Windows app has not built `autoexec.bin` with a real toolchain and ROM yet.
 - The assistant verifies whether BootDisk is enabled or disabled only when you give it the camera's returned `16 KiB` BootInfo dump (`gang200.bin` or `gang201.bin` from `0xE8004000`, offset `+0x04`); without a returned dump it records only your manual confirmation.
 - **Canon Basic ROM dump and BootDisk steps.** An owner reported that step 2 reached sector read-back on a 16 GB FAT32 card, then macOS returned `-69846` when starting volume verification. The recovery path still needs confirmation on a real card. The Canon Basic card preparation (`SCRIPT` at FAT32 `0x1F0`, `script.req`, `extend.m`) and `gang200.bin`/`gang201.bin` BootInfo readback verifier are tested on synthetic FAT32 images and lab-derived fixtures. `EnableBootDisk()` and `SaveAllRomImageToFile()` match the script used to capture the reference camera's `gang100.bin`/`gang200.bin`/`gang101.bin`/`gang201.bin`, whereas the `DisableBootDisk()` script (`0xE0B38D74`) is derived from ROM disassembly and is **hardware-untested**. Canon Basic requires a `<= 32 GB` FAT32 SDHC card; `> 32 GB` SDXC exFAT cards are refused for Canon Basic even though they work for native `autoexec.bin` booting in step 7.

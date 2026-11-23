@@ -8,7 +8,8 @@ a checkout. Only these things differ when frozen, and they are decided here:
 - the builder runs as the app itself in build mode (`<app> --run-build ARGS`) instead
   of `python tools/build.py ARGS`, because sys.executable is the app's own binary;
 - new build folders go under the user's home, because the app bundle is read-only;
-- `--self-test` creates the window hidden, shows every step and exits (for CI);
+- the included compiler lives alongside the packaged source tree;
+- `--self-test` checks the window and builds a standalone compiler fixture;
 - on Windows, console programs the app starts (GCC, PowerShell, the builder) get no
   console window, because the windowed app has no console for them to share.
 
@@ -21,7 +22,7 @@ import sys
 
 APP_NAME = "R5 Mod Assistant"
 BUNDLE_ID = "io.github.whiteavocad0.r5-mod-assistant"
-VERSION = "0.1.0"  # the one version of the packaged app; release tags are app-v<VERSION>
+VERSION = "0.2.0"  # the one version of the packaged app; release tags are app-v<VERSION>
 
 BUILD_FLAG = "--run-build"
 SELF_TEST_FLAG = "--self-test"
@@ -31,6 +32,14 @@ FROZEN_BUILDS_DIR = Path("R5-builds")  # under the home folder (%USERPROFILE% on
 def is_frozen() -> bool:
     """True inside the packaged app (PyInstaller sets sys.frozen)."""
     return bool(getattr(sys, "frozen", False))
+
+
+def included_toolchain() -> Path | None:
+    """Locate build tools relative to this copy of the app, including after it is moved."""
+    if is_frozen():
+        source_root = Path(__file__).resolve().parents[2]
+        return source_root.parent / "arm-toolchain" / "bin"
+    return None
 
 
 def builder_command(build_py: Path, *, frozen: bool | None = None, executable: str | None = None) -> list[str]:
