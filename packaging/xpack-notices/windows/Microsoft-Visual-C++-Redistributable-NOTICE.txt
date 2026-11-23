@@ -1,0 +1,12 @@
+Microsoft Visual C++ Redistributable files
+
+arm-toolchain/bin/DLLs/vcruntime140.dll and arm-toolchain/bin/DLLs/vcruntime140_1.dll are
+Microsoft Visual C++ redistributable files, Copyright (c) Microsoft Corporation. All rights
+reserved. They are distributed, unchanged from the xPack GNU Arm Embedded GCC 15.2.1-1.1
+Windows archive, under the Visual Studio redistribution terms ("Distributable Code"), for use
+by the bundled Python runtime of GDB. They are not covered by the GNU GPL, this project's
+license or the other licenses in this folder.
+
+Redistribution terms:
+https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files

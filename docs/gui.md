@@ -45,7 +45,12 @@ The Windows app has only been checked by its CI self-test on GitHub's `windows-l
 The included compiler is **xPack GNU Arm Embedded GCC 15.2.1-1.1** (GCC 15.2.1, Binutils 2.45, Newlib 4.5.0, GDB 16.3), which xPack builds from Arm GNU Toolchain 15.2.Rel1 sources. It is **unmodified**: every file of xPack's official archive for your computer is included byte for byte, and the app adds only licence notices. The packager checks this for every package.
 
 - **Licences.** GCC, Binutils and GDB are licensed under the GNU GPL version 3 or later. GCC's runtime libraries carry the GCC Runtime Library Exception, and Newlib and newlib-nano have their own licences. Each component's licence texts are in the `Licenses/GNU Arm toolchain` folder of the `.dmg` or `.zip`, and inside the app in `arm-toolchain/distro-info` (`licenses` from xPack, `R5-notices` from this project). `THIRD-PARTY-NOTICE.txt` there names the toolchain, version, the exact archive and its SHA-256.
-- **Source code.** Each release page that offers a package with the compiler also offers `arm-gnu-toolchain-src-snapshot-15.2.rel1.tar.xz`, Arm's source package for 15.2.Rel1 (about 342 MiB, SHA-256 `06f4e5792b566a771c300ac6f46c3422e23e34f4e3a5d44a8cb5594ead6fb82e`, the value Arm publishes), and `xpack-15.2.1-1.1-corresponding-source.tar.gz` with xPack's build scripts, patches and the other source inputs. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md#gnu-arm-toolchain).
+- **Source code.** Each release page that offers a package with the compiler also offers its complete source code:
+  - `arm-gnu-toolchain-src-snapshot-15.2.rel1.tar.xz`, Arm's source package for 15.2.Rel1 (about 342 MiB, SHA-256 `06f4e5792b566a771c300ac6f46c3422e23e34f4e3a5d44a8cb5594ead6fb82e`, the value Arm publishes). It holds GCC, Newlib, Binutils and GDB.
+  - `xpack-15.2.1-1.1-corresponding-source.tar` (about 519 MiB, SHA-256 `1c1183fe067b958296aed1aa12365e10721bc64e6bb201adead7863afc91e488`). It holds xPack's build scripts and patches and every other component's source, with a `MANIFEST.tsv`, and is also kept on the [`toolchain-src-xpack-15.2.1-1.1`](https://github.com/WhiteAvocad0/canon-r5-mod/releases/tag/toolchain-src-xpack-15.2.1-1.1) release.
+
+  See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md#source-code-of-the-bundled-toolchain).
+- **Microsoft files (Windows).** The Windows package includes `vcruntime140.dll` and `vcruntime140_1.dll`, Microsoft Visual C++ redistributable files distributed under the Visual Studio redistribution terms. A notice is in `Licenses/GNU Arm toolchain`.
 
 ### What is different from running it from source
 
