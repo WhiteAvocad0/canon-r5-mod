@@ -603,20 +603,12 @@ OP_STUB = r'''
 #include "combo_observe.h"
 extern uint32_t host_us;
 void host_fz_reset(void);
-/* Canon's GUI event post (E04A787A): slot index [0x5488] taken and advanced mod 0x401, the
- * slot {class, code, arg2, arg3} written, the slot pointer queued. host_post_asserts counts
- * posts into a queue deeper than OP_GUI_QUEUE_DEPTH_MAX (the test's "full" queue: Err 70). */
-uint32_t host_slots[OP_GUI_SLOT_COUNT][4], host_post_index, host_post_asserts;
-extern uintptr_t one_press_host_slots;
+/* Canon's GUI event post (E04A787A) asserts (Err 70) when its 1024-message queue is full:
+ * host_post_asserts counts posts at a depth of OP_GUI_QUEUE_CAPACITY or more; op_post_depth
+ * keeps the depth each post saw. */
+uint32_t host_post_asserts;
 extern void (*one_press_host_before_claim)(void);
-static uint32_t rd(uint32_t a) { return a == OP_GUI_POST_INDEX ? host_post_index : combo_observe_api.read(a); }
-uintptr_t host_canon_post(uint32_t c, uint32_t code, uint32_t a2, uint32_t a3)
-{
-    uint32_t i = host_post_index;
-    host_post_index = (i + 1u) % OP_GUI_SLOT_COUNT;
-    host_slots[i][0] = c; host_slots[i][1] = code; host_slots[i][2] = a2; host_slots[i][3] = a3;
-    return (uintptr_t)host_slots[i];
-}
+static uint32_t rd(uint32_t a) { return combo_observe_api.read(a); }
 void host_set_before_claim(void (*f)(void)) { one_press_host_before_claim = f; }
 static uint32_t tm(void) { return host_us; }
 char op_log[512]; uint32_t op_log_n;
@@ -640,18 +632,13 @@ static int32_t o_fm(uint32_t h, uint32_t *info)
 }
 static uint32_t o_xpan(void) { return op_xpan; }
 /* E04A787A(class, code, arg2, arg3): queued for GuiMainTask; the tests dispatch the events. */
-uint32_t op_posts[16][4], op_post_calls; uintptr_t op_post_slots[16];
-uint32_t host_interleave_code; uintptr_t host_interleaved_slot;
+uint32_t op_posts[16][4], op_post_calls, op_post_depth[16];
 static void o_post(uint32_t c, uint32_t code, uint32_t a2, uint32_t a3)
 {
     lg('P');
-    if (combo_observe_api.read(OP_GUI_QUEUE + 4u) > OP_GUI_QUEUE_DEPTH_MAX) host_post_asserts++;
-    if (host_interleave_code) { /* another task posts between the worker's index read and this post */
-        host_interleaved_slot = host_canon_post(0u, host_interleave_code, 0u, 1u);
-        host_interleave_code = 0u;
-    }
-    uintptr_t slot = host_canon_post(c, code, a2, a3);
-    if (op_post_calls < 16) { op_posts[op_post_calls][0] = c; op_posts[op_post_calls][1] = code; op_posts[op_post_calls][2] = a2; op_posts[op_post_calls][3] = a3; op_post_slots[op_post_calls] = slot; }
+    uint32_t depth = combo_observe_api.read(OP_GUI_QUEUE + 4u);
+    if (depth >= OP_GUI_QUEUE_CAPACITY) host_post_asserts++;
+    if (op_post_calls < 16) { op_posts[op_post_calls][0] = c; op_posts[op_post_calls][1] = code; op_posts[op_post_calls][2] = a2; op_posts[op_post_calls][3] = a3; op_post_depth[op_post_calls] = depth; }
     op_post_calls++;
 }
 static void o_release(void) { lg('R'); }
@@ -681,8 +668,8 @@ void host_op_reset(void)
     memset(&one_press_defer, 0, sizeof one_press_defer); memset(op_fm_good, 0, sizeof op_fm_good);
     memset(op_fm_seen, 0, sizeof op_fm_seen); op_xpan = 0u; op_fm_sets_busy = 0u;
     memset(op_posts, 0, sizeof op_posts); op_post_calls = 0u; one_press_auto = one_press_clear_visit = 0u;
-    one_press_rel_mark = one_press_visit_gen = 0u; memset(host_slots, 0, sizeof host_slots); host_post_index = host_post_asserts = 0u;
-    one_press_host_slots = (uintptr_t)host_slots; one_press_host_before_claim = 0; memset(op_post_slots, 0, sizeof op_post_slots); host_interleave_code = 0u; host_interleaved_slot = 0u;
+    one_press_held_visit = one_press_visit_gen = 0u; host_post_asserts = 0u;
+    one_press_host_before_claim = 0; memset(op_post_depth, 0, sizeof op_post_depth);
     op_log_n = 0; op_log[0] = 0; op_end_calls = op_start_calls = op_fm_calls = op_fm_subs = op_fm_handle = op_start_handle = 0;
     op_gui_busy = op_indev_busy = 0; op_fm_rc = 0;
     memset(op_fm_words, 0, sizeof op_fm_words); memset(&inject_ring, 0, sizeof inject_ring);
@@ -1005,6 +992,7 @@ static py_read_fn py_read; static py_hook_fn py_hook;
 volatile uint32_t combo_worker_tick;
 struct combo_observe_state combo_observe_state; /* one_press.c reads the drain's event-sequence words */
 uint32_t combo_undrained(void) { return 0u; }
+uint32_t combo_button_index(uint32_t code, uint32_t *is_release) { (void)code; *is_release = 0u; return 0u; }
 uint32_t host_us = 1000u, host_us_step = 0u, host_cpu = 0x80000000u;
 void host_set(py_read_fn r, py_hook_fn h) { py_read = r; py_hook = h; }
 static uint32_t h_read(uint32_t a) { return py_read(a); }

@@ -491,23 +491,28 @@ CODE static uint32_t user_key(uint32_t code, uint32_t flags)
 }
 
 /* Read only: the records the hook has published and the drain not yet handled (the drain
- * advances next_seq only after a record's effects). On GuiMainTask the hook is the same
- * task, so the records are complete; on the worker a record is used only if its seq word
- * still matches. More than the ring can hold: unknown, both flags. */
+ * advances next_seq only after a record's effects). Each record is checked before and after
+ * its copy as the drain does (its seq word, and the hook not lapping it), so a torn or
+ * lapped scan stops at once and reports everything (fail closed). Before the worker's
+ * first step: everything. */
+#define COMBO_UNDRAINED_ALL (COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR | COMBO_UNDRAINED_ANY)
 CODE uint32_t combo_undrained(void)
 {
     uint32_t next = __atomic_load_n(&S.next_seq, __ATOMIC_ACQUIRE), out = 0u;
     uint32_t written = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_ACQUIRE);
-    if (!next)
-        next = 1u;
-    if ((int32_t)(written - next) >= (int32_t)COMBO_RING_MASK)
-        return COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR;
+    if (!__atomic_load_n(&S.steps_armed_init, __ATOMIC_ACQUIRE))
+        return COMBO_UNDRAINED_ALL;
     for (uint32_t seq = next; (int32_t)(written - seq) >= 0; ++seq) {
         const struct combo_ring_entry *e = &combo_hook_ring.entries[(seq - 1u) & COMBO_RING_MASK];
         if (__atomic_load_n(&e->seq, __ATOMIC_ACQUIRE) != seq)
-            return COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR;
+            return COMBO_UNDRAINED_ALL;
         uint32_t code = __atomic_load_n(&e->code_tick, __ATOMIC_RELAXED) & 0xffffu;
         uint32_t flags = __atomic_load_n(&e->context, __ATOMIC_RELAXED) >> 24;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&e->seq, __ATOMIC_RELAXED) != seq ||
+            __atomic_load_n(&combo_hook_ring.written, __ATOMIC_RELAXED) - seq >= COMBO_RING_MASK)
+            return COMBO_UNDRAINED_ALL; /* rewritten (or being rewritten) while copied */
+        out |= COMBO_UNDRAINED_ANY;
         if (flags & COMBO_F_GEN_UNEQUAL)
             out |= COMBO_UNDRAINED_CLEAR;
         if (user_key(code, flags))
@@ -567,8 +572,6 @@ CODE static void lost_records(uint32_t now)
 
 CODE static void drain(uint32_t now)
 {
-    if (!S.next_seq)
-        S.next_seq = 1u;
     for (uint32_t n = 0; n < COMBO_RING_ENTRIES; ++n) {
         uint32_t want = S.next_seq;
         struct combo_ring_entry *e = &combo_hook_ring.entries[(want - 1u) & COMBO_RING_MASK];
@@ -621,14 +624,16 @@ CODE void combo_observe_step(void)
 {
     S.steps = sat_inc(S.steps);
     if (!S.steps_armed_init) {
-        S.steps_armed_init = 1u;
+        S.next_seq = 1u; /* the hook's first seq; after 2^32 records seq 0 is a real record */
         for (uint32_t p = 0; p < COMBO_PAIR_COUNT; ++p)
             S.armed[p] = 1u;
+        __atomic_store_n(&S.steps_armed_init, 1u, __ATOMIC_RELEASE);
     }
     /* The tick the hook stamps; one writer (this worker), one increment per step. */
     uint32_t now = combo_worker_tick + 1u;
     __atomic_store_n(&combo_worker_tick, now, __ATOMIC_RELEASE);
     counter_tick(now);
+    one_press_visit(now); /* before the drain: a key or a clear read on the entry tick belongs to the visit */
     drain(now);
     display_tick(now);
     capture_feedback_step();

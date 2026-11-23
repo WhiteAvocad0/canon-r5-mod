@@ -149,6 +149,7 @@
 #define OP_DW_NO_SOURCE 7u    /* no usable view and no last-good source: two bips, held for this visit */
 #define OP_DW_STARTED 8u      /* the job was started */
 #define OP_DW_LATCHED 9u      /* one-press latched off after a timeout: dropped */
+#define OP_DW_AUTO_HELD 10u   /* an automatic release was held in this playback visit: wait for the next visit */
 /* one_press_defer.xpan: the playback cache's AspectInfo pre-check of the latest view checked */
 #define OP_XPAN_UNKNOWN 0u /* no admitted tuple for the shown image (the dry run decides) */
 #define OP_XPAN_NO 1u      /* a known tuple that is not XPan */
@@ -199,68 +200,63 @@
  *    OP_DIRECTION_FIRST..OP_MULTI_CONTROLLER_LAST, or a lost hook record; only the
  *    playback press itself, stamped with the visit's first tick, does not count). INFO
  *    by hand then works as before.
- *  - The release is posted at least OP_AUTO_RELEASE_TICKS after the press, and only
- *    into a quiet queue: ROM 2.2.1 E04A787A asserts (Err 70) when its queue send fails,
- *    and raises the depth word only after the send. While the queue is not quiet it
- *    waits; after OP_AUTO_RELEASE_WAIT_TICKS more it is posted with a clear still
- *    pending, but never above OP_GUI_QUEUE_DEPTH_MAX (it keeps waiting). A press thus
- *    always gets its release once the queue drains.
- *  - The release's verdict is OK only when: not delayed (posted exactly
- *    OP_AUTO_RELEASE_TICKS after the press, into a quiet queue); the visit began before
- *    the press; the hook saw our INFO press (OP_AUTO_SEEN) and no user key since it
- *    (OP_AUTO_USER_KEY: another button press, a second INFO press, a joystick or
- *    direction-key code, a lost record), drained or not; [0x92D4] is still E08ABFF5; the
- *    mode word is playback; no S4 sign; idle and not latched. Otherwise
- *    OP_AI_RELEASE_HELD. A user key the drain handles after an OK verdict turns it held.
- *  - Our release is identified by its GUI event slot, never by its content (a physical
- *    INFO release is the same event). ROM 2.2.1 E04A787A: the slot index is [ctx+0x14]
- *    (OP_GUI_POST_INDEX), taken and advanced mod 0x401 with IRQs off; the slot is
- *    OP_GUI_SLOTS + 16 * index (literal E04A7BFC), and that pointer is the message
- *    GuiMainTask receives (E04A7762) and hands to the class-0 handler, our H2 hook
- *    (E04A7782). Before the post the worker arms one_press_rel_mark with the verdict and
- *    the index it read; right after, it narrows the range to the slots posted meanwhile
- *    (one slot when no other task posted in between). one_press_key decides only on an
- *    INFO release from a slot in that range: a held verdict, or a user key the hook has
- *    recorded but the drain not yet handled, starts nothing (OP_DW_SETTLING: no job, no
- *    bips, the deferral kept for INFO by hand). An INFO release from any other slot is
- *    an INFO by hand. A one-slot mark is consumed by its release; any mark is forgotten
- *    once OP_REL_FORGET_POSTS more events were posted.
+ *  - The release is posted at least OP_AUTO_RELEASE_TICKS after the press, into a quiet
+ *    queue (clear generations equal, depth <= OP_GUI_QUEUE_DEPTH_MAX, our own conservative
+ *    gate). While the queue is not quiet it waits; after OP_AUTO_RELEASE_WAIT_TICKS more it
+ *    is posted whenever the sampled depth is below OP_GUI_QUEUE_POST_LIMIT. ROM 2.2.1: the
+ *    queue is "GuiMainQueue", created with 1024 messages (E04A77F6..E04A780A,
+ *    OP_GUI_QUEUE_CAPACITY); E07E6D2E returns 13 only when the queue is full (E07EF414
+ *    returns -2), and E04A787A asserts on any failure (line 890), raising the depth word
+ *    only after the send. The margin covers other posters between our sample and our post.
+ *    So a press gets its release within 1.1 s unless the GUI queue holds 768 or more events.
+ *  - Its verdict is OK only when: not delayed (posted exactly OP_AUTO_RELEASE_TICKS after
+ *    the press, into a quiet queue); the visit began before the press; the hook saw our
+ *    INFO press (OP_AUTO_SEEN) and no user key since it (OP_AUTO_USER_KEY: another button
+ *    press, a second INFO press, a joystick or direction-key code, a lost record), drained
+ *    or not; [0x92D4] is still E08ABFF5; the mode word is playback; no S4 sign; idle and not
+ *    latched. Otherwise OP_AI_RELEASE_HELD, and the visit is held: one_press_held_visit =
+ *    play_since, published before the post. While it equals the current visit, every INFO
+ *    release (ours or by hand) starts nothing (OP_DW_AUTO_HELD: no job, no bips, the
+ *    deferral kept) and no press is posted; the next playback visit delivers the screenshot
+ *    (by the automatic INFO or INFO by hand). A user key the drain handles while our
+ *    release is out, or one the hook has recorded but the drain not yet handled when an
+ *    INFO release arrives then, holds the visit too. Our release is not told apart from an
+ *    INFO by hand: Canon's queue is FIFO, so it is dispatched before any event posted after
+ *    it, including those that leave playback.
+ *  - One release of ours at a time: after posting it (OP_AUTO_RELEASED) the worker posts
+ *    no press until the drain has seen an INFO release recorded after it (ours, or one
+ *    queued ahead of it, which FIFO dispatches first) or the playback visit has ended. A
+ *    new press also needs a new deferral and 2 s of a settled, quiet visit.
  *  - Row R5CA A= (combo_observe.h CC_FMT_OP_AUTO). */
 #define OP_GUI_POST 0xe04a787bu            /* Thumb entry: GUI event post (class, code, arg2, arg3) */
 #define OP_UIOPE_KEY_HANDLER 0x000092d4u   /* [COMBO_UIOPE_MODE + 4]: E08ABFA0's key handler */
 #define OP_UIOPE_POST_DIRECT 0xe08abff5u   /* UiOpe mode 2 handler: E04A787A(0, code, 0, arg) */
 #define OP_GUI_QUEUE 0x00005474u           /* = COMBO_GUI_CONTEXT: +0 / +8 clear generations, +4 queue depth */
 #define OP_GUI_QUEUE_DEPTH_MAX 4u          /* posted only while at most this many GUI events are queued */
-#define OP_GUI_POST_INDEX 0x00005488u      /* [ctx+0x14]: the next GUI event slot index (E04A7892..E04A789C) */
-#define OP_GUI_SLOTS 0x00082454u           /* GUI event slot 0 (literal E04A7BFC); 16 bytes each */
-#define OP_GUI_SLOT_COUNT 0x401u           /* the slot ring (E04A788E) */
+#define OP_GUI_QUEUE_CAPACITY 1024u       /* "GuiMainQueue" messages (E04A77F6); a send to a full queue asserts */
+#define OP_GUI_QUEUE_POST_LIMIT 768u      /* after the wait, the release is posted only below this sampled depth */
 #define OP_INFO_PRESS 14u                  /* COMBO_BUTTONS INFO; SwINFO_Button's press code */
 #define OP_INFO_RELEASE 15u                /* = COMBO_INFO_RELEASE */
 #define OP_PLAY_PRESS 18u                  /* COMBO_BUTTONS PLAY: the press that opens playback */
 #define OP_AUTO_SETTLE_TICKS 100u          /* 2 s of a stable playback visit before the press (the human INFO: 0.5 s) */
 #define OP_AUTO_QUIET_TICKS 25u            /* 0.5 s without a class-0 event through the H2 hook */
 #define OP_AUTO_RELEASE_TICKS 5u           /* 100 ms from the press to the release */
-#define OP_AUTO_RELEASE_WAIT_TICKS 50u     /* 1 s of a busy queue, then the release goes with a clear pending (held) */
-#define OP_REL_FORGET_POSTS 512u           /* a release mark older than this many GUI posts is forgotten */
+#define OP_AUTO_RELEASE_WAIT_TICKS 50u     /* 1 s of a busy queue, then the release goes below OP_GUI_QUEUE_POST_LIMIT (held) */
 /* ROM 2.2.1: SwDirectionKeyCBR E0108B02 posts 0x76..0x7F (state 0 -> 0x76 at E0108B3C) and
  * SwSubDialMultiControlerCBR E0108AA2 0x80..0x88, both through E08ABFA0(code, 1): class-0
  * events 118..136. Canon's own posts of these codes are class 2. */
 #define OP_DIRECTION_FIRST 118u
 #define OP_MULTI_CONTROLLER_LAST 136u
 /* one_press_auto (worker): tick << OP_AUTO_TICK_SHIFT | flags | OP_AUTO_PRESSED while our
- * press waits for its release, else 0. Flags (the combo drain): OP_AUTO_SEEN, OP_AUTO_USER_KEY. */
+ * press waits for its release (flags from the combo drain: OP_AUTO_SEEN, OP_AUTO_USER_KEY);
+ * OP_AUTO_RELEASED while our release is out; else 0. */
 #define OP_AUTO_PRESSED 1u
+#define OP_AUTO_RELEASED 2u
 #define OP_AUTO_STATE 3u
 #define OP_AUTO_SEEN 4u
 #define OP_AUTO_USER_KEY 8u
 #define OP_AUTO_TICK_SHIFT 4u
 #define OP_AUTO_TICK_MASK 0x0fffffffu
-/* one_press_rel_mark: OP_REL_ARMED | OP_REL_OK (verdict) | count << OP_REL_COUNT_SHIFT | first slot
- * index; count 0 = not narrowed yet (every slot posted since the first). */
-#define OP_REL_ARMED 0x80000000u
-#define OP_REL_OK 0x40000000u
-#define OP_REL_INDEX_MASK 0x7ffu
-#define OP_REL_COUNT_SHIFT 11u
 /* one_press_defer.defer: the worker's claim while it posts its INFO press */
 #define OP_DEFER_CLAIM 2u
 /* one_press_defer.auto_why: the latest worker decision while a deferral was not handled */
@@ -280,7 +276,7 @@
 #define OP_AI_KEPT 13u         /* a playback RATE refused at its release: INFO by hand only */
 #define OP_AI_LEAVING 14u      /* S4: a sign of a GUI queue clear in this playback visit */
 #define OP_AI_GUI_EVENTS 15u   /* a GUI event less than OP_AUTO_QUIET_TICKS ago, or a key not drained yet */
-#define OP_AI_RELEASE_HELD 16u /* the release verdict failed: our release starts nothing */
+#define OP_AI_RELEASE_HELD 16u /* the release verdict failed: this playback visit is held */
 #define OP_AI_RELEASE_WAIT 17u /* the release waits for a quiet GUI queue */
 #define OP_AI_CONSUMED 18u     /* GuiMainTask took the deferral first: no post */
 
@@ -342,9 +338,8 @@ struct one_press_defer {
 };
 _Static_assert(sizeof(struct one_press_defer) == 64u, "one-press defer ABI");
 extern struct one_press_defer one_press_defer;
-/* GuiMainTask, H2 hook: an INFO release (COMBO_INFO_RELEASE) dispatched from GUI event
- * slot `slot` (the hook's r0); other codes are ignored. */
-void one_press_key(uint32_t code, uintptr_t slot);
+/* GuiMainTask, H2 hook: an INFO release (COMBO_INFO_RELEASE); other codes are ignored. */
+void one_press_key(uint32_t code);
 /* worker, combo_observe.c drain: a button press, a joystick or direction-key code
  * (OP_DIRECTION_FIRST..OP_MULTI_CONTROLLER_LAST) the H2 hook recorded at worker tick
  * `tick`, or code 0 for lost hook records (at the drain tick). */
@@ -353,7 +348,7 @@ void one_press_user_key(uint32_t tick, uint32_t code);
 void one_press_queue_clear(void);
 extern uint32_t one_press_clear_visit; /* the play_since of the visit with a queue clear; 0 = none (worker) */
 extern uint32_t one_press_auto;        /* OP_AUTO_*: our press waiting for its release (worker) */
-extern uint32_t one_press_rel_mark;     /* OP_REL_*: our posted release (worker arms; GuiMainTask consumes) */
+extern uint32_t one_press_held_visit;  /* the visit in which an automatic release was held (worker) */
 extern uint32_t one_press_visit_gen;   /* [0x5474] when the worker first saw this playback visit (S4) */
 
 /* GuiMainTask, RATE admission (before any FIO): 1 while the state is not IDLE (refused). */
@@ -365,7 +360,8 @@ uint32_t one_press_dry_wanted(void);          /* H3: 1 while a job waits for its
 void one_press_dry(uint32_t ok, uint32_t width, uint32_t height);
 void one_press_done(uint32_t result);         /* Canon: doneCBR, InnerDevelopMgr */
 void one_press_end(uint32_t arg);             /* Canon: endCBR */
-void one_press_step(uint32_t tick);           /* worker: the playback visit, the automatic INFO and the timeout */
+void one_press_visit(uint32_t tick);          /* worker, before the drain: the playback visit */
+void one_press_step(uint32_t tick);           /* worker, after the drain: the automatic INFO and the timeout */
 void one_press_report(void);                  /* worker: R5CA rows */
 #endif
 #endif
