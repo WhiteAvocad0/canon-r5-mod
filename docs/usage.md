@@ -225,7 +225,7 @@ They count presses, submissions of both cues, settled/stopped/rejected/timeout o
 
 ### One-press screenshot (`--screenshot`)
 
-`--screenshot rate` (an `xpan-crop` option, off by default) makes RATE in ▶ save a 2400×1600 JPEG of the whole screen next to your photos. RATE in live view or a menu saves the screen, and the JPEG follows when you next press INFO in ▶. Create the folder `DCIM/R5SHOTS` on the SD card before the first use. Add it to any `xpan-crop` command, alone or with the record cues:
+`--screenshot rate` (an `xpan-crop` option, off by default) makes RATE in ▶ save a 2400×1600 JPEG of the whole screen next to your photos. RATE in live view or a menu saves the screen, and the JPEG follows by itself about 2.5–3 s after you next open ▶ (the camera presses INFO for you; any button you press first cancels that, and INFO then delivers it). Create the folder `DCIM/R5SHOTS` on the SD card before the first use. Add it to any `xpan-crop` command, alone or with the record cues:
 
 ```sh
 python3 tools/build.py --profile xpan-crop \
@@ -235,7 +235,7 @@ python3 tools/build.py --profile xpan-crop \
   --output build/r5-xpan-screenshot
 ```
 
-Test it like this: show a JPEG photo full screen in ▶, press RATE once, wait for the click, and check that a new 2400×1600 JPEG appears after it. Then press RATE once in live view: you should hear a click and get no JPEG yet; press ▶, wait until the photo is shown, press INFO, and check that a new 2400×1600 JPEG of the live-view screen appears. Finally show an XPan photo in ▶ and press RATE: after one 3:2 screenshot this session, it should give a JPEG (made from that last good photo) instead of bips. The sounds, the files it writes and the evidence boundary (images with this version are hardware-untested) are in [docs/screenshot.md](screenshot.md).
+Test it like this: show a JPEG photo full screen in ▶, press RATE once, wait for the click, and check that a new 2400×1600 JPEG appears after it. Then press RATE once in live view: you should hear a click and get no JPEG yet; press ▶, touch nothing, and check that the information display changes once and a new 2400×1600 JPEG of the live-view screen appears about 2.5–3 s later. Repeat with a joystick move right after ▶: nothing should happen on its own, and INFO should then deliver the JPEG. Finally show an XPan photo in ▶ and press RATE: after one 3:2 screenshot this session, it should give a JPEG (made from that last good photo) instead of bips. The sounds, the files it writes and the evidence boundary (images with this version are hardware-untested) are in [docs/screenshot.md](screenshot.md).
 
 ---
 
