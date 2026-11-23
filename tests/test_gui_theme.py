@@ -344,7 +344,7 @@ class WindowSmokeTests(WindowFixture):
         w = self.wizard_mod
         caption = lambda step: app.side_rows[step]["parts"][4].cget("text")
         self.assertIn("SD card ≤ 32 GB", caption(w.ROM))
-        self.assertIn("Any SD card", caption(w.BOOTCARD))
+        self.assertIn("Shooting card", caption(w.BOOTCARD))
         self.assertEqual(caption(w.FEATURES), "To do")
         badges = {str(widget.cget("text")) for widget in self._descendants(app.panels[w.ROM][0])
                   if widget.winfo_class() == "TLabel" and "CardBadge" in str(widget.cget("style"))}

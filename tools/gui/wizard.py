@@ -29,6 +29,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from gui import bundle
 from gui.i18n import LANGUAGES
 from messages import joined, message, phrase
 
@@ -77,7 +78,7 @@ class StepInfo:
 
 
 STEPS = (
-    StepInfo(CAMERA, 1, "Check your camera", "Make sure you have an original EOS R5 on firmware 2.2.1.", True),
+    StepInfo(CAMERA, 1, "Check your camera", "Check the model on the camera body and the firmware version in the menu.", True),
     StepInfo(ROM, 2, "Copy camera firmware", "Your own copy of the camera's firmware, needed to build (one time, read-only).", True),
     StepInfo(BOOTDISK, 3, "Enable card startup", "A one-time, permanent camera setting that lets it start a program "
              "from the card.", True),
@@ -161,7 +162,9 @@ class Wizard:
         self.saved.profile, self.saved.options = self.a.profile, dict(self.a.options)
         self.saved.rom_path = str(self.a.rom_path) if self.a.rom_path else None
         self.saved.inputs = {k: str(v) for k, v in self.a.input_paths.items() if v}
-        self.saved.toolchain_path = str(self.a.toolchain_path) if self.a.toolchain_path else None
+        # The included compiler moves with the app. Persist only a separate installation.
+        compiler = self.a.toolchain_path
+        self.saved.toolchain_path = str(compiler) if compiler and compiler != bundle.included_toolchain() else None
         self.saved.saved_at = datetime.now().astimezone().isoformat(timespec="seconds")
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +290,7 @@ class Wizard:
     def status(self, step_id: str) -> StepStatus:
         a, s = self.a, self.saved
         if step_id == CAMERA:
-            return StepStatus(DONE, "Original EOS R5 on firmware 2.2.1, confirmed by you.") if s.camera_confirmed \
+            return StepStatus(DONE, "Camera and firmware confirmed.") if s.camera_confirmed \
                 else StepStatus(NEEDS_ACTION, "Check your camera's model and firmware, then confirm.")
         if step_id == ROM:
             check = a.rom_check()
@@ -472,7 +475,7 @@ class Wizard:
 
 
 SMALL_CARD, ANY_CARD = "small", "any"
-CARD_BADGES = {SMALL_CARD: "SD card ≤ 32 GB", ANY_CARD: "Any SD card"}  # highlighted on the step and sidebar
+CARD_BADGES = {SMALL_CARD: "SD card ≤ 32 GB", ANY_CARD: "Shooting card"}  # highlighted on the step and sidebar
 
 
 @dataclass(frozen=True)
@@ -505,23 +508,21 @@ _SMALL_CARD = Need("SD card", "32 GB or smaller (SDHC, FAT32), formatted in the 
 
 GUIDE = {
     CAMERA: Guide(
-        "This mod only works on an original Canon EOS R5 with firmware 2.2.1. Other models (R5 C, R5 Mark II, "
-        "R6 family) and other firmware versions are not supported, and using it there can damage your camera.",
+        "This setup is for the original Canon EOS R5 running firmware 2.2.1.",
         ("On the camera, press MENU and open the yellow Setup (wrench) tab.",
-         "Go to the last Setup page and find 'Firmware'. It must say 'Firmware Ver. 2.2.1'. Never upgrade or "
-         "downgrade the firmware to make it fit.",
-         "Check the camera's top or front: it must say 'EOS R5', with no 'C' or 'Mark II'.",
+         "On the last Setup page, open Firmware to see the installed version.",
+         "Read the model name on the camera body.",
          "Tick the box below."),
-        "Everything the builder links against is checked against an exact R5 2.2.1 ROM (strict admission, no "
-        "--force). The camera check here is your confirmation; the ROM check in step 2 verifies the firmware "
-        "itself.",
-        (Need("Camera", "Your EOS R5 on firmware 2.2.1, with a fully charged battery."),
+        "If the model or firmware differs, stop here. Keep the firmware version already installed on your "
+        "camera. Step 2 checks the firmware file itself.",
+        (Need("Camera", "A fully charged camera battery."),
          Need("SD card", "Steps 2 and 3 (ROM dump and BootDisk): 32 GB or smaller (SDHC). You only need these "
               "steps once.", SMALL_CARD),
-         Need("SD card", "Steps 7 to 9 (the mod itself): any size, formatted in the camera.", ANY_CARD),
+         Need("SD card", "Steps 7 to 9: the SD card you use for shooting. Larger SDXC cards can be used here.", ANY_CARD),
          Need("Computer", "A Mac with a built-in SD card slot for the card steps (2, 3 and 7). On Windows or "
               "Linux the app can build and copy, but not prepare cards."),
-         Need("Compiler", "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish "
+         Need("Compiler", "GNU Arm 15.2.1 is included in this app." if bundle.is_frozen() else
+              "The free GNU Arm 15.2.1 compiler (step 5). Start the download now: it can finish "
               "while you do the camera steps."),
          Need("Camera visits", "Up to three: the ROM dump (step 2), BootDisk (step 3) and the first test "
               "(step 9)."))),
@@ -557,11 +558,13 @@ GUIDE = {
          "For XPan, choose a movie record cue or the one-press screenshot if you want them. For Custom sounds, "
          "choose your startup and shutter WAV files.",
          "Press Next to use these features."),
-        "The choices come from config/features.json, the same manifest the command-line builder uses, so the "
-        "window can't offer a combination the builder would refuse. Every public build is hardware-untested; "
-        "the status lines say what was tested on private lab builds.",
+        "Step 9 walks you through testing the features you choose on your camera.",
         (Need("Files", "Custom sounds only: two WAV files, 48 kHz, mono, 16-bit PCM."),)),
     TOOLCHAIN: Guide(
+        "GNU Arm 15.2.1 is included in this app.",
+        "When the compiler check passes, press Next.",
+        "To use another installation of GNU Arm 15.2.1, choose its bin folder. "
+        "Choose ‘Use included compiler’ to switch back.") if bundle.is_frozen() else Guide(
         "A free compiler (GNU Arm 15.2.1) turns the source code into autoexec.bin on your computer.",
         ("Look at the status line below: the app searches for the compiler when it starts. If it was found, "
          "press Next.",
@@ -580,18 +583,16 @@ GUIDE = {
         "The build runs python3 tools/build.py with the exact arguments shown in the log, in a separate process. "
         "The result is re-hashed and compared with build.json, and BUILD-CONTENTS.txt lists what is inside."),
     BOOTCARD: Guide(
-        "The camera only starts autoexec.bin from a card that carries two short boot markers. Formatting a card "
-        "removes them, so this is needed once per format.",
+        "You can switch cards now. If the small setup card is still in your computer, eject it and insert "
+        "your shooting card. You can use an SDXC card larger than 32 GB from this step onward.",
         ("Copy your photos and videos from the card to your computer.",
-         "Format the card IN THE CAMERA. This erases it.",
-         "Put the card in this Mac's SD card slot and press 'Find SD cards'.",
+         "If the shooting card needs formatting, format it in the camera after backing up its contents.",
+         "Insert the shooting card into the Mac’s built-in SD slot. Click ‘Find SD cards’ to refresh the list.",
          "Choose the card in the list and press 'Prepare card'. Check the card's name in the dialog and press OK.",
          "If your card is already prepared, choose 'My card is already prepared'."),
-        "Only the boot-marker sectors are written (FAT32: 1 sector; exFAT: 4), after an automatic, verified "
-        "backup and one confirmation; Undo restores the backup. Raw access goes through macOS authopen; nothing "
-        "runs as root. Verified on the owner's Mac with a 128 GB exFAT card; FAT32 is untested.",
-        (Need("SD card", "Any size, formatted in the camera. Verified with a 128 GB exFAT card; FAT32 cards are "
-              "untested.", ANY_CARD), _MAC)),
+        "The assistant backs up the card’s boot sectors before preparing it. Formatting removes the "
+        "startup markers. If you format the card again, repeat this step.",
+        (Need("SD card", "A shooting card formatted in the camera (SDHC or SDXC).", ANY_CARD), _MAC)),
     COPY: Guide(
         "Copy the verified build to the card you prepared in step 7. The camera loads AUTOEXEC.BIN from this card.",
         ("Keep the card from step 7 in the computer. If it is mounted, it is chosen for you.",

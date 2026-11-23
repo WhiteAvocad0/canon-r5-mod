@@ -1,9 +1,11 @@
 """The "Prepare card" step's flow and invariants, without a display or a device."""
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -11,8 +13,10 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import cardprep_images as ci
 from cardprep import devices, workflow
+from gui.app import App
+from gui.i18n import Translator
 from gui.prep_state import FORMAT_WARNING, PrepState
-from test_cardprep_workflow import ImageOps
+from test_cardprep_workflow import CHECKER_START_REFUSAL, ImageOps
 
 BOOT = {"disk0"}
 CARD = devices.classify_macos(ci.mac_whole(), [ci.mac_part()], BOOT)
@@ -76,8 +80,8 @@ class Choosing(Images):
             self.assertIn("macOS only", " ".join(s.blockers()))
 
     def test_warning_text(self):
-        self.assertIn("IN THE CAMERA", FORMAT_WARNING)
-        self.assertIn("copy your photos and videos", FORMAT_WARNING)
+        self.assertIn("Back up your photos and videos", FORMAT_WARNING)
+        self.assertIn("erases everything", FORMAT_WARNING)
 
 
 class Prepare(Images):
@@ -187,6 +191,144 @@ class Restore(Images):
         self.assertIn(str(latest.folder), text)
         self.assertIn(str(undo.backup.folder), text)
         workflow.cancel(undo, self.ops)
+
+
+class DialogRecovery(Images):
+    """Run the wizard callbacks headless against the disk image, including any retry."""
+
+    def setUp(self):
+        super().setUp()
+        app = self.app = App.__new__(App)
+        app.prep = self.state()
+        app.refresh = mock.Mock()
+        app.cbasic_busy, app.copying = None, False
+        app.bootdisk_ack = mock.Mock()
+        app.bootdisk_ack.get.return_value = True
+        app.words = Translator("en")
+        app.filedialog, app.messagebox, app.wizard = mock.Mock(), mock.Mock(), mock.Mock()
+        app.messagebox.askokcancel.return_value = True
+        app.messagebox.askretrycancel.return_value = False
+        app._stage_cbasic_folder_impl = mock.Mock()
+        self.status = mock.Mock()
+
+        def background(work, done):
+            try:
+                result = work()
+            except Exception as exc:
+                result = exc
+            done(result)
+
+        app._background = background
+        self.enterContext(mock.patch.object(devices, "MacOps", return_value=self.ops))
+        self.start = self.enterContext(mock.patch.object(workflow, "start", wraps=workflow.start))
+        self.ops.unmounted_verify = self.ops.mounted_verify = (False, CHECKER_START_REFUSAL)
+
+    def test_script_write_retry_preserves_task_and_uses_fresh_mount(self):
+        mounted = self.tmp / "new-mount"
+
+        def retry(*_args, **_kwargs):
+            self.ops.unmounted_verify = (True, "passed")
+            self.ops.chosen = replace(CARD, mount_point=str(mounted))
+            return True
+
+        self.app.messagebox.askretrycancel.side_effect = retry
+        self.app._prepare_cbasic_card("disable_bootdisk", self.status)
+        self.assertEqual([call.kwargs["verify_only"] for call in self.start.call_args_list], [False, True])
+        self.assertEqual(self.ops.calls.count("write"), 1)
+        self.assertEqual(self.ops.calls.count("read"), 2)
+        self.assertEqual(self.app.messagebox.askokcancel.call_count, 2)  # disable warning, then marker write
+        stage = self.app._stage_cbasic_folder_impl
+        stage.assert_called_once()
+        self.assertEqual(stage.call_args.args, (mounted, "disable_bootdisk", self.status))
+        self.assertTrue(any("Volume check passed" in line for line in stage.call_args.kwargs["prefix_lines"]))
+
+    def test_already_marked_script_keeps_failed_report_and_never_stages(self):
+        self.app._prepare_cbasic_card("dump", self.status)
+        self.assertEqual(self.ops.calls.count("write"), 1)
+        self.ops.calls.clear()
+        self.app.messagebox.reset_mock()
+        self.app._prepare_cbasic_card("dump", self.status)
+        self.assertNotIn("write", self.ops.calls)
+        self.app.messagebox.askokcancel.assert_not_called()
+        self.app.messagebox.askretrycancel.assert_called_once()
+        prompt = self.app.messagebox.askretrycancel.call_args.args[1]
+        self.assertIn("-69846", prompt)
+        self.assertIn("Backup:", prompt)
+        self.app._stage_cbasic_folder_impl.assert_not_called()
+        self.assertFalse(self.app._card_busy())
+
+    def test_script_retry_refuses_to_reapply_a_missing_marker(self):
+        def erase_marker_before_retry(*_args, **_kwargs):
+            self.ops.poke(496, bytes(6))
+            return True
+
+        self.app.messagebox.askretrycancel.side_effect = erase_marker_before_retry
+        self.app._prepare_cbasic_card("dump", self.status)
+        self.assertEqual(self.ops.calls.count("write"), 1)
+        self.assertEqual(self.ops.calls.count("read"), 2)
+        self.app.messagebox.askokcancel.assert_called_once()
+        self.app.messagebox.askretrycancel.assert_called_once()
+        self.app.messagebox.showerror.assert_called_once()
+        self.app._stage_cbasic_folder_impl.assert_not_called()
+        self.assertFalse(self.app._card_busy())
+
+    def test_mount_lookup_cannot_fall_back_to_an_old_path(self):
+        self.ops.unmounted_verify = (True, "passed")
+        for lost_card in (True, False):
+            with self.subTest(lost_card=lost_card):
+                def change_mount(cand):
+                    if lost_card:
+                        self.ops.gone = True
+                    else:
+                        self.ops.mounted = False
+                    return True, "mounted"
+
+                self.ops.gone = False
+                self.ops.mounted = True
+                with mock.patch.object(self.ops, "mount", side_effect=change_mount):
+                    self.app._prepare_cbasic_card("enable_bootdisk", self.status)
+                self.app._stage_cbasic_folder_impl.assert_not_called()
+                self.assertIn("No script files were staged", self.app.messagebox.showerror.call_args.args[1])
+                self.assertFalse(self.app._card_busy())
+
+    def test_failed_no_write_mark_clears_an_earlier_prepared_result(self):
+        self.ops.unmounted_verify = (True, "passed")
+        self.app._prep_run("mark")
+        self.app.wizard.set_card_prepared.assert_called_with("prepared")
+        self.ops.calls.clear()
+        self.ops.unmounted_verify = (False, CHECKER_START_REFUSAL)
+        self.app._prep_run("mark")
+        self.assertFalse(self.app.prep.report.ok)
+        self.app.wizard.set_card_prepared.assert_called_with(None)
+        self.app.messagebox.askretrycancel.assert_called_once()
+        self.assertNotIn("write", self.ops.calls)
+
+    def test_undo_and_chosen_restore_retry_the_original_source(self):
+        for action in ("undo", "restore"):
+            with self.subTest(action=action):
+                self.ops.unmounted_verify = (True, "passed")
+                marked = workflow.start(CARD, self.ops, self.app.prep.backup_root)
+                self.assertTrue(workflow.write(marked, self.ops).ok)
+                self.app.filedialog.askdirectory.return_value = str(marked.backup.folder)
+                self.ops.unmounted_verify = (False, CHECKER_START_REFUSAL)
+                self.ops.calls.clear()
+                self.start.reset_mock()
+
+                def retry(*_args, **_kwargs):
+                    self.ops.unmounted_verify = (True, "passed")
+                    return True
+
+                self.app.messagebox.askretrycancel.side_effect = retry
+                self.app._prep_run(action)
+                self.assertTrue(self.app.prep.report.ok)
+                self.assertEqual(self.ops.calls.count("write"), 1)
+                self.assertEqual(self.start.call_count, 2)
+                retry_call = self.start.call_args
+                self.assertTrue(retry_call.kwargs["verify_only"])
+                self.assertEqual(retry_call.kwargs["restore_from"].folder, marked.backup.folder)
+                self.assertEqual(retry_call.args[0], CARD)
+                self.app.wizard.set_card_prepared.assert_called_with(None)
+        self.app.filedialog.askdirectory.assert_called_once()
 
 
 if __name__ == "__main__":

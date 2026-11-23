@@ -19,7 +19,7 @@ There is a ready-made, **unsigned** app for macOS and Windows on the repository'
 
 `SHA256SUMS.txt` on the same page lists each file's SHA-256.
 
-Either way you still need the **GNU Arm toolchain** with GCC `15.2.1` ([step 5](#step-5-build-tools): xPack `arm-none-eabi-gcc` `15.2.1-1.1`, or Arm GNU Toolchain `15.2.Rel1`) and your own ROM dump. The app contains neither, and it never downloads anything.
+Packages built from version 0.2.0 include xPack GNU Arm Embedded GCC 15.2.1-1.1. Step 5 checks it automatically and works offline. Versions 0.1.x and [source checkouts](#launch) require a separately installed compiler. Supply your own camera’s ROM dump for every version.
 
 ### macOS
 
@@ -29,13 +29,13 @@ Either way you still need the **GNU Arm toolchain** with GCC `15.2.1` ([step 5](
    - **macOS 14 or earlier:** Control-click (or right-click) the app, choose **Open**, then **Open** again.
 
    You only do this once per version. Advanced: `xattr -dr com.apple.quarantine "/Applications/R5 Mod Assistant.app"` removes the download mark instead; only do that for a `.dmg` you downloaded from this repository.
-3. macOS may ask whether the app may use your **Downloads** folder (the toolchain search looks there; you can decline and choose the toolchain's `bin` folder yourself) and **removable volumes** (the card you choose).
+3. macOS may ask for access to the removable volume when you choose your SD card.
 
 ### Windows
 
 1. Right-click the `.zip` and choose **Extract All...**, for example into your Documents folder. Run the app from the extracted **R5 Mod Assistant** folder, not from inside the zip, and keep its `_internal` folder next to `R5 Mod Assistant.exe`.
 2. Open **R5 Mod Assistant.exe**. Because the app isn't signed with a code-signing certificate, Microsoft Defender SmartScreen may say *Windows protected your PC*: click **More info**, then **Run anyway**. Windows remembers this for that copy of the app.
-3. Install the toolchain from Arm's Windows installer or unpack the xPack or Arm `.zip`; the app looks in `%USERPROFILE%`, its `tools` and `Downloads` folders, `%APPDATA%\xPacks`, `C:\xpack-arm-none-eabi-gcc-15.2.1-*` and `Program Files (x86)\Arm GNU Toolchain arm-none-eabi\15.2*`, or choose its `bin` folder (the one with `arm-none-eabi-gcc.exe`) yourself.
+3. Leave the extracted app folder together. It contains the compiler and the files GCC uses to build your mod.
 4. **Card preparation is macOS only.** Writing a card's boot markers ([step 7](#step-7-prepare-the-boot-card)) and the one-click Canon Basic cards in steps 2 and 3 are offered on a Mac only. On Windows, prepare the card on a Mac first, tick *My card is already prepared* in step 7, then copy `autoexec.bin` to that card in [step 8](#step-8-copy-autoexecbin).
 
 The Windows app has only been checked by its CI self-test on GitHub's `windows-latest` runner. A real build (toolchain, ROM) and the copy to a card haven't been tried on Windows.
@@ -43,17 +43,19 @@ The Windows app has only been checked by its CI self-test on GitHub's `windows-l
 ### What is different from running it from source
 
 - New build folders go to `R5-builds` in your home folder (`~/R5-builds` on macOS, `%USERPROFILE%\R5-builds` on Windows), because the app's own folder isn't meant to change. Saved progress is the same `~/.r5-build-assistant/wizard.json`, so the app and a checkout share it.
-- The app carries this repository's tracked files from the tagged commit byte for byte (`Read me first.txt` and, on macOS, `R5SourceCommit` in `Contents/Info.plist` name the commit), plus Python `3.13` and Tcl/Tk. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
+- The app carries this repository's tracked files from the tagged commit byte for byte (`Read me first.txt` and, on macOS, `R5SourceCommit` in `Contents/Info.plist` name the commit), plus Python, Tcl/Tk and the host-specific compiler. It runs the same builder and checks, so a build from the app has the same source manifest as a command-line build of that commit.
 - On Windows, the programs the app starts (GCC, PowerShell, the builder) run without a console window.
 
 ### Building the app yourself
 
-Each package is built by the `desktop-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it builds the window hidden, shows every step, starts the builder with arguments it refuses, and exits; on Windows it runs from the unzipped folder). To build it yourself on a Mac or a Windows PC, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
+Each package is built by the `desktop-app` GitHub Actions workflow, which also starts the built app with `--self-test` (it opens the wizard, checks the bundled compiler, compiles and links a small test program without camera firmware, and checks the builder entry point; on Windows it runs from the unzipped folder). To build it yourself on a Mac or a Windows PC, use a Python `3.11` or newer with Tkinter (python.org) and a clean checkout:
 
 ```sh
 python3 -m pip install -r packaging/requirements.txt
 python3 packaging/build_app.py --self-test
 ```
+
+The packager fetches the pinned xPack archive for the target machine and checks its SHA-256. To build with an existing archive, pass `--toolchain-archive FILE`. Users of the packaged app can build their mod offline.
 
 It writes the app under `build/desktop-app/dist/` and `build/desktop-app/R5-Mod-Assistant-<version>-<macos|windows>-<arch>.<dmg|zip>`. The version is `VERSION` in [`tools/gui/bundle.py`](../tools/gui/bundle.py).
 
@@ -95,7 +97,7 @@ This is your confirmation. The ROM check in step 2 verifies the firmware itself.
 
 The wizard calls this step **Copy camera firmware**. It remembers your place if you close the window while the card is in the camera.
 
-1. **At your computer**, back up the photos on your camera-formatted FAT32 SDHC card (32 GB or smaller). Insert it in the Mac’s built-in slot and choose **Find my SD card**. Select the card, then **Prepare this card**. Check the named card before confirming. For an existing script-marked card, open **Which SD card can I use?** for the folder staging option.
+1. **At your computer**, back up the photos on your camera-formatted FAT32 SDHC card (32 GB or smaller). Insert it in the Mac’s built-in slot and choose **Find my SD card**. Select the card, then **Prepare this card**. Check the named card before confirming. The Assistant checks the SCRIPT marker and verifies the FAT32 volume before it copies the scripts. If verification stops here, keep the card in the Mac and follow the [verification recovery steps](#card-verification-on-macos). For an existing script-marked card, open **Which SD card can I use?** for the folder staging option.
 2. **At your camera**, follow the on-screen checklist. Keep it open until you have returned the card to the computer.
 3. **Back at your computer**, choose **Import and check firmware copy** and select the returned card. The Assistant saves a private copy locally and checks it with the builder. **Continue** becomes available after verification.
 
@@ -121,9 +123,9 @@ XPan and custom sounds aren't offered together. The XPan profile is silent by de
 
 ### Step 5. Build tools
 
-The compiler check appears first. If the compiler is missing, the page offers the xPack download and instructions for choosing its bin folder. You can also choose a different folder or search again.
+In the packaged app, wait for the included compiler to pass the check, then continue to **Build your mod**. Experienced users can choose a compatible compiler explicitly.
 
-At start-up the assistant looks for an existing GNU Arm `15.2.1` toolchain. It looks on your `PATH`, under `~/tools/`, your home folder and `~/Downloads/`, in xPack's own install folders and in the usual system folders. Each candidate goes through the builder's toolchain admission (target `arm-none-eabi`, GCC `15.2.1`). If nothing is found, download **xPack GNU Arm Embedded GCC 15.2.1-1.1** yourself, unpack it, and choose its `bin` folder. **This prototype never downloads anything.**
+When running from a source checkout or using an older 0.1.x app, the assistant searches for an existing GNU Arm 15.2.1 toolchain. If you need one, unpack [xPack GNU Arm Embedded GCC 15.2.1-1.1](https://github.com/xpack-dev-tools/arm-none-eabi-gcc-xpack/releases/tag/v15.2.1-1.1) and choose its `bin` folder. Step 5 checks the compiler version and the `arm-none-eabi` target.
 
 ### Step 6. Build and verify
 
@@ -137,22 +139,25 @@ Check the requirements, then choose **Build my mod**. **Build folder** shows whe
 
 ### Step 7. Prepare the boot card
 
+**Switch to your shooting card now.** If the small card used to copy the firmware is still in the computer, eject it and insert your shooting card. Step 7 accepts SDHC and SDXC cards, including SDXC cards larger than 32 GB. On a Mac, click **Find SD cards** again and check the card’s name and capacity before choosing **Prepare card**.
+
+
 > [!CAUTION]
-> **Writes raw boot sectors. Prototype, macOS only.** The owner decided on 18 November 2026 to offer this step in the assistant. The exFAT path was verified on 18 November 2026 on the owner's Mac (macOS 27.3) with a camera-formatted 128 GB exFAT card, which the camera then booted; FAT32 cards, Windows and Linux are untested. On that run sectors 12, 23, 0 and 11 were written, the read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted the card and ran a private lab build. The command-line builder still never writes cards.
+> **Card preparation is available on macOS with a built-in SD card slot.** The assistant backs up the boot sectors before asking for confirmation. See the [SDXC verification notes](sdxc.md) for test details.
 
 *Screenshot, described:* a warning panel with the bold headline "Format this card IN THE CAMERA first. Formatting erases everything on the card — copy your photos and videos to your computer before formatting." and, under it, what has been tested on this system (FAT32 cards are untested). Below it are a **Find SD cards** button with a drop-down of the cards found, the chosen card's details (model, size, filesystem, volume name, mount state, device), and a "Not offered:" line naming every other disk with its reason. Then come the **Prepare card** button, a progress bar while a card operation runs, a "Next:" list, the result headline and a box with its details. **Restore a card backup** expands to show **Undo (restore the latest backup)** and **Restore from a chosen backup...**.
 
 This step writes the two Canon boot markers (`EOS_DEVELOP`, `BOOTDISK`) so that a camera whose BootDisk setting is already enabled loads `autoexec.bin` from the card. It does not enable BootDisk and never writes the camera. If your card is already prepared, **My card is already prepared (skip this step)** marks the step *skipped*.
 
-1. **Format in the camera first.** The warning at the top says so. The assistant never formats, partitions or erases anything; the owner decided formatting stays out of the tool. The warning is advice. The real check is the boot-sector layout: on FAT32 the boot code where `BOOTDISK` goes must be empty, and on exFAT it must be the `F4` fill. A card formatted by Windows, or a FAT32 card formatted on a Mac, is refused. A card formatted as exFAT by macOS can't be told apart from a camera-formatted one (both use `F4`), which is another reason to format in the camera. Formatting removes the markers, so prepare the card again after every format.
+1. **Use a card formatted in the camera.** If the card needs formatting, copy your photos and videos to your computer first, then format it in the camera. Formatting erases the card and removes its boot markers. A card that is already camera-formatted can go straight into the reader.
 2. **Choose the card.** **Find SD cards** lists only cards in an SD card slot (macOS reports the *Secure Digital* protocol). The card must be removable, ejectable, physical media with 512-byte sectors and an MBR with exactly one FAT32 or exFAT partition, writable, and between 2 GB and 2 TiB. The disk macOS runs from, internal disks, disk images, system media, partitions mounted outside `/Volumes` and USB devices are refused with their reason. That includes USB card readers, because macOS can't tell them from other USB drives. An unmounted card is still listed (marked *not mounted*), so a half-written card can be undone.
 3. **Prepare card.** One button does the rest:
    - **Read and back up, automatically.** The assistant checks that it is still the chosen card and unmounts its partition (`diskutil unmount diskNsM`; it never ejects). macOS's authorization window opens for read-only access to the card's whole-disk device, through `authopen` (see below). The assistant reads the 512-byte MBR and the partition's first 24 sectors (12,288 bytes). It checks that the partition start agrees between the MBR, macOS's report and the boot sector itself, the boot sector's own geometry, and the exFAT boot checksums. It saves `mbr.bin`, `boot-area.bin` and `manifest.json` to a new folder, `~/R5-card-backups/<date>-<time>-<microseconds>-<FAT32|exFAT>-<serial>-before-marking/`, and reads them back to compare. A backup folder is never reused (a `-2` suffix avoids any collision) and never deleted by the assistant. The backup path appears in the result details.
-   - **Already prepared?** If valid markers are already there, the card is mounted again and the result says **Already prepared: nothing to write**. There is no dialog and no second password prompt.
+   - **Already prepared?** If the markers are already present, the Assistant verifies the volume before reporting **Already prepared: nothing to write**. This check also runs when you reopen the Assistant and choose **Prepare card** again.
    - **Confirm.** Otherwise one dialog names the card from that read, for example "Prepare EOS_DIGITAL (126.9 GB exFAT SD card)?", with the model, the device, the sectors to write and the backup folder. The card stays unmounted while the dialog is open, so nothing on the Mac can change its boot sectors between the read and the write. **Cancel** mounts it again and reports *Cancelled. Nothing was written.*
    - **Write and verify.** After **OK** the assistant checks that the confirmed read is still the current one and that it is still the same card. macOS's authorization window opens again, this time for read/write access. The assistant writes only if the MBR, the whole 24-sector boot area and the target sectors still hash to the values from the read. Otherwise it reports *refused. Nothing was written*. It writes the sectors in the planned order with a flush after each, and reads back the whole boot area and the MBR. The assistant compares every written byte, checks that the MBR is unchanged and that the boot area validates with the markers present, runs `diskutil verifyVolume diskNsM` and mounts the card again. It records the outcome in `result-<time>.json` in the backup folder.
 
-   On FAT32 one sector is written. `EOS_DEVELOP` replaces the boot-sector volume label field at byte 71 (`0x47`); Finder's volume name, which lives in the root directory, doesn't change. `BOOTDISK` goes at byte 92 (`0x5C`). The backup boot sector is left unchanged, as on the lab card that booted. Disk Utility's check may therefore report that the backup boot sector differs; that is by design, and the result says so. exFAT uses different offsets: `BOOTDISK` at byte 122 and `EOS_DEVELOP` at byte 130 of both boot regions, plus both checksum sectors. That makes four sectors, 12, 23, 0 and 11: the backup region first, and a region with a currently invalid checksum before the other. Every intermediate state keeps at least one valid exFAT boot region.
+   On FAT32 one sector is written. `EOS_DEVELOP` replaces the boot-sector volume label field at byte 71 (`0x47`); Finder's volume name, which lives in the root directory, doesn't change. `BOOTDISK` goes at byte 92 (`0x5C`). The backup boot sector is left unchanged, as on the lab card that booted. Disk Utility can report a difference between the primary and backup boot sectors. The Assistant requires the volume check to pass. exFAT uses different offsets: `BOOTDISK` at byte 122 and `EOS_DEVELOP` at byte 130 of both boot regions, plus both checksum sectors. That makes four sectors, 12, 23, 0 and 11: the backup region first, and a region with a currently invalid checksum before the other. Every intermediate state keeps at least one valid exFAT boot region.
 4. **Undo or restore.** **Undo** reads the card first, then uses the newest backup taken before its markers were written (`...-before-marking`, never `...-before-restore`) whose MBR and boot-area bytes outside the markers match the card as read, so it can't pick another card's backup or a half-marked state. **Restore from a chosen backup...** uses a backup folder you choose; its files are checked against its manifest. Both work like Prepare: read (also from an unmounted, half-written or unmountable card, identified by its disk and partition, not by a mount), an automatic backup of the current state (`...-before-restore`), one confirmation dialog, then write and verify. The card must be the backed-up one: same size, partition, slot and model, the same MBR, and every boot-area byte outside the marker ranges unchanged. The exFAT `VolumeFlags` and `PercentInUse` bytes are exempt and kept as they are now. Each marker range must hold either the original or the prepared bytes.
 5. **Report.** The result says *done and verified*, *Already prepared*, *Cancelled. Nothing was written*, *refused. Nothing was written* (for example after the card changed since it was read) or *not written* (for example if the card was removed). Otherwise it says which sectors were written, and which were *possibly written* (a write that was started but not confirmed), what failed, and the backup to undo from. A hanging `diskutil` never loses the report. The card is mounted again in every case, or you're told to reinsert it.
 
@@ -261,10 +266,9 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - No memory estimate *before* building: the margin is reported from `build.json` after a build.
 - The final read-back may come from the operating system's cache rather than the card itself. Ejecting properly flushes the card.
 - Copying needs a build from the current session; it can't pick an older build folder.
-- No consented toolchain download yet. You install the toolchain yourself.
 - **Desktop app: unsigned.** The macOS app has only PyInstaller's ad-hoc signature, so Gatekeeper asks once per version, and Windows SmartScreen may warn about the Windows app (see [Download the app](#download-the-app)). Their CI self-tests run on GitHub's macOS 15 (Intel), latest macOS (Apple Silicon) and latest Windows runners; neither app has been tried on other systems, and GitHub's last Intel macOS runner image is announced to be retired in 2027. The Windows app has not built `autoexec.bin` with a real toolchain and ROM yet.
 - The assistant verifies whether BootDisk is enabled or disabled only when you give it the camera's returned `16 KiB` BootInfo dump (`gang200.bin` or `gang201.bin` from `0xE8004000`, offset `+0x04`); without a returned dump it records only your manual confirmation.
-- **Canon Basic ROM dump and BootDisk steps: host-tested only.** The Canon Basic card preparation (`SCRIPT` at FAT32 `0x1F0`, `script.req`, `extend.m`) and `gang200.bin`/`gang201.bin` BootInfo readback verifier are tested on synthetic FAT32 images and lab-derived fixtures. `EnableBootDisk()` and `SaveAllRomImageToFile()` match the script used to capture the reference camera's `gang100.bin`/`gang200.bin`/`gang101.bin`/`gang201.bin`, whereas the `DisableBootDisk()` script (`0xE0B38D74`) is derived from ROM disassembly and is **hardware-untested**. Canon Basic requires a `<= 32 GB` FAT32 SDHC card; `> 32 GB` SDXC exFAT cards are refused for Canon Basic even though they work for native `autoexec.bin` booting in step 7.
+- **Canon Basic ROM dump and BootDisk steps.** An owner reported that step 2 reached sector read-back on a 16 GB FAT32 card, then macOS returned `-69846` when starting volume verification. The recovery path still needs confirmation on a real card. The Canon Basic card preparation (`SCRIPT` at FAT32 `0x1F0`, `script.req`, `extend.m`) and `gang200.bin`/`gang201.bin` BootInfo readback verifier are tested on synthetic FAT32 images and lab-derived fixtures. `EnableBootDisk()` and `SaveAllRomImageToFile()` match the script used to capture the reference camera's `gang100.bin`/`gang200.bin`/`gang101.bin`/`gang201.bin`, whereas the `DisableBootDisk()` script (`0xE0B38D74`) is derived from ROM disassembly and is **hardware-untested**. Canon Basic requires a `<= 32 GB` FAT32 SDHC card; `> 32 GB` SDXC exFAT cards are refused for Canon Basic even though they work for native `autoexec.bin` booting in step 7.
 - **Prepare card: verified for exFAT on one Mac and camera only.** On 18 November 2026 the owner's Mac (macOS 27.3) prepared a camera-formatted 128 GB exFAT card through `authopen`. The read-back and `diskutil verifyVolume` passed, a second Prepare said *Already prepared*, and the camera booted it. FAT32 cards, other Macs and macOS versions, Windows and Linux are untested. The host tests use image files only: synthetic FAT32 and exFAT boot areas (including ones rebuilt from the lab cards' recorded geometry that reproduce the lab's recorded hashes and checksums), plus `fsck_msdos` on a real FAT32 image file.
 - Only the Mac's built-in SD slot is offered. USB card readers are refused.
 - "Camera-formatted" is checked from the boot sectors, not proven. A FAT32 card formatted on a computer usually has boot code where the markers go and is refused. An exFAT card formatted by macOS looks the same as a camera-formatted one and is accepted, which is why the warning says to format in the camera.
@@ -281,3 +285,11 @@ Adding an option takes more than a manifest entry: the builder must implement it
 - **Password prompt or confirmation cancelled**: nothing was written, and the card is mounted again.
 - **"authopen could not open /dev/rdiskN"**: macOS refused access to the device; the message gives authopen's own reason. Nothing was written.
 - **The card won't mount after a failed write**: it is still listed (*not mounted*). Choose it and press **Undo**.
+
+### Card verification on macOS
+
+If `diskutil verifyVolume` reports **Error starting file system verification** (`-69846`) after the marker bytes have been checked, macOS has not examined the filesystem yet. The Assistant remounts the selected card, checks its identity and tries verification once more. The retry reads the volume without rewriting any marker sectors.
+
+If the check still cannot start, or the card needs to be remounted, the Assistant can offer to **Retry verification**. Follow any prompt to reinsert the same card, then choose **Retry**. The Assistant reads the boot sectors again. In steps 2 and 3 it copies the setup files only after the volume passes verification and it confirms the card’s mount folder. Wait for the camera instructions before removing the card. If you reopen the Assistant, select the same card and start preparation again. It verifies the volume even when the markers are already present.
+
+If the filesystem check runs and reports an error, read the diagnostic in the result and check the card with Disk Utility’s First Aid. A sector read-back mismatch is a separate failure. Keep the card out of the camera and use **Undo** with the backup identified in the report.

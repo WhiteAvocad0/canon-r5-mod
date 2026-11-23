@@ -30,20 +30,10 @@ from messages import joined, message, phrase
 
 from cardprep import devices, workflow
 
-FORMAT_WARNING = ("Format this card IN THE CAMERA first. Formatting erases everything on the card — "
-                  "copy your photos and videos to your computer before formatting.")
+FORMAT_WARNING = "Back up your photos and videos before formatting. Formatting erases everything on the card."
 EXPLAIN = (
-    "Prepare card writes the two Canon boot markers (EOS_DEVELOP and BOOTDISK) into the card's boot sectors, so a "
-    "camera whose BootDisk setting is already enabled loads autoexec.bin from it. This tool never formats, "
-    "partitions or erases a card, and it refuses cards whose boot sectors do not look camera-formatted. "
-    "Formatting removes the markers, so prepare the card again after every format. It does not enable BootDisk "
-    "and never writes the camera.\n\n"
-    "Before anything is written, the card's partition table and boot sectors are backed up automatically to a "
-    "folder on this computer and checked; Undo puts them back. Only the planned sectors are written: one on "
-    "FAT32, four on exFAT. macOS asks for your administrator password in its own window (once to read, once to "
-    "write); this assistant never sees it.\n\n"
-    "Prototype: verified on one Mac with a camera-formatted exFAT card; FAT32 cards are untested. "
-    "Windows and Linux can only list cards."
+    "On macOS, use the built-in SD card slot to prepare the card. Undo can restore its original boot "
+    "sectors from the backup. On Windows or Linux, use a card already prepared on a Mac."
 )
 
 
@@ -58,7 +48,6 @@ class PrepState:
         self.busy: str | None = None
         self.copying = False  # step 8 is copying to a card
         self.session: workflow.Session | None = None  # read and backed up, waiting for confirmation
-        self.restore_from: workflow.Backup | None = None  # a chosen backup; None means the latest one
         self.report: workflow.Report | None = None
         self.error: str | None = None
 
@@ -86,7 +75,6 @@ class PrepState:
         self.candidates = list(candidates)
         self.searched = True
         self.selected = None
-        self.restore_from = None
         self._discard()
 
     def select(self, whole_id: str | None) -> None:
@@ -100,17 +88,12 @@ class PrepState:
             chosen = matches[0]
         if chosen != self.selected:
             self.selected = chosen
-            self.restore_from = None
             self._discard()
 
     def card_gone(self, message: str) -> None:
         self.selected = None
         self._discard()
         self.error = message
-
-    def set_restore_from(self, backup: workflow.Backup | None) -> None:
-        self.restore_from = backup
-        self._discard()
 
     # -- what is allowed --------------------------------------------------------------
 

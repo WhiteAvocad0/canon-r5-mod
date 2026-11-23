@@ -38,13 +38,6 @@ PART_ID_RE = re.compile(r"disk([0-9]{1,3})s([0-9]{1,2})")
 MAC_FAT32_CONTENT = frozenset({"Windows_FAT_32", "DOS_FAT_32"})
 DISKUTIL = "/usr/sbin/diskutil"
 
-UNTESTED_NOTE = {
-    "darwin": "macOS: verified with a camera-formatted 128 GB exFAT card on the owner's Mac; FAT32 cards are untested.",
-    "linux": "Linux: detection only, untested. Preparing a card is offered on macOS only.",
-    "win32": "Windows: detection only, untested. Preparing a card is offered on macOS only.",
-}
-
-
 @dataclass(frozen=True)
 class Candidate:
     platform: str
@@ -386,6 +379,16 @@ def _completed(run, argv: list[str], timeout: int, **kwargs) -> subprocess.Compl
     except OSError as exc:
         return subprocess.CompletedProcess(argv, 127, "" if kwargs.get("text") else b"",
                                            str(exc) if kwargs.get("text") else str(exc).encode())
+
+
+def verification_start_error(output: str) -> bool:
+    """Recognize diskutil's unrecognized-filesystem status in a verification diagnostic."""
+    for line in output.splitlines():
+        line = line.strip()
+        if (line.startswith("Error starting file system verification for ")
+                and line.endswith("(-69846)")) or line.startswith("Error: -69846:"):
+            return True
+    return False
 
 
 class MacOps:

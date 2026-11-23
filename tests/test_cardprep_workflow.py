@@ -21,6 +21,10 @@ from cardprep import devices, layout, rawio, workflow
 from cardprep.layout import CardPrepError
 
 
+CHECKER_START_REFUSAL = ("Started file system verification on disk4s1\n"
+                         "Error starting file system verification for disk4s1: Unrecognized file system (-69846)")
+
+
 class ImageOps:
     """Stands in for devices.MacOps. The card is a whole-disk image file (MBR at 0, the
     partition at its start); raw reads and writes go through rawio.RawAccess with a fake
@@ -28,14 +32,15 @@ class ImageOps:
     tracked like macOS would: refresh reports an unmounted card without its filesystem
     and name, and refuses a card that is gone or no longer the chosen one."""
 
-    def __init__(self, chosen: devices.Candidate, disk: Path, *, verify_ok=True, mode="ok"):
-        self.chosen, self.disk, self.verify_ok = chosen, disk, verify_ok
+    def __init__(self, chosen: devices.Candidate, disk: Path, *, mode="ok"):
+        self.chosen, self.disk = chosen, disk
         self.start = chosen.partition_offset
         self.raw = rawio.RawAccess(command=ci.fake_authopen(mode), check=ci.same_file)
         self.calls: list[str] = []
         self.mounted = True
         self.mount_fails = self.unmount_fails = self.gone = False
         self.mount_raises: Exception | None = None
+        self.unmounted_verify = self.mounted_verify = (True, "File system check exit code is 0.")
         self.verify_raises: Exception | None = None
         self.before_write = None
         self.cancel = None
@@ -78,11 +83,10 @@ class ImageOps:
         return True, "mounted"
 
     def verify(self, cand):
-        self.calls.append("verify")
-        assert not self.mounted, "the volume check runs while unmounted"
+        self.calls.append("verify-mounted" if self.mounted else "verify")
         if self.verify_raises:
             raise self.verify_raises
-        return self.verify_ok, "File system check exit code is %d." % (0 if self.verify_ok else 8)
+        return self.mounted_verify if self.mounted else self.unmounted_verify
 
     def raw_read(self, cand, length):
         self.calls.append("read")
@@ -161,7 +165,7 @@ class Flow(unittest.TestCase):
         self.assertTrue(again.report.ok and again.report.nothing_written)
         self.assertIn("Already prepared", again.report.title)
         self.assertIn(f"Backup: {again.backup.folder}", again.report.lines)
-        self.assertEqual(ops.calls, ["refresh", "unmount", "read", "mount"])
+        self.assertEqual(ops.calls, ["refresh", "unmount", "read", "verify", "mount"])
         self.assertNotEqual(again.backup.folder, session.backup.folder)
 
     def test_exfat_prepare_then_undo_from_the_latest_backup(self):
@@ -233,11 +237,133 @@ class Flow(unittest.TestCase):
         self.assertEqual(ops.part_bytes(), before)
         self.assertTrue(ops.mounted)
 
+    def test_checker_start_refusal_retries_once_on_the_remounted_card(self):
+        cand, ops = self.card("FAT32")
+        ops.unmounted_verify = False, CHECKER_START_REFUSAL
+        session = workflow.start(cand, ops, self.backups)
+        ops.calls.clear()
+        with mock.patch.object(ops, "refresh", wraps=ops.refresh) as refresh:
+            report = workflow.write(session, ops)
+        self.assertTrue(report.ok, report.lines)
+        self.assertFalse(report.retryable)
+        self.assertEqual(ops.calls, ["refresh", "write", "verify", "mount", "refresh", "verify-mounted"])
+        self.assertEqual(refresh.call_args, mock.call(cand), "re-check the original mounted identity")
+        self.assertEqual(report.written_sectors, [0])
+        self.assertEqual(ops.part_bytes()[:layout.AREA_BYTES], session.plan.after_area)
+        record = json.loads(report.record.read_text())
+        self.assertTrue(record["ok"])
+        self.assertEqual(record["lines"], report.lines)
+        self.assertIn(CHECKER_START_REFUSAL, "\n".join(report.lines))
+        self.assertIn(ops.mounted_verify[1], "\n".join(report.lines))
+
+    def test_persistent_checker_start_refusal_is_retryable_without_writing_again(self):
+        cand, ops = self.card("FAT32")
+        ops.unmounted_verify = ops.mounted_verify = False, CHECKER_START_REFUSAL
+        session = workflow.start(cand, ops, self.backups)
+        report = workflow.write(session, ops)
+        self.assertFalse(report.ok)
+        self.assertTrue(report.retryable)
+        self.assertEqual(ops.calls.count("write"), 1)
+        self.assertEqual(ops.calls.count("verify"), 1)
+        self.assertEqual(ops.calls.count("verify-mounted"), 1)
+        self.assertIn("Unrecognized file system (-69846)", "\n".join(report.lines))
+        self.assertEqual(json.loads(report.record.read_text())["written_sectors"], [0])
+
+        ops.calls.clear()
+        ops.mounted_verify = True, "File system check exit code is 0."
+        again = workflow.start(cand, ops, self.backups, verify_only=True)
+        self.assertFalse(again.needs_write)
+        self.assertTrue(again.report.ok and again.report.nothing_written, again.report.lines)
+        self.assertEqual(again.report.written_sectors, [])
+        self.assertEqual(ops.calls, ["refresh", "unmount", "read", "verify", "mount", "refresh", "verify-mounted"])
+
+    def test_retry_requires_a_successful_remount_and_the_original_mounted_identity(self):
+        for problem in ("mount failed", "still unmounted", "changed volume"):
+            with self.subTest(problem=problem):
+                cand, ops = self.card("FAT32")
+                ops.unmounted_verify = False, CHECKER_START_REFUSAL
+                session = workflow.start(cand, ops, self.backups)
+                original_mount = ops.mount
+
+                def mount(card):
+                    ops.mount_fails = problem == "mount failed"
+                    result = original_mount(card)
+                    if problem == "still unmounted":
+                        ops.mounted = False
+                    if problem == "changed volume":
+                        ops.chosen = replace(cand, volume_name="ANOTHER_CARD")
+                    return result
+
+                with mock.patch.object(ops, "mount", side_effect=mount):
+                    report = workflow.write(session, ops)
+                self.assertFalse(report.ok)
+                self.assertEqual(report.retryable, problem != "changed volume")
+                self.assertNotIn("verify-mounted", ops.calls)
+                self.assertEqual(ops.calls.count("verify"), 1)
+                self.assertEqual(ops.calls.count("write"), 1)
+                self.assertEqual(ops.calls.count("mount"), 1)
+                self.assertEqual(report.written_sectors, [0])
+                self.assertEqual(len(self.records(session.backup)), 1)
+
+    def test_bad_raw_readback_cannot_trigger_a_mounted_retry(self):
+        cand, ops = self.card("FAT32")
+        ops.unmounted_verify = False, CHECKER_START_REFUSAL
+        session = workflow.start(cand, ops, self.backups)
+        real_pwrite = os.pwrite
+
+        def corrupt_write(fd, data, offset):
+            changed = bytearray(data)
+            changed[92] ^= 1
+            return real_pwrite(fd, changed, offset)
+
+        with mock.patch.object(rawio.os, "pwrite", corrupt_write):
+            report = workflow.write(session, ops)
+        self.assertFalse(report.ok)
+        self.assertFalse(report.retryable)
+        self.assertEqual(report.written_sectors, [0])
+        self.assertIn("Read-back check FAILED", "\n".join(report.lines))
+        self.assertNotIn("verify-mounted", ops.calls)
+        self.assertEqual(ops.calls.count("write"), 1)
+
+    def test_no_write_mark_script_and_restore_require_a_passing_volume_check(self):
+        for kind in ("mark", "script", "restore"):
+            with self.subTest(kind=kind):
+                cand, ops = self.card("FAT32")
+                kwargs = {"kind": kind} if kind != "restore" else {}
+                session = workflow.start(cand, ops, self.backups, **kwargs)
+                if kind == "restore":
+                    workflow.cancel(session, ops)
+                    kwargs = {"restore_from": session.backup}
+                else:
+                    self.assertTrue(workflow.write(session, ops).ok)
+                ops.calls.clear()
+                ops.unmounted_verify = False, "File system check exit code is 8."
+                again = workflow.start(cand, ops, self.backups, **kwargs)
+                self.assertFalse(again.needs_write)
+                self.assertFalse(again.report.ok)
+                self.assertFalse(again.report.retryable)
+                self.assertTrue(again.report.nothing_written)
+                self.assertIn("File system check exit code is 8.", "\n".join(again.report.lines))
+                self.assertEqual(ops.calls, ["refresh", "unmount", "read", "verify", "mount"])
+
+    def test_verify_only_refuses_a_plan_that_would_write(self):
+        cand, ops = self.card("FAT32")
+        before = ops.part_bytes()
+        session = workflow.start(cand, ops, self.backups, verify_only=True)
+        self.assertFalse(session.needs_write)
+        self.assertFalse(session.report.ok)
+        self.assertFalse(session.report.retryable)
+        self.assertTrue(session.report.nothing_written)
+        self.assertTrue(ops.mounted)
+        self.assertTrue(workflow.write(session, ops).nothing_written)
+        self.assertEqual(ops.calls, ["refresh", "unmount", "read", "mount"])
+        self.assertEqual(ops.part_bytes(), before)
+
     def test_volume_check_failure_or_timeout_keeps_the_report(self):
         for problem in ("fails", "times out"):
             cand, ops = self.card("FAT32")
             if problem == "fails":
-                ops.verify_ok = False
+                ops.unmounted_verify = False, "File system check exit code is 8."
             else:
                 ops.verify_raises = subprocess.TimeoutExpired(["diskutil", "verifyVolume"], 1800)
             session = workflow.start(cand, ops, self.backups)
@@ -246,8 +372,11 @@ class Flow(unittest.TestCase):
             self.assertFalse(report.ok)
             self.assertEqual(report.written_sectors, [0])
             self.assertIn("Read-back check passed", text)
-            self.assertIn("Volume check FAILED", text)
-            self.assertIn("backup boot sector", text)
+            diagnostic = "File system check exit code is 8." if problem == "fails" else "timed out"
+            self.assertIn(diagnostic, text)
+            self.assertFalse(report.retryable)
+            self.assertEqual(ops.calls.count("verify"), 1)
+            self.assertNotIn("verify-mounted", ops.calls)
             self.assertIn(str(session.backup.folder), text)
             self.assertTrue(ops.mounted)
             self.assertEqual(len(self.records(session.backup)), 1)
@@ -260,6 +389,8 @@ class Flow(unittest.TestCase):
         report = workflow.write(session, ops)
         self.assertEqual(report.written_sectors, [12, 23, 0, 11])
         self.assertIn("Read-back check passed", "\n".join(report.lines))
+        self.assertFalse(report.ok)
+        self.assertTrue(report.retryable)
         self.assertIn("could not be mounted again", "\n".join(report.lines))
         record = json.loads(report.record.read_text())
         self.assertEqual(record["written_sectors"], [12, 23, 0, 11])

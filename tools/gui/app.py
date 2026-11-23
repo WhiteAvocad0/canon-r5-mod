@@ -75,26 +75,7 @@ DOCS = {
     "Prerequisites": ROOT / "docs" / "usage.md",
     "About this assistant": ROOT / "docs" / "gui.md",
 }
-CANNOT_DO = """\
-What this assistant does: it guides you through dumping the camera's ROM and enabling \
-BootDisk with a Canon Basic SDHC card you run yourself in the camera, verifies the \
-returned ROM dump, builds autoexec.bin on your computer, can write the two boot \
-markers onto a camera-formatted card (step 7, macOS only, with a backup first), and \
-copies autoexec.bin to the card. What it never does:
-
-  •  change the camera automatically: the ROM dump and BootDisk steps only prepare an \
-SDHC card and check the dump you return; you run them yourself in the camera;
-  •  write the camera's firmware or NVRAM directly from this computer;
-  •  format, partition or erase a card, or write its partition table (MBR);
-  •  write anything to a card except the boot-marker sectors in step 7, the Canon \
-Basic SCRIPT marker on FAT32 SDHC cards in steps 2-3, and the card-root files;
-  •  download the toolchain (you install it yourself; see step 5);
-  •  test anything on the camera, or tell you whether your camera will work.
-
-Every build made here is a public repackaged build and is hardware-untested. \
-Original Canon EOS R5 on firmware 2.2.1 only. If the camera freezes or shows an \
-error, remove the battery, then the card; see the Getting started guide.
-"""
+CANNOT_DO = """The assistant builds the mod on your computer. You choose the card to prepare and confirm before the assistant writes startup markers. You run the camera setup steps yourself. If the camera freezes during testing, remove the battery, then the card. See the Getting started guide for recovery."""
 CHECK_KINDS = {OK: SUCCESS, FAILED: DANGER, CHECKING: BUSY}
 STEP_KINDS = {DONE: SUCCESS, SKIPPED: NEUTRAL, BLOCKED: WARNING, NEEDS_ACTION: INFO}
 STEP_HEADLINES = {DONE: "Check passed", SKIPPED: "Skipped", BLOCKED: "Locked", NEEDS_ACTION: "To do"}
@@ -732,7 +713,7 @@ class App:
         self.camera_var = self.tk.BooleanVar(value=False)
         self.words.widget(self.ttk.Checkbutton, tab, variable=self.camera_var, command=lambda: (
             self.wizard.set_camera_confirmed(self.camera_var.get()), self.refresh()),
-            text="My camera is an original EOS R5 and shows 'Firmware Ver. 2.2.1'.").pack(anchor="w", pady=(S, 0))
+            text="I’ve checked the model and firmware above.").pack(anchor="w", pady=(S, 0))
         self.returning_owner = self.ttk.Frame(tab)
         self.update_button = self._button(self._buttons(self.returning_owner), "Update my card", self._update_path)
         needs = self._disclosure(tab, "What will I need for setup?")
@@ -1252,16 +1233,21 @@ class App:
         tab = self._panel(TOOLCHAIN)
         self.tc_status = StatusLine(self, tab)
         self.tc_install = self.ttk.Frame(tab)
-        self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
-                   "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
-        self.words.widget(self.ttk.Button, self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
-                        command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
+        included = bundle.included_toolchain()
+        if included:
+            self._text(self.tc_install, "If the included compiler fails its check, reinstall the complete app "
+                       "or choose the bin folder of another GNU Arm 15.2.1 installation.")
+        else:
+            self._text(self.tc_install, "The Assistant checks for the compiler when it opens. If it’s already verified, "
+                       "continue to the build. Otherwise install the matching compiler, then select its bin folder.")
+            self.words.widget(self.ttk.Button, self.tc_install, text="Open the xPack releases page  ↗", style="Link.TButton", cursor="hand2",
+                            command=lambda: webbrowser.open(checks.TOOLCHAIN_RELEASES_URL)).pack(anchor="w", pady=(S, 0))
         self.tc_var = self.tk.StringVar()
         self.tc_fields = self.ttk.Frame(tab)
         self.tc_fields.pack(fill="x")
         self._field(self.tc_fields, "Compiler’s bin folder", self.tc_var, [
             ("Choose bin folder…", self._pick_toolchain),
-            ("Detect again", lambda: self._detect_toolchain(explicit=True))])
+            ("Use included compiler" if included else "Detect again", lambda: self._detect_toolchain(explicit=True))])
 
     def _build_tab(self):
         tab = self._panel(BUILD)
@@ -1320,7 +1306,7 @@ class App:
     def _prep_tab(self):
         tab = self._panel(BOOTCARD, extra_details=EXPLAIN)
         Callout(self, tab, pady=(S, 0)).set(
-            DANGER, FORMAT_WARNING, card_devices.UNTESTED_NOTE.get(self.prep.platform, "This system: not supported."))
+            WARNING, "Use a shooting card formatted in the camera", FORMAT_WARNING)
         self._text(tab, "SD card", "Caption.TLabel", pady=(L, XS))
         row = self.ttk.Frame(tab)
         row.pack(fill="x")
@@ -1496,19 +1482,33 @@ class App:
             ):
                 return
 
+        self._read_cbasic_card(cand, task, status_callout)
+
+    def _ask_retry_verification(self, report):
+        prompt = joined("\n", [
+            report.title, *report.lines, "",
+            "Retry verification on this card? The assistant will read the boot sectors again without writing them.",
+        ])
+        return self.messagebox.askretrycancel(self.words.render("Retry verification"), self.words.render(prompt),
+                                              icon="warning")
+
+    def _read_cbasic_card(self, cand, task, status_callout, *, verify_only=False):
+        if self._card_busy() or self.prep.selected != cand or (task != "dump" and not self.bootdisk_ack.get()):
+            return
         ops = card_devices.MacOps()
         self.cbasic_busy = "Reading card and checking FAT32 SDHC layout (macOS asks for your password)..."
         self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
         self.refresh()
 
+        def failed(error):
+            self.cbasic_busy = None
+            self._set_cbasic_status(status_callout, message("Card preparation stopped\n{session}", session=error), DANGER)
+            self.refresh()
+            self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(error)))
+
         def read_done(session):
             if isinstance(session, Exception):
-                self.cbasic_busy = None
-                self._set_cbasic_status(status_callout, message(
-                    "Card preparation stopped\n{session}",
-                    session=session), DANGER)
-                self.refresh()
-                self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(session)))
+                failed(session)
                 return
             if session.needs_write:
                 c = session.snapshot.candidate
@@ -1533,28 +1533,47 @@ class App:
                 self._set_cbasic_status(status_callout, self.cbasic_busy, INFO)
                 self.refresh()
 
-                def write_and_refresh():
-                    report = card_flow.write(session, ops)
-                    refreshed = None
-                    if report.ok:
-                        try:
-                            refreshed = ops.refresh(session.snapshot.candidate)
-                        except Exception:
-                            refreshed = session.snapshot.candidate
-                    return report, refreshed, session.backup.folder
-
-                self._background(write_and_refresh, lambda r: self._cbasic_script_written(r, task, status_callout))
+                self._background(lambda: card_flow.write(session, ops), lambda r: checked(r, session))
             else:
-                def refresh_mounted():
-                    try:
-                        refreshed = ops.refresh(session.snapshot.candidate)
-                    except Exception:
-                        refreshed = session.snapshot.candidate
-                    return None, refreshed, session.backup.folder
+                checked(session.report, session)
 
-                self._background(refresh_mounted, lambda r: self._cbasic_script_written(r, task, status_callout))
+        def checked(report, session):
+            if isinstance(report, Exception):
+                failed(report)
+                return
+            lines = [report.title, *report.lines]
+            if not report.ok:
+                self.cbasic_busy = None
+                msg = joined("\n", lines)
+                self._set_cbasic_status(status_callout, msg, DANGER)
+                self.refresh()
+                if report.retryable:
+                    if self._ask_retry_verification(report):
+                        self._read_cbasic_card(cand, task, status_callout, verify_only=True)
+                else:
+                    self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(msg))
+                return
 
-        self._background(lambda: card_flow.start(cand, ops, self.prep.backup_root, kind="script"), read_done)
+            def mounted(refreshed):
+                if (isinstance(refreshed, Exception) or not refreshed.mounted
+                        or not card_devices.same_card(session.snapshot.candidate, refreshed)):
+                    self.cbasic_busy = None
+                    lines.append("Could not confirm the selected card’s mount folder. No script files were staged.")
+                    if isinstance(refreshed, Exception):
+                        lines.append(error_text(refreshed))
+                    msg = joined("\n", lines)
+                    self._set_cbasic_status(status_callout, msg, DANGER)
+                    self.refresh()
+                    self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(msg))
+                    return
+                self._stage_cbasic_folder_impl(Path(refreshed.mount_point), task, status_callout,
+                                               backup_dir=session.backup.folder, prefix_lines=lines)
+
+            # Either the original selection or the raw read may have lacked mounted volume details.
+            self._background(lambda: ops.refresh(cand), mounted)
+
+        self._background(lambda: card_flow.start(cand, ops, self.prep.backup_root, kind="script",
+                                                verify_only=verify_only), read_done)
 
     def _cbasic_cancelled(self, report, status_callout: Callout):
         self.cbasic_busy = None
@@ -1563,36 +1582,6 @@ class App:
             lines = [report.title] + report.lines
         self._set_cbasic_status(status_callout, joined("\n", lines), WARNING)
         self.refresh()
-
-    def _cbasic_script_written(self, outcome, task: str, status_callout: Callout):
-        if isinstance(outcome, Exception):
-            self.cbasic_busy = None
-            self._set_cbasic_status(status_callout, message('Failed\n{outcome}', outcome=outcome), DANGER)
-            self.refresh()
-            self.messagebox.showerror(self.words.render("Canon Basic card preparation"), self.words.render(error_text(outcome)))
-            return
-        report, refreshed, backup_folder = outcome
-        if report is not None and not report.ok:
-            self.cbasic_busy = None
-            msg = joined("\n", [report.title] + report.lines)
-            self._set_cbasic_status(status_callout, msg, DANGER)
-            self.refresh()
-            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
-            return
-        mount_point = refreshed.mount_point if refreshed else ""
-        if not mount_point:
-            self.cbasic_busy = None
-            msg = ("SCRIPT marker is on the card, but the card did not report a mount folder.\n"
-                   "Mount the card and stage the files on its folder.")
-            if task == "dump":
-                msg = joined(" ", [msg, "Open ‘Which SD card can I use?’ and choose ‘Use a card already marked for scripts’."])
-            self._set_cbasic_status(status_callout, msg, WARNING)
-            self.refresh()
-            self.messagebox.showinfo(self.words.render("Canon Basic card preparation"), self.words.render(msg))
-            return
-        prefix = [report.title] + report.lines if report is not None else ["Canon Basic SCRIPT marker already present."]
-        self._stage_cbasic_folder_impl(Path(mount_point), task, status_callout, backup_dir=backup_folder,
-                                       prefix_lines=prefix)
 
     def _stage_cbasic_folder(self, task: str, status_callout: Callout):
         if self._card_busy():
@@ -1914,7 +1903,13 @@ class App:
                 p.failed(error_text(exc))
                 self.refresh()
                 return
-        p.restore_from = source if isinstance(source, card_flow.Backup) else None
+        self._read_prep_card(kind, cand, source)
+
+    def _read_prep_card(self, kind, cand, source, *, verify_only=False):
+        p = self.prep
+        if p.blockers() or self.cbasic_busy or p.selected != cand:
+            return
+        self.wizard.set_card_prepared(None)
         token = p.begin("Reading the card and saving a backup (macOS asks for your password)...")
         ops = card_devices.MacOps()
         self.refresh()
@@ -1931,12 +1926,16 @@ class App:
                 self._background(lambda: card_flow.cancel(result, ops) if result.needs_write else None,
                                  lambda _r: (setattr(p, "busy", None), self.refresh()))
                 return
-            self.refresh()
+
+            def finished(report, show):
+                self._prep_finished(report, None, show=show, kind=kind)
+                if isinstance(report, card_flow.Report) and report.retryable and self._ask_retry_verification(report):
+                    self._read_prep_card(kind, cand, result.source, verify_only=True)
+
             if verdict == "done":
-                if kind == "mark" and result.report.ok:
-                    self.wizard.set_card_prepared("prepared")
-                    self.refresh()
+                finished(result.report, False)
                 return
+            self.refresh()
             title, text = p.confirmation()
             ok = self.messagebox.askokcancel(self.words.render(title), self.words.render(text), icon="warning")
             if not ok or not p.may_write(token, result):
@@ -1950,8 +1949,9 @@ class App:
             p.begin_write(result)
             self.refresh()
             self._background(lambda: card_flow.write(result, ops),
-                             lambda r: self._prep_finished(r, None, show=True, kind=kind))
-        self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source), read_done)
+                             lambda r: finished(r, True))
+        self._background(lambda: card_flow.start(cand, ops, p.backup_root, restore_from=source,
+                                                verify_only=verify_only), read_done)
 
     def _prep_finished(self, report, note, show=False, kind=None):
         if isinstance(report, Exception):  # write() and cancel() report instead of raising; be safe anyway
@@ -1965,7 +1965,7 @@ class App:
             report.lines.insert(0, note)
         self.prep.finished(report)
         self.refresh()
-        if show:
+        if show and not report.retryable:
             self.messagebox.showinfo(self.words.render("Card preparation"), self.words.render(joined("\n", [report.title] + report.lines)))
 
     def _on_close(self):
@@ -2023,7 +2023,7 @@ class App:
                 status.set(NEUTRAL, view.reason)
         (self.wav_note_slot.show if any_wav else self.wav_note_slot.hide)(self.wav_note)
         self.tc_var.set(str(s.toolchain_path or ""))
-        if s.toolchain_check().status == OK or self._detecting:
+        if s.toolchain_check().status in (OK, CHECKING) or self._detecting:
             self.tc_install.pack_forget()
         else:
             self.tc_install.pack(fill="x", before=self.tc_fields)
@@ -2056,7 +2056,7 @@ class App:
             self._start_check(what, input_id)
         self._offer_prepared_card()
 
-    def _start_check(self, what, input_id=None):
+    def _start_check(self, what, input_id=None, *, fallback_toolchain=None):
         s = self.state
         key = s.begin(what, input_id)
         if what == "rom":
@@ -2070,7 +2070,11 @@ class App:
         def done(result):
             if isinstance(result, Exception):
                 result = checks.CheckResult(False, message('Check failed: {result}', result=result))
-            s.finish(what, key, result.ok, result.message, result.facts, input_id=input_id)
+            applied = s.finish(what, key, result.ok, result.message, result.facts, input_id=input_id)
+            if applied and not result.ok and fallback_toolchain is not None:
+                # A saved override is no longer usable. The normal refresh checks the included compiler.
+                s.set_toolchain(fallback_toolchain)
+                self.wizard.save()
             self.refresh()
         self._background(work, done)
 
@@ -2121,9 +2125,20 @@ class App:
         path = self.filedialog.askdirectory(title=self.words.render("Choose the toolchain's bin folder (contains arm-none-eabi-gcc)"))
         if path:
             self.state.set_toolchain(Path(path))
+            self.wizard.save()
             self.refresh()
 
     def _detect_toolchain(self, explicit=False):
+        included = bundle.included_toolchain()
+        if included:
+            saved = self.state.toolchain_path
+            selected = included if explicit or saved is None else saved
+            self.state.set_toolchain(selected)
+            if explicit:
+                self.wizard.save()
+            self._start_check("toolchain", fallback_toolchain=included if selected != included else None)
+            self.refresh()
+            return
         self._detecting = True
         self.tc_status.set(BUSY, "Looking for an installed GNU Arm 15.2.1 toolchain...")
 
@@ -2415,12 +2430,35 @@ def main() -> int:
     return 0
 
 
+def _compiler_smoke(bin_dir: Path, work: Path) -> None:
+    """Check the included GCC front end, assembler, linker and objcopy without camera inputs."""
+    from toolchain import controlled_environment
+
+    env = controlled_environment()
+    # No globally installed Arm tools may satisfy a missing compiler component.
+    env["PATH"] = str(bin_dir)
+    source = work / "sum.c"
+    source.write_text("unsigned sum(unsigned a, unsigned b) { return a + b; }\n", encoding="ascii")
+    for tool, args in (
+        ("gcc", ["-mcpu=cortex-a9", "-mthumb", "-ffreestanding", "-c", "sum.c", "-o", "sum.o"]),
+        ("ld", ["-e", "sum", "sum.o", "-o", "sum.elf"]),
+        ("objcopy", ["-O", "binary", "sum.elf", "sum.bin"]),
+    ):
+        exe = bin_dir / ("arm-none-eabi-" + tool + (".exe" if sys.platform == "win32" else ""))
+        proc = subprocess.run([str(exe), *args], cwd=work, env=env, capture_output=True, text=True, timeout=60)
+        if proc.returncode:
+            raise ValueError(f"{exe.name} exited with {proc.returncode}: {proc.stderr.strip()}")
+    if (work / "sum.bin").stat().st_size == 0:
+        raise ValueError("objcopy produced an empty binary")
+
+
 def self_test() -> int:
     """`--self-test`: build the window hidden, show every step in both appearances, then exit.
 
     Saved progress goes to a temporary folder (the person's own wizard.json is never
-    read or written) and the toolchain search is skipped. It also starts the builder the
-    way a build does, with arguments the builder refuses, so nothing is built or written.
+    read or written). The packaged window checks its included compiler and builds a
+    standalone test program there. A checkout skips the external compiler search.
+    Both modes also start the builder with arguments it must refuse.
     For CI and for checking a packaged app; prints one line per check."""
     import tempfile
     import tkinter as tk
@@ -2444,13 +2482,26 @@ def self_test() -> int:
     saved_state, saved_detect = wizard_mod.DEFAULT_STATE_FILE, checks.detect_toolchain
     with tempfile.TemporaryDirectory() as tmp:
         wizard_mod.DEFAULT_STATE_FILE = Path(tmp) / "wizard.json"
-        checks.detect_toolchain = lambda: (None, None, [])
+        included = bundle.included_toolchain()
+        if included is None:
+            checks.detect_toolchain = lambda: (None, None, [])
         try:
             for appearance in ("light", "dark"):
                 root = tk.Tk()
                 root.withdraw()
                 try:
                     app = App(tk, ttk, filedialog, messagebox, tkfont, root=root, appearance=appearance)
+                    if included:
+                        # Complete the startup check through the same callback as the event loop.
+                        while app.state.toolchain_check().status == CHECKING:
+                            done, result = app.events.get(timeout=120)
+                            done(result)
+                        verified = app.state.toolchain_check()
+                        check(app.state.toolchain_path == included and verified.status == OK,
+                              f"Step 5 accepts the included compiler ({verified.message})")
+                        if appearance == "light":
+                            _compiler_smoke(app.state.toolchain_path, Path(tmp))
+                            check(True, "included compiler compiles, assembles, links and converts a standalone program")
                     for step in STEPS:
                         app.wizard.saved.current = step.id
                         app.refresh()

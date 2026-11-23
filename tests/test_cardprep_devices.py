@@ -217,8 +217,6 @@ class Support(unittest.TestCase):
         self.assertTrue(devices.prepare_supported("darwin"))
         self.assertFalse(devices.prepare_supported("linux"))
         self.assertFalse(devices.prepare_supported("win32"))
-        self.assertIn("untested", devices.UNTESTED_NOTE["linux"])
-        self.assertIn("untested", devices.UNTESTED_NOTE["win32"])
 
 
 if __name__ == "__main__":

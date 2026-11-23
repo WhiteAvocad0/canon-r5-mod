@@ -2,10 +2,10 @@ name: desktop-app
 
 # Builds the unsigned R5 Mod Assistant desktop app with packaging/build_app.py: a .dmg
 # for macOS (Apple Silicon and Intel) and a .zip for Windows (x64). Each job runs the
-# app's --self-test from the built app (on Windows from the unzipped .zip) and keeps the
-# package as an artifact. A tag app-v<version> (matching tools/gui/bundle.py VERSION)
-# also publishes them as a GitHub prerelease. No Canon ROM, built autoexec.bin or
-# toolchain is involved.
+# app's --self-test from the built app (on Windows from the unzipped .zip).
+# Installer artifacts are shared alongside their reviewed compiler source companion. A tag app-v<version> (matching tools/gui/bundle.py VERSION)
+# also publishes them as a GitHub prerelease. The package includes the pinned host toolchain. Its compiler smoke test uses
+# a small standalone fixture and requires no Canon ROM.
 
 on:
   workflow_dispatch:
@@ -21,7 +21,43 @@ permissions:
   contents: read
 
 jobs:
+  compiler-source:
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.source.outputs.available }}
+    steps:
+      - name: Verify the publisher's matching compiler source archive
+        id: source
+        env:
+          SOURCE_URL: ${{ vars.XPACK_15_2_1_1_1_SOURCE_URL }}
+          SOURCE_SHA256: ${{ vars.XPACK_15_2_1_1_1_SOURCE_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SOURCE_URL" && -z "$SOURCE_SHA256" && "$GITHUB_REF" != refs/tags/app-v* ]]; then
+            echo "Build and test only. Installer uploads require the reviewed compiler source companion."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$SOURCE_URL" != https://* || ! "$SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Configure XPACK_15_2_1_1_1_SOURCE_URL and XPACK_15_2_1_1_1_SOURCE_SHA256 for the reviewed xPack 15.2.1-1.1 corresponding-source tar.gz. See THIRD_PARTY_NOTICES.md."
+            exit 1
+          fi
+          file=xpack-15.2.1-1.1-corresponding-source.tar.gz
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --output "$file" "$SOURCE_URL"
+          echo "$SOURCE_SHA256  $file" | sha256sum --check
+          tar -tzf "$file" > /dev/null
+          echo "available=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.source.outputs.available == 'true'
+        with:
+          name: xpack-compiler-corresponding-source
+          path: xpack-15.2.1-1.1-corresponding-source.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
   app:
+    needs: compiler-source
     name: app (${{ matrix.os }} ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     defaults:
@@ -59,12 +95,27 @@ jobs:
         run: python -m pip install -r packaging/requirements.txt
       - name: Build the app, package it and run its self-test
         run: python packaging/build_app.py --self-test
+      - name: Point installer recipients to the matching compiler sources
+        if: needs.compiler-source.outputs.available == 'true'
+        env:
+          SOURCE_URL: ${{ vars.XPACK_15_2_1_1_1_SOURCE_URL }}
+          SOURCE_SHA256: ${{ vars.XPACK_15_2_1_1_1_SOURCE_SHA256 }}
+        run: |
+          {
+            echo "xPack GNU Arm Embedded GCC 15.2.1-1.1 source code and build scripts"
+            echo "$SOURCE_URL"
+            echo "SHA-256: $SOURCE_SHA256"
+            echo "Also available in this run's xpack-compiler-corresponding-source artifact."
+          } > build/desktop-app/COMPILER-SOURCE.txt
       - uses: actions/upload-artifact@v4
+        if: needs.compiler-source.outputs.available == 'true'
         with:
+          compression-level: 0
           name: R5-Mod-Assistant-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             build/desktop-app/*.dmg
             build/desktop-app/*.zip
+            build/desktop-app/COMPILER-SOURCE.txt
           if-no-files-found: error
 
   prerelease:
@@ -83,13 +134,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd packages
-          sha256sum *.dmg *.zip > SHA256SUMS.txt
+          sha256sum ./*.dmg ./*.zip ./*.tar.gz > SHA256SUMS.txt
           cat > notes.md <<'EOF'
           Unsigned desktop build of R5 Mod Assistant (prototype, untested). macOS: the `arm64` .dmg for Apple Silicon, `x86_64` for Intel Macs. Windows: the `windows-x64` .zip.
 
           The app is not signed. On macOS, click **Open Anyway** in System Settings > Privacy & Security after the first try (macOS 14 and earlier: Control-click > **Open**). On Windows, extract the whole .zip, and if SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**. See [docs/gui.md](https://github.com/WhiteAvocad0/canon-r5-mod/blob/main/docs/gui.md#download-the-app).
 
-          You still need the GNU Arm toolchain (GCC 15.2.1) and your own ROM dump. Preparing a card's boot markers is offered on macOS only; on Windows, copy `autoexec.bin` to a card prepared on a Mac. Every build the app makes is a public repackaged build and is hardware-untested.
+          The app includes xPack GNU Arm Embedded GCC 15.2.1-1.1 and checks it automatically in Step 5. The matching compiler sources and build scripts are in the companion download `xpack-15.2.1-1.1-corresponding-source.tar.gz`. Supply your own camera’s ROM dump. Preparing a card's boot markers is offered on macOS only; on Windows, copy `autoexec.bin` to a card prepared on a Mac. Every build the app makes is a public repackaged build and is hardware-untested.
           EOF
-          gh release create "$GITHUB_REF_NAME" *.dmg *.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
+          gh release create "$GITHUB_REF_NAME" ./*.dmg ./*.zip ./*.tar.gz SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --prerelease \
             --verify-tag --title "R5 Mod Assistant ${GITHUB_REF_NAME#app-v} for macOS and Windows (unsigned prerelease)" --notes-file notes.md

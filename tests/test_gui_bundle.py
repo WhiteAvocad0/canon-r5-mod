@@ -34,6 +34,49 @@ class FrozenPathTests(unittest.TestCase):
         with mock.patch.object(sys, "frozen", True, create=True):
             self.assertTrue(bundle.is_frozen())
 
+    def test_included_compiler_moves_with_the_packaged_tree(self):
+        self.assertIsNone(bundle.included_toolchain())
+        for parent in ("Relocated.app/Contents/Resources", "Relocated App/_internal"):
+            resources = (ROOT / parent).resolve()
+            module_path = resources / "r5-mod/tools/gui/bundle.py"
+            with mock.patch.object(bundle, "__file__", str(module_path)), \
+                    mock.patch.object(sys, "frozen", True, create=True):
+                self.assertEqual(bundle.included_toolchain(), resources / "arm-toolchain/bin")
+
+    def test_packaged_wizard_uses_only_the_included_compiler_or_saved_override(self):
+        from gui import checks, wizard
+
+        with tempfile.TemporaryDirectory() as tmp:
+            included = Path(tmp) / "Application Files/arm-toolchain/bin"
+            override = Path(tmp) / "external/bin"
+            missing = Path(tmp) / "stale/bin"
+            for saved, expected, attempts in ((None, included, [included]),
+                                               (override, override, [override]),
+                                               (missing, included, [missing, included])):
+                with self.subTest(saved=saved):
+                    app = app_mod.App.__new__(app_mod.App)
+                    app.state = state.AssistantState()
+                    app.wizard = wizard.Wizard(app.state, state_file=Path(tmp) / "wizard.json")
+                    app.state.set_toolchain(saved)
+                    app._background = lambda work, done: done(work())
+                    def refresh():
+                        for what, input_id in app.state.needs_check():
+                            app._start_check(what, input_id)
+                    app.refresh = refresh
+                    with mock.patch.object(bundle, "included_toolchain", return_value=included), \
+                            mock.patch.object(checks, "check_toolchain",
+                                              side_effect=lambda path: checks.CheckResult(path != missing, "check")) as admit, \
+                            mock.patch.object(checks, "detect_toolchain", side_effect=AssertionError("host scan")):
+                        app._detect_toolchain()
+                        self.assertEqual(app.state.toolchain_path, expected)
+                        self.assertEqual(app.state.toolchain_check().status, state.OK)
+                        self.assertEqual(admit.call_args_list, [mock.call(path) for path in attempts])
+                        app.wizard.save()
+                        self.assertEqual(app.wizard.saved.toolchain_path, str(override) if saved == override else None)
+                        app._detect_toolchain(explicit=True)
+                        self.assertEqual(app.state.toolchain_path, included)
+                        self.assertIsNone(app.wizard.saved.toolchain_path)
+
     def test_builder_command(self):
         build_py = ROOT / "tools" / "build.py"
         self.assertEqual(bundle.builder_command(build_py, frozen=False, executable="/py"), ["/py", str(build_py)])
