@@ -85,6 +85,10 @@ combo_gui_dispatch_entry:
  ldr r1, [r0, #4]
  cmp r1, #COMBO_TRIGGER_CODE
  beq 2f
+ /* The INFO release too (a deferred screenshot's start, one_press.h). Not SET:
+  * it is the confirm key of every playback dialog (Erase, Protect, Q, Resize). */
+ cmp r1, #COMBO_INFO_RELEASE
+ beq 2f
  cmp r1, #(COMBO_TRIGGER_CODE + 1)
  bne 1f
 2:

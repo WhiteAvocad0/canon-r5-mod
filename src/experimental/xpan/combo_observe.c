@@ -479,13 +479,57 @@ CODE static void other_event(uint32_t code)
 
 /* ---- drain ---- */
 
+/* The one rule for "a user key" (one_press.h): a plain class-0 COMBO_BUTTONS press, or a
+ * joystick / direction-key code. Used by the drain and by combo_undrained. */
+CODE static uint32_t user_key(uint32_t code, uint32_t flags)
+{
+    if (flags & (COMBO_F_CODE_WIDE | COMBO_F_CLASS_NONZERO))
+        return 0u;
+    uint32_t release = 0u;
+    return (combo_button_index(code, &release) < COMBO_BUTTON_COUNT && !release) ||
+           (code >= OP_DIRECTION_FIRST && code <= OP_MULTI_CONTROLLER_LAST);
+}
+
+/* Read only: the records the hook has published and the drain not yet handled (the drain
+ * advances next_seq only after a record's effects). Each record is checked before and after
+ * its copy as the drain does (its seq word, and the hook not lapping it), so a torn or
+ * lapped scan stops at once and reports everything (fail closed). Before the worker's
+ * first step: everything. */
+#define COMBO_UNDRAINED_ALL (COMBO_UNDRAINED_USER_KEY | COMBO_UNDRAINED_CLEAR | COMBO_UNDRAINED_ANY)
+CODE uint32_t combo_undrained(void)
+{
+    uint32_t next = __atomic_load_n(&S.next_seq, __ATOMIC_ACQUIRE), out = 0u;
+    uint32_t written = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_ACQUIRE);
+    if (!__atomic_load_n(&S.steps_armed_init, __ATOMIC_ACQUIRE))
+        return COMBO_UNDRAINED_ALL;
+    for (uint32_t seq = next; (int32_t)(written - seq) >= 0; ++seq) {
+        const struct combo_ring_entry *e = &combo_hook_ring.entries[(seq - 1u) & COMBO_RING_MASK];
+        if (__atomic_load_n(&e->seq, __ATOMIC_ACQUIRE) != seq)
+            return COMBO_UNDRAINED_ALL;
+        uint32_t code = __atomic_load_n(&e->code_tick, __ATOMIC_RELAXED) & 0xffffu;
+        uint32_t flags = __atomic_load_n(&e->context, __ATOMIC_RELAXED) >> 24;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&e->seq, __ATOMIC_RELAXED) != seq ||
+            __atomic_load_n(&combo_hook_ring.written, __ATOMIC_RELAXED) - seq >= COMBO_RING_MASK)
+            return COMBO_UNDRAINED_ALL; /* rewritten (or being rewritten) while copied */
+        out |= COMBO_UNDRAINED_ANY;
+        if (flags & COMBO_F_GEN_UNEQUAL)
+            out |= COMBO_UNDRAINED_CLEAR;
+        if (user_key(code, flags))
+            out |= COMBO_UNDRAINED_USER_KEY;
+    }
+    return out;
+}
+
 CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_t context, uint32_t now)
 {
     uint32_t code = code_tick & 0xffffu, flags = context >> 24;
     /* Full tick: the hook stored the low 16 bits of the tick it saw (<= now). */
     uint32_t tick = now - ((now - (code_tick >> 16)) & 0xffffu);
-    if (flags & COMBO_F_GEN_UNEQUAL)
+    if (flags & COMBO_F_GEN_UNEQUAL) {
         S.gen_unequal = sat_inc(S.gen_unequal);
+        one_press_queue_clear(tick); /* S4: a queue clear marks this playback visit (one_press.h) */
+    }
     if (flags & (COMBO_F_CODE_WIDE | COMBO_F_ARG2_WIDE | COMBO_F_ARG3_WIDE | COMBO_F_MODE_WIDE | COMBO_F_CLASS_NONZERO))
         S.wide = sat_inc(S.wide);
     uint32_t release = 0u;
@@ -508,6 +552,8 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     }
     (void)seq;
     (void)args;
+    if (user_key(code, flags))
+        one_press_user_key(tick, code); /* a user key cancels or holds the automatic INFO (one_press.h) */
     if (index < COMBO_BUTTON_COUNT) {
         S.key_events = sat_inc(S.key_events);
         key_event(index, release, tick);
@@ -517,10 +563,15 @@ CODE static void record(uint32_t seq, uint32_t code_tick, uint32_t args, uint32_
     }
 }
 
+/* Records lost before the drain read them may have been user keys: fail closed, before
+ * next_seq moves past them (combo_undrained). */
+CODE static void lost_records(uint32_t now)
+{
+    one_press_user_key(now, 0u);
+}
+
 CODE static void drain(uint32_t now)
 {
-    if (!S.next_seq)
-        S.next_seq = 1u;
     for (uint32_t n = 0; n < COMBO_RING_ENTRIES; ++n) {
         uint32_t want = S.next_seq;
         struct combo_ring_entry *e = &combo_hook_ring.entries[(want - 1u) & COMBO_RING_MASK];
@@ -538,7 +589,8 @@ CODE static void drain(uint32_t now)
             if ((int32_t)(newest - COMBO_RING_MASK - resume) > 0)
                 resume = newest - COMBO_RING_MASK;
             S.lost += resume - want;
-            S.next_seq = resume;
+            lost_records(now);
+            __atomic_store_n(&S.next_seq, resume, __ATOMIC_RELEASE);
             continue;
         }
         uint32_t code_tick = __atomic_load_n(&e->code_tick, __ATOMIC_RELAXED);
@@ -557,12 +609,13 @@ CODE static void drain(uint32_t now)
              * record is lost, not guessed. */
             S.torn = sat_inc(S.torn);
             S.lost++;
-            S.next_seq = want + 1u;
+            lost_records(now);
+            __atomic_store_n(&S.next_seq, want + 1u, __ATOMIC_RELEASE);
             continue;
         }
-        S.next_seq = want + 1u;
         S.drained = sat_inc(S.drained);
         record(want, code_tick, args, context, now);
+        __atomic_store_n(&S.next_seq, want + 1u, __ATOMIC_RELEASE); /* after its effects (combo_undrained) */
     }
     S.unread_after_step = __atomic_load_n(&combo_hook_ring.written, __ATOMIC_RELAXED) - (S.next_seq - 1u);
 }
@@ -571,18 +624,20 @@ CODE void combo_observe_step(void)
 {
     S.steps = sat_inc(S.steps);
     if (!S.steps_armed_init) {
-        S.steps_armed_init = 1u;
+        S.next_seq = 1u; /* the hook's first seq; after 2^32 records seq 0 is a real record */
         for (uint32_t p = 0; p < COMBO_PAIR_COUNT; ++p)
             S.armed[p] = 1u;
+        __atomic_store_n(&S.steps_armed_init, 1u, __ATOMIC_RELEASE);
     }
     /* The tick the hook stamps; one writer (this worker), one increment per step. */
     uint32_t now = combo_worker_tick + 1u;
     __atomic_store_n(&combo_worker_tick, now, __ATOMIC_RELEASE);
     counter_tick(now);
+    one_press_visit(now); /* before the drain: a key or a clear read on the entry tick belongs to the visit */
     drain(now);
     display_tick(now);
     capture_feedback_step();
-    one_press_step(now); /* the one-press timeout */
+    one_press_step(now); /* the playback visit, the automatic INFO and the one-press timeout */
 }
 
 CODE void combo_observe_report(unsigned reports)
