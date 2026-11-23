@@ -260,8 +260,10 @@ CODE void combo_capture_gui(const uint32_t *slot)
         one_press_release(); /* after Canon has handled the press itself */
         return;
     }
-    if (code != CAPTURE_TRIGGER_CODE)
+    if (code != CAPTURE_TRIGGER_CODE) {
+        one_press_key(code); /* an INFO release may start a deferred screenshot */
         return;
+    }
     G.presses = sat_inc(G.presses);
     uint32_t tick = __atomic_load_n(&combo_worker_tick, __ATOMIC_ACQUIRE);
     uint32_t held_tick = G.held_tick;
