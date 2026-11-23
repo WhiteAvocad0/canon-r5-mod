@@ -54,15 +54,69 @@ TOOLCHAIN_ARCHIVES = {
     ("macos", "x86_64"): ("darwin-x64.tar.gz", "5be906a5194c3173e145a58048e5607ffff947773237802b93e55e23c415f1b6"),
     ("windows", "x64"): ("win32-x64.zip", "bae6a3d1667697ce750c3b13d6d26d80973ecedc2cc87bf04869e83447fd93ea"),
 }
+TOOLCHAIN_NAME = f"xPack GNU Arm Embedded GCC {TOOLCHAIN_VERSION}"
+# Arm's source package for Arm GNU Toolchain 15.2.Rel1, the release xPack 15.2.1-1.1 packages. The
+# desktop-app workflow checks this pin against Arm's published .sha256asc and attaches the file to
+# every app-v* release.
+TOOLCHAIN_SOURCE_NAME = "arm-gnu-toolchain-src-snapshot-15.2.rel1.tar.xz"
+TOOLCHAIN_SOURCE_URL = f"https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/srcrel/{TOOLCHAIN_SOURCE_NAME}"
+TOOLCHAIN_SOURCE_SHA256 = "06f4e5792b566a771c300ac6f46c3422e23e34f4e3a5d44a8cb5594ead6fb82e"
+RELEASES_URL = "https://github.com/WhiteAvocad0/canon-r5-mod/releases"
+# The rest of the corresponding source (xPack's build scripts and patches, host libraries, Python,
+# LLVM and MinGW-w64 runtimes), built by packaging/xpack_source_package.py from
+# packaging/xpack-source-inputs.tsv and published once on its own release tag.
+TOOLCHAIN_COMPANION_NAME = f"xpack-{TOOLCHAIN_VERSION}-corresponding-source.tar"
+TOOLCHAIN_COMPANION_URL = f"{RELEASES_URL}/download/toolchain-src-xpack-{TOOLCHAIN_VERSION}/{TOOLCHAIN_COMPANION_NAME}"
+TOOLCHAIN_COMPANION_SHA256 = "1c1183fe067b958296aed1aa12365e10721bc64e6bb201adead7863afc91e488"
+TOOLCHAIN_NOTICES = "distro-info/R5-notices"  # the only files the app adds to the vendor tree
+TOOLCHAIN_NOTICE = """\
+GNU Arm toolchain in R5 Mod Assistant
+
+Bundled: {name} for {host}, unmodified.
+Archive: {archive}
+SHA-256: {digest}
+Origin:  {origin}
+
+Every file of that official archive is included byte for byte; the packager checks
+this after building the app. Only the folder name (arm-toolchain) differs, and
+R5 Mod Assistant adds only the notices in {notices}. xPack builds this
+distribution from Arm GNU Toolchain 15.2.Rel1 sources (GCC 15.2.1, Newlib 4.5.0)
+and its Binutils 2.45 and GDB 16.3 branches for that release.
+
+Licences
+- GCC, Binutils and GDB{readline} are licensed under the GNU GPL
+  version 3 or later: distro-info/licenses/gcc-15.2.1/COPYING3.
+- The GCC runtime libraries (libgcc, libstdc++ and the others in lib/gcc and
+  arm-none-eabi/lib) carry the GCC Runtime Library Exception:
+  distro-info/licenses/gcc-15.2.1/COPYING.RUNTIME.
+- Newlib and newlib-nano (libc_nano, libm_nano, libg_nano): distro-info/licenses/newlib-4.5.0.
+- Each component keeps its own licence. Licence folders shipped in the archive
+  (distro-info/licenses): {components}.
+- Additional notices added by R5 Mod Assistant ({notices}): {extra}.
+
+Source code
+- {source_name}
+  Arm's source package for 15.2.Rel1, attached to each R5 Mod Assistant release
+  that bundles this toolchain, SHA-256 {source_sha256}.
+  Also at {source_url}
+- {companion}
+  xPack's build scripts and patches and every other source input (host libraries,
+  Python, runtimes), SHA-256 {companion_sha256}. Attached to the same releases and
+  kept at {companion_url}
+Releases: {releases}
+"""
 README_COMMON = """\
-The app includes the GNU Arm toolchain (xPack arm-none-eabi-gcc {toolchain_version})
+The app includes the GNU Arm toolchain, {toolchain_name}, unmodified,
 and builds offline. Supply your own ROM dump as shown in the guide. This is an
 untested prototype. Every build it makes is hardware-untested. Read the guides first:
 {url}
 
 Built from commit {commit}. App licenses are in the Licenses folder. The toolchain
-licenses and supplementary notices are in {toolchain_path}/distro-info, under
-licenses and R5-notices respectively.
+licenses and notices are in Licenses/GNU Arm toolchain and, inside the app, in
+{toolchain_path}/distro-info (licenses and R5-notices). Its source code,
+{source_name} and {companion},
+is attached to this version's release ({releases}); the second is also at
+{companion_url}
 """
 README = {
     "macos": """\
@@ -135,14 +189,20 @@ def target_for(dist: Path, name: str, system: str = sys.platform, machine: str |
     raise SystemExit(f"the desktop app is built on macOS or Windows, not {system}")
 
 
-def install_toolchain(target: Target, local_archive: Path | None) -> None:
-    """Verify the host archive before extracting it. Install the complete vendor tree beside r5-mod."""
+def toolchain_dir(target: Target) -> Path:
+    return target.tree.resolve().parent / "arm-toolchain"
+
+
+def install_toolchain(target: Target, local_archive: Path | None) -> dict[str, str]:
+    """Verify the host archive before extracting it. Install the complete vendor tree beside r5-mod.
+
+    Returns the vendor tree's file hashes, so verify_toolchain can show it is still unmodified."""
     artifact = TOOLCHAIN_ARCHIVES.get((target.os, target.arch))
     if artifact is None:
         raise SystemExit(f"No bundled xPack toolchain for {target.os} {target.arch}")
     suffix, expected = artifact
     filename = f"{TOOLCHAIN_ROOT}-{suffix}"
-    dest = target.tree.resolve().parent / "arm-toolchain"
+    dest = toolchain_dir(target)
     with tempfile.TemporaryDirectory(dir=dest.parent) as scratch:
         tmp = Path(scratch)
         archive = local_archive
@@ -166,12 +226,42 @@ def install_toolchain(target: Target, local_archive: Path | None) -> None:
                 with tarfile.open(fileobj=stream, mode="r|gz") as tar:
                     tar.extractall(tmp, filter="data")
         vendor = tmp / TOOLCHAIN_ROOT
+        unmodified = file_hashes(vendor)
+        if any(path.startswith(TOOLCHAIN_NOTICES + "/") for path in unmodified):
+            raise SystemExit(f"{filename} already has {TOOLCHAIN_NOTICES}")
         notices = target.tree / "packaging" / "xpack-notices"
-        included = vendor / "distro-info" / "R5-notices"
+        included = vendor / TOOLCHAIN_NOTICES
         shutil.copytree(notices / "common", included)
         shutil.copytree(notices / target.os, included, dirs_exist_ok=True)
+        shipped = vendor / "distro-info" / "licenses"
+        licenses = sorted(p.name for p in shipped.iterdir() if p.is_dir()) if shipped.is_dir() else []
+        if not licenses:
+            raise SystemExit(f"{filename} has no component licenses in distro-info/licenses")
+        (included / "THIRD-PARTY-NOTICE.txt").write_text(TOOLCHAIN_NOTICE.format(
+            name=TOOLCHAIN_NAME, host=f"{target.os} {target.arch}", archive=filename, digest=digest,
+            origin=f"{TOOLCHAIN_RELEASE}/{filename}", notices=TOOLCHAIN_NOTICES,
+            readline=" (and Readline, which GDB uses)" if target.os == "macos" else "",
+            components=", ".join(licenses), extra=", ".join(sorted(p.name for p in included.iterdir())),
+            source_name=TOOLCHAIN_SOURCE_NAME, source_sha256=TOOLCHAIN_SOURCE_SHA256,
+            source_url=TOOLCHAIN_SOURCE_URL, companion=TOOLCHAIN_COMPANION_NAME,
+            companion_sha256=TOOLCHAIN_COMPANION_SHA256, companion_url=TOOLCHAIN_COMPANION_URL, releases=RELEASES_URL),
+            encoding="utf-8", newline="\r\n" if target.os == "windows" else "\n")
         vendor.rename(dest)
     print(f"Installed {filename} (SHA-256 {digest})")
+    return unmodified
+
+
+def verify_toolchain(toolchain: Path, unmodified: dict[str, str]) -> int:
+    """Every vendor file is present byte for byte, and only TOOLCHAIN_NOTICES was added."""
+    actual = {path: digest for path, digest in file_hashes(toolchain).items()
+              if not path.startswith(TOOLCHAIN_NOTICES + "/")}
+    if actual != unmodified:
+        missing = sorted(set(unmodified) - set(actual))
+        extra = sorted(set(actual) - set(unmodified))
+        changed = sorted(k for k in set(unmodified) & set(actual) if unmodified[k] != actual[k])
+        raise SystemExit(f"the bundled toolchain differs from {TOOLCHAIN_ROOT}: missing {missing[:5]}, "
+                         f"extra {extra[:5]}, changed {changed[:5]}")
+    return len(actual)
 
 
 def git_blob_id(data: bytes, algorithm: str) -> str:
@@ -254,7 +344,9 @@ def write_extras(folder: Path, target: Target, facts: dict[str, str], commit: st
     text = README[target.os] + README_COMMON
     (folder / "Read me first.txt").write_text(
         text.format(version=facts["version"], arch=target.arch, url=GUIDE_URL, commit=commit,
-                    toolchain_version=TOOLCHAIN_VERSION,
+                    toolchain_name=TOOLCHAIN_NAME, source_name=TOOLCHAIN_SOURCE_NAME,
+                    companion=TOOLCHAIN_COMPANION_NAME, companion_url=TOOLCHAIN_COMPANION_URL,
+                    releases=RELEASES_URL,
                     toolchain_path=(target.tree.parent / "arm-toolchain").relative_to(target.app).as_posix()),
         encoding="utf-8", newline="\r\n" if target.os == "windows" else "\n")
     licenses = folder / "Licenses"
@@ -272,6 +364,10 @@ def write_extras(folder: Path, target: Target, facts: dict[str, str], commit: st
             break
     shutil.copyfile(stage / "LICENSE", licenses / "R5 Mod Assistant LICENSE.txt")
     shutil.copyfile(stage / "THIRD_PARTY_NOTICES.md", licenses / "THIRD_PARTY_NOTICES.md")
+    # The toolchain's licences and notices also stay inside the app, which may be copied on its own.
+    toolchain = licenses / "GNU Arm toolchain"
+    shutil.copytree(toolchain_dir(target) / "distro-info" / "licenses", toolchain / "licenses")
+    shutil.copytree(toolchain_dir(target) / TOOLCHAIN_NOTICES, toolchain, dirs_exist_ok=True)
 
 
 def fresh_dir(path: Path) -> Path:
@@ -321,10 +417,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--self-test", action="store_true", help="run the built app's --self-test")
     ap.add_argument("--no-package", action="store_true", help="build the app only, no .dmg or .zip")
     ap.add_argument("--print-version", action="store_true", help="print the app version and exit")
+    ap.add_argument("--print-toolchain-source", action="store_true",
+                    help="print each toolchain source package's file name, URL and SHA-256 (Arm's first), and exit")
     args = ap.parse_args(argv)
 
     if args.print_version:
         print(app_facts(ROOT)["version"])
+        return 0
+    if args.print_toolchain_source:
+        print(TOOLCHAIN_SOURCE_NAME, TOOLCHAIN_SOURCE_URL, TOOLCHAIN_SOURCE_SHA256)
+        print(TOOLCHAIN_COMPANION_NAME, TOOLCHAIN_COMPANION_URL, TOOLCHAIN_COMPANION_SHA256)
         return 0
     try:
         import tkinter  # noqa: F401
@@ -344,13 +446,14 @@ def main(argv: list[str] | None = None) -> int:
            "R5_APP_BUNDLE_ID": facts["bundle_id"], "R5_APP_VERSION": facts["version"], "R5_APP_COMMIT": commit}
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--log-level", "WARN",
          "--distpath", str(out / "dist"), "--workpath", str(out / "work"), str(SPEC)], env=env)
-    install_toolchain(target, args.toolchain_archive)
+    unmodified = install_toolchain(target, args.toolchain_archive)
     if target.os == "macos":
         # Reseal the outer bundle after adding resources, preserving all nested signatures.
         run(["codesign", "--force", "--sign", "-", str(target.app)])
     files = verify_tree(target.tree, stage)
+    vendor_files = verify_toolchain(toolchain_dir(target), unmodified)
     print(f"{target.app}: {facts['version']} ({target.os} {target.arch}) from {commit[:12]}, "
-          f"carries {files} tracked files unchanged")
+          f"carries {files} tracked files and {vendor_files} {TOOLCHAIN_ROOT} files unchanged")
     package = f"{facts['name'].replace(' ', '-')}-{facts['version']}-{target.os}-{target.arch}"
     if target.os == "macos":
         if args.self_test:
@@ -374,6 +477,7 @@ def main(argv: list[str] | None = None) -> int:
         zf.extractall(unzipped)
     copy = target_for(unzipped, facts["name"])
     verify_tree(copy.tree, stage)
+    verify_toolchain(toolchain_dir(copy), unmodified)
     if args.self_test:
         self_test(copy.exe)  # from the unzipped folder, as the person runs it
         verify_tree(copy.tree, stage)
