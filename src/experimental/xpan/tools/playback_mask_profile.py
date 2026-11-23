@@ -14,6 +14,16 @@ CONSTANTS = {
     "GUIDE_SAVED_GEOMETRY": 0x38, "GUIDE_HANDLE": 0x2C, "GUIDE_RESOURCE": 0xE172A37A, "GUIDE_BAIL": 0xE06CC061,
     "NATIVE_ASPECT_VALID": 0xE0773B3D, "NATIVE_HEADER_SET": 0xE0773B4B, "NATIVE_MODEL_MATCH": 0xE07739C3, "THUMB_ROI_OFFSET": 0x426,
 }
+# The fit caller E071106E's r8 contract that the JPEG-only XPan Quick Review route
+# (playback_mask_native.c fit_jpeg_route) relies on: r8 is loaded once from the 5th
+# argument, compared once after a 0 fit result, and restored by the caller's own pop.
+# Each word lies in the fingerprinted source guard page E0711000; admission also
+# checks these exact bytes.
+ROUTE_WORDS = (
+    ("r8_load", 0xE071107C, "ddf83880"),     # ldr.w r8,[sp,#56]
+    ("r8_compare", 0xE0711116, "b8f1010f"),  # cmp.w r8,#1 (1 -> E078DDC8, else E078DD3E)
+    ("r8_restore", 0xE071115C, "bde8f083"),  # ldmia.w sp!,{r4-r9,pc}
+)
 
 
 def header() -> str:
@@ -26,6 +36,8 @@ def header() -> str:
         lines.append(f"#define PM_{k} 0x{v:08X}")
     for n, a, _raw, _s, resume in HOOKS:
         lines += [f"#define PM_{n.upper()}_VA 0x{a:08X}", f"#define PM_{n.upper()}_RESUME 0x{resume:08X}"]
+    for n, a, _raw in ROUTE_WORDS:
+        lines.append(f"#define PM_ROUTE_{n.upper()}_VA 0x{a:08X}")
     return "\n".join(lines + ["#endif", ""])
 
 
@@ -45,6 +57,7 @@ def inventory() -> dict:
             }
             for n, a, raw, s, resume in HOOKS
         ],
+        "route_words": [{"role": n, "va": a, "bytes": raw} for n, a, raw in ROUTE_WORDS],
     }
 
 

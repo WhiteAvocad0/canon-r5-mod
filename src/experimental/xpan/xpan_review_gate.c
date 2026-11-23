@@ -160,6 +160,27 @@ CODE uint32_t xpan_review_gate_crop(uint32_t caller)
     bump(&crop_applied);
     return 1u;
 }
+CODE uint32_t xpan_review_gate_claim_ordinal(void)
+{
+    const uint32_t word = atomic_load_explicit(&claim, memory_order_acquire);
+    return (word & XPAN_CLAIM_XPAN) && !(word & XPAN_CLAIM_REVOKED) ? word >> 2 : 0u;
+}
+CODE uint32_t xpan_review_gate_event_current(uint32_t ordinal)
+{
+    if (!ordinal)
+        return XPAN_GATE_R_NO_CLAIM;
+    struct snapshot s;
+    take(&s);
+    if (!s.stable)
+        return XPAN_GATE_R_UNSTABLE;
+    if ((s.latest.ordinal & XPAN_CLAIM_ORDINAL_MASK) != ordinal || (s.events & XPAN_CLAIM_ORDINAL_MASK) != ordinal)
+        return XPAN_GATE_R_STALE;
+    if (s.latest.reason != XPAN_AUTH_R_JOB)
+        return XPAN_GATE_R_INVALID;
+    if (!is_xpan(&s.latest) || (s.latest.flags & XPAN_GATE_RAW_MASK))
+        return XPAN_GATE_R_NOT_XPAN;
+    return XPAN_GATE_R_NONE;
+}
 /* Byte [[0x171DC]+0x18C0] (the GUI aspect getter E07D6B68), read as its
  * aligned word. 0 when the address is not an admitted RAM word. */
 CODE static uint32_t gui_aspect(uint32_t *value)

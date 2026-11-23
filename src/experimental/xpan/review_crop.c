@@ -8,12 +8,19 @@
 #define CODE
 #endif
 /* before: the full-source tuple observed on hardware for both XPan and
- * full-frame review. after: the derived centred XPan band. */
+ * full-frame RAW + JPEG review. after: the derived centred XPan band.
+ * letterbox_before: Canon's stock 16:9 tuple of the JPEG-only review (RAW off,
+ * observed on hardware for XPan), which gets the same band. */
 const struct review_crop_profile review_crop_profile = {
     REVIEW_CROP_CALLER_LR, REVIEW_CROP_DESCRIPTOR_BYTES, REVIEW_CROP_CALLER_FRAME_BYTES, REVIEW_CROP_SOURCE_SLOT_OFFSET,
-    REVIEW_CROP_COMPLETED, 1024u, 682u, {0u, 0u, 0u, 0u, 1024u, 682u}, {0u, 152u, 0u, 152u, 1024u, 378u}};
-_Static_assert(sizeof(review_crop_profile) == 76u, "review crop profile ABI");
+    REVIEW_CROP_COMPLETED, 1024u, 682u, {0u, 0u, 0u, 0u, 1024u, 682u}, {0u, 152u, 0u, 152u, 1024u, 378u},
+    {0u, 53u, 0u, 53u, 1024u, 576u}};
+_Static_assert(sizeof(review_crop_profile) == 100u, "review crop profile ABI");
 static _Atomic uint32_t counts[REVIEW_CROP_R_COUNT];
+/* The JPEG review token (review_crop.h): the gate claim ordinal of the latest
+ * applied letterbox crop, 0 after an applied full-source crop. Written by the
+ * review hook (display task), read by the playback fit (playback task). */
+static _Atomic uint32_t jpeg_review_event;
 #ifdef REVIEW_CROP_HOST
 extern uint32_t review_crop_host_read(uint32_t);
 extern void review_crop_host_write(uint32_t, uint32_t);
@@ -69,10 +76,16 @@ CODE static uint32_t descriptor(const struct review_crop_call *c)
         return REVIEW_CROP_R_ID;
     if (v[5] != review_crop_profile.source_width || v[6] != review_crop_profile.source_height)
         return REVIEW_CROP_R_SOURCE_DIMS;
-    for (unsigned i = 0; i < 6u; i++)
-        if (v[7u + i] != review_crop_profile.before[i])
-            return REVIEW_CROP_R_TUPLE;
-    return REVIEW_CROP_R_APPLIED;
+    uint32_t full = 1u, letterbox = 1u;
+    for (unsigned i = 0; i < 6u; i++) {
+        full &= v[7u + i] == review_crop_profile.before[i];
+        letterbox &= v[7u + i] == review_crop_profile.letterbox_before[i];
+    }
+    return full ? REVIEW_CROP_R_APPLIED : letterbox ? REVIEW_CROP_R_LETTERBOX : REVIEW_CROP_R_TUPLE;
+}
+CODE static uint32_t applied(uint32_t why)
+{
+    return why == REVIEW_CROP_R_APPLIED || why == REVIEW_CROP_R_LETTERBOX;
 }
 CODE uint32_t review_crop_apply(const struct review_crop_call *c, uint32_t *reason)
 {
@@ -83,9 +96,13 @@ CODE uint32_t review_crop_apply(const struct review_crop_call *c, uint32_t *reas
             why = descriptor(c);
         /* Authority gate after the unchanged scope and descriptor checks: store
          * only for this review's unused, still-latest XPan claim; else stock. */
-        if (why == REVIEW_CROP_R_APPLIED && !xpan_review_gate_crop(c->caller))
+        if (applied(why) && !xpan_review_gate_crop(c->caller))
             why = REVIEW_CROP_R_GATE;
-        if (why == REVIEW_CROP_R_APPLIED) {
+        if (applied(why)) {
+            /* The gate admitted this review's claim just now (open, unrevoked). */
+            atomic_store_explicit(&jpeg_review_event,
+                                  why == REVIEW_CROP_R_LETTERBOX ? xpan_review_gate_claim_ordinal() : 0u,
+                                  memory_order_release);
             /* Change only the three words that differ (+0x20, +0x28, +0x30). */
             const uint32_t *to = review_crop_profile.after;
             write_word(c->destination + 32u, to[1]);
@@ -97,6 +114,10 @@ CODE uint32_t review_crop_apply(const struct review_crop_call *c, uint32_t *reas
     if (reason)
         *reason = why;
     return c ? c->original_result : 0u;
+}
+CODE uint32_t review_crop_jpeg_review(void)
+{
+    return xpan_review_gate_event_current(atomic_load_explicit(&jpeg_review_event, memory_order_acquire));
 }
 CODE void review_crop_native_post(const struct review_crop_cpu *entry, uint32_t caller_sp,
                                   const struct review_crop_cpu *after, uint32_t completed)

@@ -141,6 +141,11 @@ def make_synthetic_xpan_contract_and_rom() -> tuple[dict, dict, dict, list[dict]
         orig = bytes.fromhex(h["original_hex"])
         h_off = h_addr - rom_base
         rom[h_off : h_off + len(orig)] = orig
+    # The fit caller's r8 words that the JPEG-only Quick Review route pins (inside a guard page).
+    mask_inventory = json.loads((tools_dir / "playback-mask-hooks.json").read_text())
+    for word in mask_inventory["route_words"]:
+        raw = bytes.fromhex(word["bytes"])
+        rom[word["va"] - rom_base : word["va"] - rom_base + len(raw)] = raw
 
     # Re-fix main_signature_window word sum in case any hook landed inside E0100000..E0140000
     main_off = main_start - rom_base

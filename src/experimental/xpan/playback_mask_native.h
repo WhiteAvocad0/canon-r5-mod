@@ -54,6 +54,20 @@ struct playback_mask_binding_profile {
 };
 extern const struct playback_mask_binding_profile playback_mask_profile;
 uint32_t playback_mask_fit_admit(const struct playback_mask_fit_facts *);
+/* JPEG-only XPan Quick Review (issue #31). Pure policy for the shape Canon's
+ * automatic review draws through fit: the frame/view conditions of
+ * playback_mask_fit_admit, selector 0 (and saved selector 0), category 7 (and
+ * view category 7), object and cache JPEG_L [7,8192,3024,0,0] with equal
+ * facts, current 8192x3024. The fresh review token (review_crop_jpeg_review)
+ * is asked separately, in playback_mask_fit_begin. */
+#define PM_JPEG_REVIEW_CATEGORY 7u
+#define PM_JPEG_REVIEW_WIDTH 8192u
+#define PM_JPEG_REVIEW_HEIGHT 3024u
+uint32_t playback_mask_fit_jpeg_review_admit(const struct playback_mask_fit_facts *);
+/* The fit caller's r8 in the trampoline's saved register image
+ * (playback_mask_hooks.S save_cpu: APSR word and pad, then r0..r12, lr), which
+ * restore_cpu reloads. Offset from the scope (playback_mask_fit_scope.self). */
+#define PM_CPU_R8_OFFSET (PM_FIT_SCOPE_BYTES + 8u + 4u * 8u)
 uint32_t playback_mask_guide_admit(const struct playback_mask_guide_facts *);
 /* Pure source-equivalent integer geometry. No pointer or file authority is
  * granted by this function; output remains untouched on rejection. */

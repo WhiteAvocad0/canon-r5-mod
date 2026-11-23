@@ -36,6 +36,16 @@ uint32_t playback_mask_fit_admit(const struct playback_mask_fit_facts *f)
   dimensions(f->object_facts.current_width,f->object_facts.current_height)&&
   playback_box_kind(&f->object_facts)==PB_BOX_RAW_L&&playback_box_kind(&f->cache_facts)==PB_BOX_RAW_L&&facts_same(&f->object_facts,&f->cache_facts);
 }
+uint32_t playback_mask_fit_jpeg_review_admit(const struct playback_mask_fit_facts *f)
+{
+ return f&&f->entry_lr==PM_FIT_CALLER&&!(f->original_sp&7u)&&frame_memory_stack_frame_span(f->original_sp,PM_CALLER_BYTES)&&
+  f->output==f->original_sp+PM_OUTPUT_OFFSET&&f->object==PN_OBJECT0&&f->saved_object==f->object&&
+  f->selector==0u&&f->saved_selector==0u&&f->drawmode==0u&&f->rotation==0u&&
+  f->category==PM_JPEG_REVIEW_CATEGORY&&f->view.category==PM_JPEG_REVIEW_CATEGORY&&
+  view_admit(&f->view)&&f->object_known==1u&&f->cache_known==1u&&
+  f->object_facts.current_width==PM_JPEG_REVIEW_WIDTH&&f->object_facts.current_height==PM_JPEG_REVIEW_HEIGHT&&
+  playback_box_kind(&f->object_facts)==PB_BOX_JPEG_L&&playback_box_kind(&f->cache_facts)==PB_BOX_JPEG_L&&facts_same(&f->object_facts,&f->cache_facts);
+}
 uint32_t playback_mask_guide_admit(const struct playback_mask_guide_facts *f)
 {
  return f&&!(f->native_sp&7u)&&frame_memory_stack_frame_span(f->native_sp,PM_GUIDE_SPAN)&&
@@ -74,6 +84,8 @@ uint32_t playback_mask_project(const struct playback_mask_projection_facts *f,ui
 }
 #ifndef PLAYBACK_MASK_POLICY_ONLY
 #include "playback_first_view.h"
+#include "review_crop.h"
+#include "xpan_review_gate.h"
 static uint32_t row_same(const uint32_t a[4],const uint32_t b[4])
 {for(unsigned i=0;i<4u;i++)if(a[i]!=b[i])return 0u;return 1u;}
 struct playback_mask_view_owner playback_mask_view;
@@ -376,7 +388,11 @@ void playback_mask_fit_begin(struct playback_mask_fit_scope *s,const struct play
  if(f.cache_known)f.cache_facts=s->cache_snapshot.facts;
  if(!f.object_known){pfv_diag_fit_begin(s,&f,PFV_R_FIT_OBJECT_UNKNOWN,PFV_FIT_SNAPSHOT_REJECT,0u,1u,NULL);return;}
  if(!f.cache_known){pfv_diag_fit_begin(s,&f,PFV_R_FIT_CACHE_UNKNOWN,PFV_FIT_SNAPSHOT_REJECT,0u,1u,NULL);return;}
- if(!playback_mask_fit_admit(&f)){
+ /* The JPEG-only XPan Quick Review shape is admitted only with its fresh review
+  * token (asked only for that shape); a refusal declines exactly as before.
+  * Any other shape keeps the RAW_L admission and decline below unchanged. */
+ if(!playback_mask_fit_admit(&f)&&
+  !(playback_mask_fit_jpeg_review_admit(&f)&&review_crop_jpeg_review()==XPAN_GATE_R_NONE)){
   if(playback_box_kind(&f.object_facts)!=PB_BOX_RAW_L){why=PFV_R_FIT_OBJECT_NOT_RAW_L;actual=playback_box_kind(&f.object_facts);expected=PB_BOX_RAW_L;}
   else if(playback_box_kind(&f.cache_facts)!=PB_BOX_RAW_L){why=PFV_R_FIT_CACHE_NOT_RAW_L;actual=playback_box_kind(&f.cache_facts);expected=PB_BOX_RAW_L;}
   else if(!facts_same(&f.object_facts,&f.cache_facts)){why=PFV_R_FIT_FACTS_MISMATCH;actual=f.object_facts.current_width;expected=f.cache_facts.current_width;}
@@ -408,6 +424,27 @@ static __attribute__((noinline)) void pfv_diag_fit_end(const struct playback_mas
  c.actual=actual;c.expected=expected;c.aux_a=aux_a;c.aux_b=aux_b;c.aux_c=aux_c;
  c.aux_mask=PFV_K(aux_a)|PFV_K(aux_b)|PFV_K(aux_c);
  pfv_emit_fit(&c);
+}
+/* JPEG-only XPan Quick Review route (issue #31). The fit caller E071106E keeps
+ * its 5th argument in r8 (E071107C ldr.w r8,[sp,#56]), reads it only at
+ * E0711116 (cmp.w r8,#1) after a 0 fit result, and restores its own r8 at
+ * E071115C (ldmia.w sp!,{r4-r9,pc}). r8 == 1 takes E078DDC8, whose renderer
+ * places the decoded buffer by Canon's 5-class aspect table: a 2.71:1 buffer
+ * lands in the 1:1 row, the vertical stretch. Otherwise E078DD3E draws the
+ * whole decoded buffer aspect-correct inside the review viewport, as the
+ * RAW + JPEG review does. For the token-admitted JPEG_L review Canon leaves
+ * stock (result 0, all-zero stock rect) the saved r8 of 1 in our own frame is
+ * set to 0, so restore_cpu hands the caller 0 and it takes E078DD3E. Nothing
+ * else is written: no region (photo coordinates are not the decoded buffer's),
+ * the result stays 0. */
+static void fit_jpeg_route(const struct playback_mask_fit_scope *s,uint32_t result,const uint32_t *stock)
+{
+ uint32_t r8;struct playback_mask_geometry g;
+ if(!stack_word(s->self,PM_FIT_SCOPE_BYTES+PM_CPU_IMAGE,PM_CPU_R8_OFFSET,&r8)||r8!=1u)return;
+ if(playback_box_kind(&s->object_snapshot.facts)!=PB_BOX_JPEG_L||s->original_category!=PM_JPEG_REVIEW_CATEGORY||s->selector!=0u||
+  s->geometry.width!=PM_JPEG_REVIEW_WIDTH||s->geometry.height!=PM_JPEG_REVIEW_HEIGHT||result!=0u||!stock||stock[0]|stock[1]|stock[2]|stock[3])return;
+ if(!snapshots_current(s)||!read_geometry(s->object,s->selector,&g)||!geometry_same(&g,&s->geometry))return;
+ output_word(s->self+PM_CPU_R8_OFFSET,0u);
 }
 uint32_t playback_mask_fit_end(struct playback_mask_fit_scope *s,uint32_t result)
 {
@@ -452,6 +489,7 @@ uint32_t playback_mask_fit_end(struct playback_mask_fit_scope *s,uint32_t result
     }
    }
   }
+  fit_jpeg_route(s,result,read?stock:0);
  }
  uint32_t ready=view_end(s,known);
  if(wrote&&!ready)for(unsigned i=0;i<4u;i++)output_word(s->output+4u*i,stock[i]);
